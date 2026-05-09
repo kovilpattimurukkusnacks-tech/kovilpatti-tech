@@ -1,0 +1,7 @@
+/* Sidebar — yellow admin-console rail. */
+
+.sidebar-aside {
+  background-color: #FCD835;
+  border-right: 2px solid #1F1F1F;
+  box-shadow: 8px 0 32px -8px rgba(31, 31, 31, 0.3);
+}

@@ -1,0 +1,6 @@
+/* StatCard — sticker-shadow card used on Dashboard. */
+
+.stat-card {
+  border: 2px solid #1F1F1F;
+  box-shadow: 4px 4px 0 0 #FCD835;
+}

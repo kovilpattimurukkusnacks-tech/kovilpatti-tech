@@ -1,0 +1,52 @@
+/* Products page — Paper wrapper + DataGrid theming.
+   Smaller sx blocks (form layout, dialog buttons) stay inline for MUI integration. */
+
+.products-paper {
+  border: 2px solid #1F1F1F;
+  overflow: hidden;
+  box-shadow: 6px 6px 0 0 #FCD835;
+  background-color: #FFFFFF;
+  backdrop-filter: none;
+}
+
+/* DataGrid theming — selectors target MUI's internal classes scoped to
+   the DataGrid root that carries `.products-grid`. */
+.products-grid {
+  border: 0;
+  background-color: #FFFFFF;
+  color: #1F1F1F;
+}
+
+.products-grid .MuiDataGrid-columnHeaders {
+  background-color: #FCD835;
+  color: #1F1F1F;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+  border-bottom: 2px solid #1F1F1F;
+}
+
+.products-grid .MuiDataGrid-row {
+  background-color: #FFFFFF;
+}
+
+.products-grid .MuiDataGrid-row:hover {
+  background-color: #FFF8DC;
+}
+
+.products-grid .MuiDataGrid-cell {
+  border-color: #FFF1B3;
+}
+
+.products-grid .MuiDataGrid-footerContainer {
+  background-color: #FFF8DC;
+  border-top: 2px solid #1F1F1F;
+}
+
+.products-grid .MuiDataGrid-cell:focus,
+.products-grid .MuiDataGrid-cell:focus-within,
+.products-grid .MuiDataGrid-columnHeader:focus,
+.products-grid .MuiDataGrid-columnHeader:focus-within {
+  outline: none;
+}

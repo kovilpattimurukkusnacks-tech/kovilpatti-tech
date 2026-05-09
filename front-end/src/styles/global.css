@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+:root {
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-feature-settings: 'cv11', 'ss01', 'ss03';
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  letter-spacing: -0.01em;
+  color-scheme: light;
+}
+
+body {
+  margin: 0;
+  background-color: #FFF8DC;
+  background-image:
+    /* very subtle yellow + charcoal accents — like vintage wrapper paper */
+    radial-gradient(circle at 12% 18%, rgba(252, 216, 53, 0.25), transparent 50%),
+    radial-gradient(circle at 88% 80%, rgba(252, 216, 53, 0.2), transparent 50%),
+    radial-gradient(circle at 50% 50%, rgba(255, 255, 255, 0.5), transparent 60%),
+    linear-gradient(135deg, #FFF8DC, #FFF1B3);
+  background-attachment: fixed;
+  color: #1F1F1F;
+  min-height: 100vh;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+#root {
+  min-height: 100vh;
+}
+
+h1, h2, h3, h4, h5, h6 {
+  letter-spacing: -0.02em;
+  font-weight: 600;
+}
+
+h1 { font-weight: 700; }
+
+.font-display {
+  font-family: 'DM Serif Display', Georgia, serif;
+  letter-spacing: 0;
+  font-weight: 400;
+}
+
+/* ─── Shared "data page" pattern ───────────────────────────────────
+   Paper wrapper + DataGrid theming for list pages
+   (Products, Inventories, Shops, Staff). Each page adds its own
+   className alongside these shared utilities for any page-specific
+   tweaks. Dashboard uses its own variant — see Dashboard.css. */
+
+.data-page-paper {
+  border: 2px solid #1F1F1F;
+  overflow: hidden;
+  box-shadow: 6px 6px 0 0 #FCD835;
+  background-color: #FFFFFF;
+  backdrop-filter: none;
+}
+
+.data-page-grid {
+  border: 0;
+  background-color: #FFFFFF;
+  color: #1F1F1F;
+}
+
+.data-page-grid .MuiDataGrid-columnHeaders {
+  background-color: #FCD835;
+  color: #1F1F1F;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+  border-bottom: 2px solid #1F1F1F;
+}
+
+.data-page-grid .MuiDataGrid-row {
+  background-color: #FFFFFF;
+}
+
+.data-page-grid .MuiDataGrid-row:hover {
+  background-color: #FFF8DC;
+}
+
+.data-page-grid .MuiDataGrid-cell {
+  border-color: #FFF1B3;
+}
+
+.data-page-grid .MuiDataGrid-footerContainer {
+  background-color: #FFF8DC;
+  border-top: 2px solid #1F1F1F;
+}
+
+.data-page-grid .MuiDataGrid-cell:focus,
+.data-page-grid .MuiDataGrid-cell:focus-within,
+.data-page-grid .MuiDataGrid-columnHeader:focus,
+.data-page-grid .MuiDataGrid-columnHeader:focus-within {
+  outline: none;
+}

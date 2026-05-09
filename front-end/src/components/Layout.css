@@ -1,0 +1,24 @@
+/* Layout — mobile drawer + floating hamburger. */
+
+.layout-mobile-menu {
+  position: fixed;
+  top: 12px;
+  left: 12px;
+  z-index: 20;
+  background-color: #FFFFFF !important;
+  color: #1F1F1F !important;
+  border: 2px solid #1F1F1F !important;
+  border-radius: 8px !important;
+  box-shadow: 4px 4px 0 0 #FCD835;
+}
+
+.layout-mobile-menu:hover {
+  background-color: #FCD835 !important;
+}
+
+/* MUI Drawer paper override — was inside an sx block targeting `& .MuiDrawer-paper`. */
+.layout-drawer .MuiDrawer-paper {
+  width: 256px;
+  box-sizing: border-box;
+  border: none;
+}

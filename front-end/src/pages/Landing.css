@@ -1,0 +1,19 @@
+/* Landing page (unified login) — yellow + dark theme. */
+
+.landing-header-badge {
+  background-color: #1F1F1F;
+  box-shadow: 4px 4px 0 0 #FCD835;
+}
+
+.landing-welcome-card {
+  border: 2px solid #1F1F1F;
+  box-shadow: 8px 8px 0 0 #FCD835;
+}
+
+.landing-login-input {
+  border: 2px solid #1F1F1F;
+}
+
+.landing-login-submit {
+  border: 2px solid #1F1F1F;
+}

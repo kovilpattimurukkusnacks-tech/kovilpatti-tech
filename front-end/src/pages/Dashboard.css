@@ -1,0 +1,51 @@
+/* Dashboard page — Paper wrapper, yellow section header, DataGrid theming.
+   Note: Dashboard's column headers are cream (#FFF8DC); Products' are yellow (#FCD835).
+   Different by design — preserved as-is. */
+
+.dashboard-paper {
+  border: 2px solid #1F1F1F;
+  overflow: hidden;
+  box-shadow: 6px 6px 0 0 #FCD835;
+  background-color: #FFFFFF;
+  backdrop-filter: none;
+}
+
+.dashboard-section-header {
+  border-bottom: 2px solid #1F1F1F;
+  background-color: #FCD835;
+}
+
+.dashboard-grid {
+  border: 0;
+  background-color: #FFFFFF;
+  color: #1F1F1F;
+}
+
+.dashboard-grid .MuiDataGrid-columnHeaders {
+  background-color: #FFF8DC;
+  color: #1F1F1F;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 0.7rem;
+  border-bottom: 2px solid #1F1F1F;
+}
+
+.dashboard-grid .MuiDataGrid-row {
+  background-color: #FFFFFF;
+}
+
+.dashboard-grid .MuiDataGrid-row:hover {
+  background-color: #FFF8DC;
+}
+
+.dashboard-grid .MuiDataGrid-cell {
+  border-color: #FFF1B3;
+}
+
+.dashboard-grid .MuiDataGrid-cell:focus,
+.dashboard-grid .MuiDataGrid-cell:focus-within,
+.dashboard-grid .MuiDataGrid-columnHeader:focus,
+.dashboard-grid .MuiDataGrid-columnHeader:focus-within {
+  outline: none;
+}

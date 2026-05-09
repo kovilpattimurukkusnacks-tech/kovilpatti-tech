@@ -1,0 +1,17 @@
+# Local build outputs — built fresh inside the Docker stage.
+**/bin
+**/obj
+
+# IDE / editor
+**/.vs
+**/.vscode
+**/.idea
+**/*.user
+**/*.suo
+
+# Misc
+**/.git
+**/.gitignore
+**/.dockerignore
+**/Dockerfile*
+**/README*
