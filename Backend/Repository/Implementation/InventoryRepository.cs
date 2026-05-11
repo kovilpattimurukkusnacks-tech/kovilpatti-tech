@@ -15,6 +15,21 @@ public class InventoryRepository(IDbConnectionFactory factory) : IInventoryRepos
         return rows.ToList();
     }
 
+    public async Task<(List<Inventory> Rows, long Total)> ListPagedAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+
+        const string sqlList  = "SELECT * FROM fn_inventory_list_paged(@p_page, @p_page_size)";
+        const string sqlCount = "SELECT fn_inventory_count()";
+
+        var rows = (await conn.QueryAsync<Inventory>(new CommandDefinition(
+            sqlList, new { p_page = page, p_page_size = pageSize }, cancellationToken: ct))).ToList();
+
+        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, cancellationToken: ct));
+
+        return (rows, total);
+    }
+
     public async Task<Inventory?> GetAsync(Guid id, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);

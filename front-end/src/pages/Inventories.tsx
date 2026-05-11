@@ -2,13 +2,13 @@ import { useEffect, useMemo, useState } from 'react'
 import { Plus, Edit2, Trash2, X, Warehouse } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, Paper, TextField,
+  IconButton, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
-  useInventories, useCreateInventory, useUpdateInventory, useDeleteInventory,
+  useInventoriesPaged, useCreateInventory, useUpdateInventory, useDeleteInventory,
 } from '../hooks/useInventories'
 import type {
   InventoryDto, CreateInventoryRequest, UpdateInventoryRequest,
@@ -29,7 +29,8 @@ type FormValues = {
 }
 
 export default function Inventories() {
-  const list = useInventories()
+  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+  const list = useInventoriesPaged(paginationModel.page + 1, paginationModel.pageSize)
   const create = useCreateInventory()
   const update = useUpdateInventory()
   const remove = useDeleteInventory()
@@ -37,7 +38,8 @@ export default function Inventories() {
   const [formMode, setFormMode] = useState<FormMode>({ kind: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<InventoryDto | null>(null)
 
-  const inventories = list.data ?? []
+  const inventories = list.data?.items ?? []
+  const total       = list.data?.total ?? 0
 
   const closeForm = () => setFormMode({ kind: 'closed' })
 
@@ -96,6 +98,8 @@ export default function Inventories() {
     {
       field: 'actions', headerName: 'Actions', width: 120, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
+      cellClassName: 'col-pin-right',
+      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', inventory: row })}>
@@ -120,7 +124,7 @@ export default function Inventories() {
         subtitle={
           list.isLoading
             ? 'Loading…'
-            : `${inventories.length} ${inventories.length === 1 ? 'inventory' : 'inventories'} configured`
+            : `${total} ${total === 1 ? 'inventory' : 'inventories'} configured`
         }
         action={
           <Button
@@ -149,8 +153,11 @@ export default function Inventories() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-          pageSizeOptions={[10, 25, 50]}
+          paginationMode="server"
+          rowCount={total}
+          paginationModel={paginationModel}
+          onPaginationModelChange={setPaginationModel}
+          pageSizeOptions={[10, 25, 50, 100]}
         />
       </Paper>
 
@@ -202,7 +209,8 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
     if (!open) return
     setName(inventory?.name ?? '')
     setAddress(inventory?.address ?? '')
-    setContactPhone(inventory?.contactPhone ?? '')
+    // Strip any '+91' or non-digit chars from the stored value — input shows only the 10 local digits.
+    setContactPhone((inventory?.contactPhone ?? '').replace(/\D/g, '').slice(-10))
     setContactPersonName(inventory?.contactPersonName ?? '')
     setActive(inventory?.active ?? true)
     setErr(null)
@@ -210,16 +218,17 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim())         { setErr('Enter an inventory name'); return }
-    if (!address.trim())      { setErr('Enter the address'); return }
-    if (!contactPhone.trim()) { setErr('Enter a contact number'); return }
+    if (!name.trim())              { setErr('Enter an inventory name'); return }
+    if (!address.trim())           { setErr('Enter the address'); return }
+    if (contactPhone.length !== 10) { setErr('Contact number must be exactly 10 digits'); return }
     setErr(null)
 
     try {
       await onSave({
         name: name.trim(),
         address: address.trim(),
-        contactPhone: contactPhone.trim(),
+        // Send to BE / store with the +91 prefix so the table display stays consistent.
+        contactPhone: `+91 ${contactPhone}`,
         contactPersonName: contactPersonName.trim(),
         active,
       })
@@ -229,7 +238,16 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
   }
 
   return (
-    <Dialog open={open} onClose={submitting ? undefined : onClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick' || submitting) return
+        onClose()
+      }}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Warehouse className="w-5 h-5" />
@@ -248,13 +266,37 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
           <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
           <TextField label="Address" value={address} onChange={e => setAddress(e.target.value)} required size="small" multiline minRows={2} disabled={submitting} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField label="Contact Number" value={contactPhone} onChange={e => setContactPhone(e.target.value)} required size="small" placeholder="+91 ..." disabled={submitting} />
-            <TextField label="Contact Person" value={contactPersonName} onChange={e => setContactPersonName(e.target.value)} size="small" placeholder="(optional)" disabled={submitting} />
+            <TextField
+              label="Contact Number"
+              value={contactPhone}
+              onChange={e => setContactPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+              required
+              size="small"
+              placeholder="10-digit number"
+              slotProps={{ htmlInput: { maxLength: 10, inputMode: 'numeric' } }}
+              disabled={submitting}
+            />
+            <TextField
+              label="Contact Person"
+              value={contactPersonName}
+              onChange={e => setContactPersonName(
+                // Only letters, spaces, periods, apostrophes and hyphens — no digits or other special chars.
+                e.target.value.replace(/[^A-Za-z\s.'\-]/g, '').slice(0, 60)
+              )}
+              onKeyDown={e => {
+                if (e.key.length === 1 && !/[A-Za-z\s.'\-]/.test(e.key)) e.preventDefault()
+              }}
+              size="small"
+              placeholder="(optional, letters only, max 60)"
+              slotProps={{ htmlInput: { maxLength: 60 } }}
+              disabled={submitting}
+            />
           </Box>
-          <FormControlLabel
-            control={<Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} />}
-            label="Active"
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>

@@ -1,3 +1,4 @@
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Products;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Authorization;
@@ -11,11 +12,13 @@ namespace KovilpattiSnacks.API.Controllers;
 public class ProductsController(IProductService products) : ControllerBase
 {
     [HttpGet]
-    public async Task<ActionResult<IReadOnlyList<ProductDto>>> List(
+    public async Task<ActionResult<PagedResult<ProductDto>>> List(
         [FromQuery] string? search,
         [FromQuery] int? categoryId,
-        CancellationToken ct)
-        => Ok(await products.ListAsync(search, categoryId, ct));
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
+        => Ok(await products.ListAsync(search, categoryId, page, pageSize, ct));
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ProductDto>> Get(Guid id, CancellationToken ct)

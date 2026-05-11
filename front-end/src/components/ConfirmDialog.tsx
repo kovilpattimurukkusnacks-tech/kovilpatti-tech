@@ -20,7 +20,10 @@ export default function ConfirmDialog({
   return (
     <Dialog
       open={open}
-      onClose={onCancel}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick') return
+        onCancel()
+      }}
       maxWidth="xs"
       fullWidth
       slotProps={{ paper: { sx: { borderRadius: 3 } } }}

@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon } from 'lucide-react'
 import {
   Alert, Badge, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, MenuItem, Paper, TextField,
+  IconButton, MenuItem, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
@@ -34,7 +34,14 @@ type FormValues = {
 
 export default function Products() {
   const [filters, setFilters] = useState<ProductListFilters>({})
-  const list = useProducts(filters)
+  // DataGrid uses 0-indexed pages; BE uses 1-indexed. Convert on the wire.
+  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+
+  const list = useProducts({
+    ...filters,
+    page: paginationModel.page + 1,
+    pageSize: paginationModel.pageSize,
+  })
   const categoriesQuery = useCategories()
   const create = useCreateProduct()
   const update = useUpdateProduct()
@@ -48,8 +55,15 @@ export default function Products() {
   const activeFilterCount =
     (filters.search ? 1 : 0) + (filters.categoryId != null ? 1 : 0)
 
-  const products = list.data ?? []
+  const products  = list.data?.items ?? []
+  const total     = list.data?.total ?? 0
   const categories = categoriesQuery.data ?? []
+
+  // Whenever filters change, jump back to page 0 so the user lands on the
+  // first page of the newly-filtered result set instead of an empty page N.
+  useEffect(() => {
+    setPaginationModel(prev => ({ ...prev, page: 0 }))
+  }, [filters.search, filters.categoryId])
 
   const closeForm = () => setFormMode({ kind: 'closed' })
 
@@ -120,6 +134,8 @@ export default function Products() {
     {
       field: 'actions', headerName: 'Actions', width: 120, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
+      cellClassName: 'col-pin-right',
+      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', product: row })}>
@@ -144,7 +160,7 @@ export default function Products() {
         subtitle={
           list.isLoading
             ? 'Loading…'
-            : `${products.length} ${products.length === 1 ? 'product' : 'products'} in catalog`
+            : `${total} ${total === 1 ? 'product' : 'products'} in catalog`
         }
         action={
           <Box sx={{ display: 'flex', gap: 1 }}>
@@ -222,8 +238,11 @@ export default function Products() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-          pageSizeOptions={[10, 25, 50]}
+          paginationMode="server"
+          rowCount={total}
+          paginationModel={paginationModel}
+          onPaginationModelChange={setPaginationModel}
+          pageSizeOptions={[10, 25, 50, 100]}
         />
       </Paper>
 
@@ -302,6 +321,38 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setErr(null)
   }, [open, product, categories])
 
+  // Controlled-input filter for numeric fields:
+  //   * onChange whitelist regex — only digits and one decimal point survive
+  //   * caps decimal places (matches DB precision — 2 for prices, 3 for weight)
+  //   * caps max value
+  // Returns an onChange handler usable as { onChange={numericInput(...)} }
+  const numericInput = (
+    setter: (v: string) => void,
+    opts: { max: number; decimals: number },
+  ) => (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    const raw = e.target.value
+    if (raw === '') { setter(''); return }
+    // Only digits and at most one decimal point. Rejects '-', '+', 'e', 'E', ',', etc.
+    if (!/^[0-9]*\.?[0-9]*$/.test(raw)) return
+    const parts = raw.split('.')
+    if (parts[1] && parts[1].length > opts.decimals) return
+    const num = parseFloat(raw)
+    if (Number.isNaN(num)) {
+      // Allow partial entries like "" or "." while user is typing.
+      setter(raw)
+      return
+    }
+    if (num < 0 || num > opts.max) return
+    setter(raw)
+  }
+
+  // Block forbidden characters at the keyboard level so they never reach state.
+  // type="number" inputs let you type 'e', '+', '-' even when min=0 is set.
+  // MUI TextField's onKeyDown is typed against the wrapping <div>, not the input.
+  const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (['e', 'E', '+', '-', ','].includes(e.key)) e.preventDefault()
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim())                                   { setErr('Enter a product name'); return }
@@ -334,7 +385,16 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   }
 
   return (
-    <Dialog open={open} onClose={submitting ? undefined : onClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick' || submitting) return
+        onClose()
+      }}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Package className="w-5 h-5" />
@@ -366,9 +426,13 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
             <TextField
               label="Net Weight"
               type="number"
-              slotProps={{ htmlInput: { step: 0.001, min: 0 } }}
+              slotProps={{
+                htmlInput: { step: 0.001, min: 0, max: 99999.999, inputMode: 'decimal' },
+                inputLabel: { shrink: weightValue !== '' || undefined },
+              }}
               value={weightValue}
-              onChange={e => setWeightValue(e.target.value)}
+              onChange={numericInput(setWeightValue, { max: 99999.999, decimals: 3 })}
+              onKeyDown={blockNonNumericKeys}
               size="small"
               sx={{ flex: 2 }}
               placeholder="100"
@@ -391,9 +455,13 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
             <TextField
               label="MRP (₹)"
               type="number"
-              slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
+              slotProps={{
+                htmlInput: { step: 0.01, min: 0, max: 99999999.99, inputMode: 'decimal' },
+                inputLabel: { shrink: mrp !== '' || undefined },
+              }}
               value={mrp}
-              onChange={e => setMrp(e.target.value)}
+              onChange={numericInput(setMrp, { max: 99999999.99, decimals: 2 })}
+              onKeyDown={blockNonNumericKeys}
               required
               size="small"
               disabled={submitting}
@@ -401,18 +469,24 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
             <TextField
               label="Purchase Price (₹)"
               type="number"
-              slotProps={{ htmlInput: { step: 0.01, min: 0 } }}
+              slotProps={{
+                htmlInput: { step: 0.01, min: 0, max: 99999999.99, inputMode: 'decimal' },
+                inputLabel: { shrink: purchasePrice !== '' || undefined },
+              }}
               value={purchasePrice}
-              onChange={e => setPurchasePrice(e.target.value)}
+              onChange={numericInput(setPurchasePrice, { max: 99999999.99, decimals: 2 })}
+              onKeyDown={blockNonNumericKeys}
               required
               size="small"
               disabled={submitting}
             />
           </Box>
-          <FormControlLabel
-            control={<Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} />}
-            label="Active"
-          />
+          {/* Manual layout instead of FormControlLabel so only the checkbox itself toggles,
+              not the label text or surrounding whitespace. */}
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>
@@ -471,7 +545,16 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
   }
 
   return (
-    <Dialog open={open} onClose={handleClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick') return
+        handleClose()
+      }}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Upload className="w-5 h-5" />
@@ -616,7 +699,16 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
   }
 
   return (
-    <Dialog open={open} onClose={onClose} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick') return
+        onClose()
+      }}
+      maxWidth="xs"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <FilterIcon className="w-5 h-5" />

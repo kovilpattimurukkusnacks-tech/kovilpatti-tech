@@ -16,6 +16,27 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
         return rows.ToList();
     }
 
+    public async Task<(List<Product> Rows, long Total)> ListPagedAsync(
+        string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+
+        const string sqlList  = "SELECT * FROM fn_product_list_paged(@p_search, @p_category_id, @p_page, @p_page_size)";
+        const string sqlCount = "SELECT fn_product_count(@p_search, @p_category_id)";
+
+        var rows = (await conn.QueryAsync<Product>(new CommandDefinition(
+            sqlList,
+            new { p_search = search, p_category_id = categoryId, p_page = page, p_page_size = pageSize },
+            cancellationToken: ct))).ToList();
+
+        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
+            sqlCount,
+            new { p_search = search, p_category_id = categoryId },
+            cancellationToken: ct));
+
+        return (rows, total);
+    }
+
     public async Task<Product?> GetAsync(Guid id, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);

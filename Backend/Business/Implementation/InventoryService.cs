@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Inventories;
 using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
@@ -20,6 +21,14 @@ public class InventoryService(
     {
         var rows = await inventories.ListAsync(ct);
         return rows.Select(MapToDto).ToList();
+    }
+
+    public async Task<PagedResult<InventoryDto>> ListPagedAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        var safePage     = page     < 1 ? 1  : page;
+        var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
+        var (rows, total) = await inventories.ListPagedAsync(safePage, safePageSize, ct);
+        return new PagedResult<InventoryDto>(rows.Select(MapToDto).ToList(), total, safePage, safePageSize);
     }
 
     public async Task<InventoryDto> GetAsync(Guid id, CancellationToken ct = default)

@@ -40,6 +40,15 @@ export type UpdateProductRequest = {
 export type ProductListFilters = {
   search?: string
   categoryId?: number
+  page?: number      // 1-indexed for BE
+  pageSize?: number
+}
+
+export type PagedResult<T> = {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
 }
 
 export type ImportProductError = {

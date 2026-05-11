@@ -5,6 +5,7 @@ namespace KovilpattiSnacks.Repository.Interface;
 public interface IProductRepository
 {
     Task<List<Product>> ListAsync(string? search, int? categoryId, CancellationToken ct = default);
+    Task<(List<Product> Rows, long Total)> ListPagedAsync(string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default);
     Task<Product?> GetAsync(Guid id, CancellationToken ct = default);
     Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default);
     Task<string> NextCodeAsync(CancellationToken ct = default);

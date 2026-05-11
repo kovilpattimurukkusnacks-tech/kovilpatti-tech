@@ -1,3 +1,4 @@
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Shops;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Authorization;
@@ -13,6 +14,13 @@ public class ShopsController(IShopService shops) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<ShopDto>>> List(CancellationToken ct)
         => Ok(await shops.ListAsync(ct));
+
+    [HttpGet("paged")]
+    public async Task<ActionResult<PagedResult<ShopDto>>> ListPaged(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
+        => Ok(await shops.ListPagedAsync(page, pageSize, ct));
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ShopDto>> Get(Guid id, CancellationToken ct)
