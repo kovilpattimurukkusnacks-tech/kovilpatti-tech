@@ -54,17 +54,28 @@ public class ProductService(
                 new ValidationFailure(nameof(request.Code), $"Code '{code}' already exists.")
             });
 
+        var name        = request.Name.Trim();
+        var type        = request.Type.Trim();
+        var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
+        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
+
+        if (await VariantExistsAsync(newKey, excludeId: null, ct))
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Name),
+                    "Another product with the same name, type, weight and category already exists.")
+            });
+
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
         var product = new Product
         {
             Code           = code,
-            Name           = request.Name.Trim(),
+            Name           = name,
             CategoryId     = request.CategoryId,
-            Type           = request.Type.Trim(),
+            Type           = type,
             WeightValue    = request.WeightValue,
-            WeightUnit     = request.WeightUnit ?? "g",
+            WeightUnit     = weightUnit,
             Mrp            = request.Mrp,
             PurchasePrice  = request.PurchasePrice,
             Active         = request.Active
@@ -86,6 +97,17 @@ public class ProductService(
             !await categories.ExistsAsync(request.CategoryId, ct))
             throw new NotFoundException($"Category '{request.CategoryId}' not found.");
 
+        var name        = request.Name.Trim();
+        var type        = request.Type.Trim();
+        var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
+        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
+
+        if (await VariantExistsAsync(newKey, excludeId: id, ct))
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Name),
+                    "Another product with the same name, type, weight and category already exists.")
+            });
+
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
@@ -93,11 +115,11 @@ public class ProductService(
         {
             Id             = id,
             Code           = existing.Code,
-            Name           = request.Name.Trim(),
+            Name           = name,
             CategoryId     = request.CategoryId,
-            Type           = request.Type.Trim(),
+            Type           = type,
             WeightValue    = request.WeightValue,
-            WeightUnit     = request.WeightUnit ?? "g",
+            WeightUnit     = weightUnit,
             Mrp            = request.Mrp,
             PurchasePrice  = request.PurchasePrice,
             Active         = request.Active
@@ -119,9 +141,11 @@ public class ProductService(
     }
 
     // Bulk import — strict validation; if any row has a hard error, nothing is
-    // inserted. Rows whose `name` already exists are silently skipped (returned
-    // in the result, not treated as errors). For unknown categories we surface
-    // a "did you mean" hint based on Levenshtein distance — never auto-mapped.
+    // inserted. Rows whose (name + type + weight + category) already exists are
+    // silently skipped (returned in the result, not treated as errors). Rows
+    // within the same file that collide on the variant key are also skipped
+    // after the first one wins. For unknown categories we surface a "did you
+    // mean" hint based on Levenshtein distance — never auto-mapped.
     public async Task<ImportProductsResult> ImportAsync(Stream fileStream, string fileName, CancellationToken ct = default)
     {
         var userId = currentUser.UserId
@@ -137,10 +161,10 @@ public class ProductService(
         if (rawRows.Count == 0)
             return new ImportProductsResult(0, 0, [], []);
 
-        var allCategories = await categories.ListAsync(ct);
+        var allCategories  = await categories.ListAsync(ct);
         var categoryByName = allCategories.ToDictionary(c => c.Name.Trim(), c => c, StringComparer.OrdinalIgnoreCase);
-        var existingNames = (await products.ListAsync(null, null, ct))
-            .Select(p => p.Name.Trim())
+        var existingKeys = (await products.ListAsync(null, null, ct))
+            .Select(p => VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g"))
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var errors = new List<ImportProductError>();
@@ -194,18 +218,24 @@ public class ProductService(
                 continue;
             }
 
-            // Hard errors check passed — now soft-skip duplicates.
-            if (existingNames.Contains(row.Name!.Trim()))
+            // Hard errors check passed — now soft-skip duplicates by composite key.
+            // Add the new key to the set so a duplicate row later in the same
+            // file also gets reported as a skip (instead of double-inserting).
+            var rowName = row.Name!.Trim();
+            var rowType = row.Type!.Trim();
+            var rowKey  = VariantKey(rowName, category!.Id, rowType, weightValue, weightUnit);
+            if (!existingKeys.Add(rowKey))
             {
-                skipped.Add(new ImportProductSkipped(row.RowNumber, row.Name!.Trim(), "name already exists"));
+                skipped.Add(new ImportProductSkipped(row.RowNumber, rowName,
+                    "same name, type, weight & category already exists"));
                 continue;
             }
 
             validated.Add(new Product
             {
-                Name           = row.Name!.Trim(),
+                Name           = rowName,
                 CategoryId     = category!.Id,
-                Type           = row.Type!.Trim(),
+                Type           = rowType,
                 WeightValue    = weightValue,
                 WeightUnit     = weightUnit,
                 Mrp            = mrp,
@@ -227,6 +257,37 @@ public class ProductService(
         }
 
         return new ImportProductsResult(rawRows.Count, imported, skipped, []);
+    }
+
+    // Variant key = case-insensitive (name, category, type, weight). Two products
+    // sharing this key are treated as the same SKU. NULL weight_value is its own
+    // bucket (different from "0" or "10g"). Unit is normalized to lowercase.
+    //
+    // Weight is normalized with "0.###" so "10", "10.0", and "10.000" all hash
+    // the same — Npgsql preserves the numeric(10,3) scale on read, but the
+    // Excel parser doesn't, so direct ToString() would mismatch.
+    private static string VariantKey(string name, int categoryId, string type, decimal? weightValue, string weightUnit)
+    {
+        var n = (name ?? "").Trim().ToLowerInvariant();
+        var t = (type ?? "").Trim().ToLowerInvariant();
+        var u = (weightUnit ?? "g").Trim().ToLowerInvariant();
+        var w = weightValue.HasValue
+            ? weightValue.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
+            : "∅";
+        return $"{n}|{categoryId}|{t}|{w}|{u}";
+    }
+
+    private async Task<bool> VariantExistsAsync(string key, Guid? excludeId, CancellationToken ct)
+    {
+        var all = await products.ListAsync(null, null, ct);
+        foreach (var p in all)
+        {
+            if (excludeId.HasValue && p.Id == excludeId.Value) continue;
+            var existingKey = VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g");
+            if (string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
+                return true;
+        }
+        return false;
     }
 
     private static bool TryParseDecimal(string? raw, out decimal value)
