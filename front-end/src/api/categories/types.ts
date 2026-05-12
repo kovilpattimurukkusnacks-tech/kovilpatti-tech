@@ -5,3 +5,13 @@ export type CategoryDto = {
   name: string
   active: boolean
 }
+
+export type CreateCategoryRequest = {
+  name: string
+  active?: boolean
+}
+
+export type UpdateCategoryRequest = {
+  name: string
+  active: boolean
+}
