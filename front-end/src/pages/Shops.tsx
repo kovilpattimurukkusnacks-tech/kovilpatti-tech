@@ -2,12 +2,12 @@ import { useEffect, useMemo, useState } from 'react'
 import { Plus, Edit2, Trash2, X, Store } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, MenuItem, Paper, TextField,
+  IconButton, MenuItem, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
-import { useShops, useCreateShop, useUpdateShop, useDeleteShop } from '../hooks/useShops'
+import { useShopsPaged, useCreateShop, useUpdateShop, useDeleteShop } from '../hooks/useShops'
 import { useInventories } from '../hooks/useInventories'
 import type {
   ShopDto, CreateShopRequest, UpdateShopRequest,
@@ -31,7 +31,8 @@ type FormValues = {
 }
 
 export default function Shops() {
-  const list = useShops()
+  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+  const list = useShopsPaged(paginationModel.page + 1, paginationModel.pageSize)
   const inventories = useInventories()
   const create = useCreateShop()
   const update = useUpdateShop()
@@ -40,7 +41,8 @@ export default function Shops() {
   const [formMode, setFormMode] = useState<FormMode>({ kind: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<ShopDto | null>(null)
 
-  const shops = list.data ?? []
+  const shops         = list.data?.items ?? []
+  const total         = list.data?.total ?? 0
   const inventoryList = inventories.data ?? []
 
   const closeForm = () => setFormMode({ kind: 'closed' })
@@ -105,6 +107,8 @@ export default function Shops() {
     {
       field: 'actions', headerName: 'Actions', width: 120, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
+      cellClassName: 'col-pin-right',
+      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', shop: row })}>
@@ -129,7 +133,7 @@ export default function Shops() {
         subtitle={
           list.isLoading
             ? 'Loading…'
-            : `${shops.length} ${shops.length === 1 ? 'shop' : 'shops'} configured`
+            : `${total} ${total === 1 ? 'shop' : 'shops'} configured`
         }
         action={
           <Button
@@ -163,8 +167,11 @@ export default function Shops() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-          pageSizeOptions={[10, 25, 50]}
+          paginationMode="server"
+          rowCount={total}
+          paginationModel={paginationModel}
+          onPaginationModelChange={setPaginationModel}
+          pageSizeOptions={[10, 25, 50, 100]}
         />
       </Paper>
 
@@ -220,8 +227,9 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
     if (!open) return
     setName(shop?.name ?? '')
     setAddress(shop?.address ?? '')
-    setContactPhone1(shop?.contactPhone1 ?? '')
-    setContactPhone2(shop?.contactPhone2 ?? '')
+    // Strip '+91' / non-digits — keep just the 10 local digits for the input.
+    setContactPhone1((shop?.contactPhone1 ?? '').replace(/\D/g, '').slice(-10))
+    setContactPhone2((shop?.contactPhone2 ?? '').replace(/\D/g, '').slice(-10))
     setGstin(shop?.gstin ?? '')
     setInventoryId(shop?.inventoryId ?? (inventories[0]?.id ?? ''))
     setActive(shop?.active ?? true)
@@ -230,10 +238,13 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim())          { setErr('Enter a shop name'); return }
-    if (!address.trim())       { setErr('Enter the address'); return }
-    if (!contactPhone1.trim()) { setErr('Enter Contact Number 1'); return }
-    if (!inventoryId)          { setErr('Pick an inventory'); return }
+    if (!name.trim())                { setErr('Enter a shop name'); return }
+    if (!address.trim())             { setErr('Enter the address'); return }
+    if (contactPhone1.length !== 10) { setErr('Contact Number 1 must be exactly 10 digits'); return }
+    if (contactPhone2 && contactPhone2.length !== 10) {
+      setErr('Contact Number 2 must be exactly 10 digits when provided'); return
+    }
+    if (!inventoryId)                { setErr('Pick an inventory'); return }
     const trimmedGstin = gstin.trim()
     if (trimmedGstin && trimmedGstin.length !== 15) {
       setErr('GSTIN must be exactly 15 characters when provided'); return
@@ -244,8 +255,9 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
       await onSave({
         name: name.trim(),
         address: address.trim(),
-        contactPhone1: contactPhone1.trim(),
-        contactPhone2: contactPhone2.trim(),
+        // Prepend +91 prefix on save so the table display stays consistent across rows.
+        contactPhone1: `+91 ${contactPhone1}`,
+        contactPhone2: contactPhone2 ? `+91 ${contactPhone2}` : '',
         gstin: trimmedGstin ? trimmedGstin.toUpperCase() : '',
         inventoryId,
         active,
@@ -256,7 +268,16 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
   }
 
   return (
-    <Dialog open={open} onClose={submitting ? undefined : onClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick' || submitting) return
+        onClose()
+      }}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Store className="w-5 h-5" />
@@ -275,8 +296,27 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
           <TextField label="Shop Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
           <TextField label="Shop Address" value={address} onChange={e => setAddress(e.target.value)} required size="small" multiline minRows={2} disabled={submitting} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField label="Contact Number 1" value={contactPhone1} onChange={e => setContactPhone1(e.target.value)} required size="small" placeholder="+91 ..." disabled={submitting} />
-            <TextField label="Contact Number 2" value={contactPhone2} onChange={e => setContactPhone2(e.target.value)} size="small" placeholder="(optional)" disabled={submitting} />
+            <TextField
+              label="Contact Number 1"
+              value={contactPhone1}
+              onChange={e => setContactPhone1(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+              required
+              size="small"
+              placeholder="10-digit number"
+              slotProps={{ htmlInput: { maxLength: 10, inputMode: 'numeric' } }}
+              disabled={submitting}
+            />
+            <TextField
+              label="Contact Number 2"
+              value={contactPhone2}
+              onChange={e => setContactPhone2(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+              size="small"
+              placeholder="(optional, 10-digit)"
+              slotProps={{ htmlInput: { maxLength: 10, inputMode: 'numeric' } }}
+              disabled={submitting}
+            />
           </Box>
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
             <TextField label="GSTIN" value={gstin} onChange={e => setGstin(e.target.value.toUpperCase())} size="small" placeholder="(15 chars, optional)" slotProps={{ htmlInput: { maxLength: 15 } }} disabled={submitting} />
@@ -286,10 +326,10 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
               ))}
             </TextField>
           </Box>
-          <FormControlLabel
-            control={<Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} />}
-            label="Active"
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>

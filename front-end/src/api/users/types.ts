@@ -38,3 +38,10 @@ export type UpdateStaffRequest = {
 export type ResetPasswordRequest = {
   newPassword: string
 }
+
+export type PagedResult<T> = {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}

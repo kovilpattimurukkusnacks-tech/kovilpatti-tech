@@ -9,14 +9,15 @@
  *   - Pages consume these hooks; they don't import the api layer directly.
  */
 
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { inventoriesApi } from '../api/inventories/api'
 import type {
-  CreateInventoryRequest, UpdateInventoryRequest,
+  CreateInventoryRequest, UpdateInventoryRequest, PagedResult, InventoryDto,
 } from '../api/inventories/types'
 
 export const inventoriesKeys = {
   all: ['inventories'] as const,
+  paged: (page: number, pageSize: number) => ['inventories', 'paged', page, pageSize] as const,
   detail: (id: string) => ['inventories', id] as const,
 }
 
@@ -24,6 +25,14 @@ export function useInventories() {
   return useQuery({
     queryKey: inventoriesKeys.all,
     queryFn: () => inventoriesApi.list(),
+  })
+}
+
+export function useInventoriesPaged(page: number, pageSize: number) {
+  return useQuery({
+    queryKey: inventoriesKeys.paged(page, pageSize),
+    queryFn: () => inventoriesApi.listPaged(page, pageSize),
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -39,8 +48,21 @@ export function useCreateInventory() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: CreateInventoryRequest) => inventoriesApi.create(req),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: inventoriesKeys.all })
+    onSuccess: (created) => {
+      // Paged list (Inventories page)
+      qc.setQueriesData<PagedResult<InventoryDto>>(
+        { queryKey: ['inventories', 'paged'] },
+        (old) => old ? {
+          ...old,
+          total: old.total + 1,
+          items: old.items.length < old.pageSize ? [...old.items, created] : old.items,
+        } : old,
+      )
+      // Unpaginated list (dropdowns in Shops + Staff forms)
+      qc.setQueryData<InventoryDto[]>(
+        inventoriesKeys.all,
+        (old) => old ? [...old, created] : old,
+      )
     },
   })
 }
@@ -50,9 +72,15 @@ export function useUpdateInventory() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: UpdateInventoryRequest }) =>
       inventoriesApi.update(id, req),
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: inventoriesKeys.all })
-      qc.invalidateQueries({ queryKey: inventoriesKeys.detail(vars.id) })
+    onSuccess: (updated, vars) => {
+      qc.setQueryData(inventoriesKeys.detail(vars.id), updated)
+      qc.setQueriesData<PagedResult<InventoryDto>>(
+        { queryKey: ['inventories', 'paged'] },
+        (old) => old ? { ...old, items: old.items.map(i => i.id === vars.id ? updated : i) } : old,
+      )
+      // The non-paged list (used by dropdowns) is still invalidated — cheap and
+      // ensures dropdowns reflect the new name immediately.
+      qc.invalidateQueries({ queryKey: inventoriesKeys.all, exact: true })
     },
   })
 }

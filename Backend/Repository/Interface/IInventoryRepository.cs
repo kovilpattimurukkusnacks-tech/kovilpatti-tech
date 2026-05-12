@@ -5,6 +5,7 @@ namespace KovilpattiSnacks.Repository.Interface;
 public interface IInventoryRepository
 {
     Task<List<Inventory>> ListAsync(CancellationToken ct = default);
+    Task<(List<Inventory> Rows, long Total)> ListPagedAsync(int page, int pageSize, CancellationToken ct = default);
     Task<Inventory?> GetAsync(Guid id, CancellationToken ct = default);
     Task<bool> ExistsAsync(Guid id, CancellationToken ct = default);
     Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default);

@@ -5,6 +5,7 @@ namespace KovilpattiSnacks.Repository.Interface;
 public interface IShopRepository
 {
     Task<List<Shop>> ListAsync(CancellationToken ct = default);
+    Task<(List<Shop> Rows, long Total)> ListPagedAsync(int page, int pageSize, CancellationToken ct = default);
     Task<Shop?> GetAsync(Guid id, CancellationToken ct = default);
     Task<bool> ExistsAsync(Guid id, CancellationToken ct = default);
     Task<bool> ExistsByCodeAsync(string code, CancellationToken ct = default);

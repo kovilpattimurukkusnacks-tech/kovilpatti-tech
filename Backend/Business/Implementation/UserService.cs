@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Users;
 using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
@@ -24,6 +25,14 @@ public class UserService(
     {
         var rows = await users.ListStaffAsync(ct);
         return rows.Select(MapToDto).ToList();
+    }
+
+    public async Task<PagedResult<UserDto>> ListPagedAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        var safePage     = page     < 1 ? 1  : page;
+        var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
+        var (rows, total) = await users.ListStaffPagedAsync(safePage, safePageSize, ct);
+        return new PagedResult<UserDto>(rows.Select(MapToDto).ToList(), total, safePage, safePageSize);
     }
 
     public async Task<UserDto> GetAsync(Guid id, CancellationToken ct = default)
@@ -124,16 +133,20 @@ public class UserService(
         var validation = await resetValidator.ValidateAsync(request, ct);
         if (!validation.IsValid) throw new ValidationException(validation.Errors);
 
+        var updater = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        // Run the BCrypt hash (CPU-bound, ~200ms at cost 10) in parallel with the
+        // DB read (~250ms over the Mumbai link). They're independent, so doing them
+        // sequentially wastes half the latency.
+        var hashTask = Task.Run(() => hasher.Hash(request.NewPassword), ct);
         var existing = await users.GetByIdAsync(id, ct)
             ?? throw new NotFoundException($"User '{id}' not found.");
 
         if (existing.Role == UserRole.Admin)
             throw new ForbiddenException("Cannot reset the admin user's password via this endpoint.");
 
-        var updater = currentUser.UserId
-            ?? throw new UnauthorizedException("Authenticated user required.");
-
-        var hash = hasher.Hash(request.NewPassword);
+        var hash = await hashTask;
         var ok = await users.UpdatePasswordAsync(id, hash, updater, ct);
         if (!ok) throw new NotFoundException($"User '{id}' not found.");
     }

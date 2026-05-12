@@ -51,6 +51,21 @@ public class UserRepository(IDbConnectionFactory factory) : IUserRepository
         return rows.ToList();
     }
 
+    public async Task<(List<User> Rows, long Total)> ListStaffPagedAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+
+        const string sqlList  = "SELECT * FROM fn_user_list_paged(@p_page, @p_page_size)";
+        const string sqlCount = "SELECT fn_user_count()";
+
+        var rows = (await conn.QueryAsync<User>(new CommandDefinition(
+            sqlList, new { p_page = page, p_page_size = pageSize }, cancellationToken: ct))).ToList();
+
+        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, cancellationToken: ct));
+
+        return (rows, total);
+    }
+
     public async Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
