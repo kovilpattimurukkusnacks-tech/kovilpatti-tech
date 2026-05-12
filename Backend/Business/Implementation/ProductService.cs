@@ -262,14 +262,17 @@ public class ProductService(
     // Variant key = case-insensitive (name, category, type, weight). Two products
     // sharing this key are treated as the same SKU. NULL weight_value is its own
     // bucket (different from "0" or "10g"). Unit is normalized to lowercase.
+    //
+    // Weight is normalized with "0.###" so "10", "10.0", and "10.000" all hash
+    // the same — Npgsql preserves the numeric(10,3) scale on read, but the
+    // Excel parser doesn't, so direct ToString() would mismatch.
     private static string VariantKey(string name, int categoryId, string type, decimal? weightValue, string weightUnit)
     {
         var n = (name ?? "").Trim().ToLowerInvariant();
         var t = (type ?? "").Trim().ToLowerInvariant();
         var u = (weightUnit ?? "g").Trim().ToLowerInvariant();
-        // InvariantCulture so "10.0" doesn't become "10,0" depending on server locale.
         var w = weightValue.HasValue
-            ? weightValue.Value.ToString(System.Globalization.CultureInfo.InvariantCulture)
+            ? weightValue.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
             : "∅";
         return $"{n}|{categoryId}|{t}|{w}|{u}";
     }
