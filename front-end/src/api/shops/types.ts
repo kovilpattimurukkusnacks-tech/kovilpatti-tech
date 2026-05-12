@@ -33,3 +33,10 @@ export type UpdateShopRequest = {
   inventoryId: string
   active: boolean
 }
+
+export type PagedResult<T> = {
+  items: T[]
+  total: number
+  page: number
+  pageSize: number
+}

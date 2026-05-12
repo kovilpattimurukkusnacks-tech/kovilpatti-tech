@@ -1,6 +1,6 @@
 import { apiClient } from '../client'
 import type {
-  ProductDto, CreateProductRequest, UpdateProductRequest, ProductListFilters, ImportProductsResult,
+  ProductDto, CreateProductRequest, UpdateProductRequest, ProductListFilters, ImportProductsResult, PagedResult,
 } from './types'
 
 function toQueryString(filters?: ProductListFilters): string {
@@ -8,12 +8,14 @@ function toQueryString(filters?: ProductListFilters): string {
   const params = new URLSearchParams()
   if (filters.search)              params.set('search', filters.search)
   if (filters.categoryId != null)  params.set('categoryId', String(filters.categoryId))
+  if (filters.page != null)        params.set('page', String(filters.page))
+  if (filters.pageSize != null)    params.set('pageSize', String(filters.pageSize))
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }
 
 export const productsApi = {
-  list:   (filters?: ProductListFilters)            => apiClient.get<ProductDto[]>(`/api/products${toQueryString(filters)}`),
+  list:   (filters?: ProductListFilters)            => apiClient.get<PagedResult<ProductDto>>(`/api/products${toQueryString(filters)}`),
   get:    (id: string)                              => apiClient.get<ProductDto>(`/api/products/${id}`),
   create: (req: CreateProductRequest)               => apiClient.post<ProductDto>('/api/products', req),
   update: (id: string, req: UpdateProductRequest)   => apiClient.put<ProductDto>(`/api/products/${id}`, req),

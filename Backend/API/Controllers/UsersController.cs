@@ -1,3 +1,4 @@
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Users;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Authorization;
@@ -13,6 +14,13 @@ public class UsersController(IUserService users) : ControllerBase
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<UserDto>>> List(CancellationToken ct)
         => Ok(await users.ListAsync(ct));
+
+    [HttpGet("paged")]
+    public async Task<ActionResult<PagedResult<UserDto>>> ListPaged(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
+        => Ok(await users.ListPagedAsync(page, pageSize, ct));
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<UserDto>> Get(Guid id, CancellationToken ct)

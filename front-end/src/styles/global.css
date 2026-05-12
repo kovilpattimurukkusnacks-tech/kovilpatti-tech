@@ -95,3 +95,27 @@ h1 { font-weight: 700; }
 .data-page-grid .MuiDataGrid-columnHeader:focus-within {
   outline: none;
 }
+
+/* Pin the Actions column to the right edge of the grid via CSS sticky.
+   MUI X DataGrid Community doesn't ship column pinning (Pro-only feature),
+   so we add the class manually on the Actions column def. */
+.MuiDataGrid-cell.col-pin-right,
+.MuiDataGrid-columnHeader.col-pin-right {
+  position: sticky;
+  right: 0;
+  z-index: 3;
+  border-left: 1px solid #FFF1B3;
+  box-shadow: -4px 0 8px -2px rgba(0, 0, 0, 0.08);
+}
+
+.MuiDataGrid-cell.col-pin-right {
+  background-color: #FFFFFF;
+}
+
+.MuiDataGrid-row:hover .MuiDataGrid-cell.col-pin-right {
+  background-color: #FFF8DC;
+}
+
+.MuiDataGrid-columnHeader.col-pin-right {
+  background-color: #FCD835;
+}

@@ -1,3 +1,4 @@
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Inventories;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Authorization;
@@ -13,6 +14,13 @@ public class InventoriesController(IInventoryService inventories) : ControllerBa
     [HttpGet]
     public async Task<ActionResult<IReadOnlyList<InventoryDto>>> List(CancellationToken ct)
         => Ok(await inventories.ListAsync(ct));
+
+    [HttpGet("paged")]
+    public async Task<ActionResult<PagedResult<InventoryDto>>> ListPaged(
+        [FromQuery] int page = 1,
+        [FromQuery] int pageSize = 10,
+        CancellationToken ct = default)
+        => Ok(await inventories.ListPagedAsync(page, pageSize, ct));
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<InventoryDto>> Get(Guid id, CancellationToken ct)

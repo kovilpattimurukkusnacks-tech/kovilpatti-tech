@@ -1,14 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Edit2, Trash2, X, User as UserIcon, KeyRound } from 'lucide-react'
+import { Plus, Edit2, Trash2, X, User as UserIcon, KeyRound, Eye, EyeOff } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, MenuItem, Paper, TextField,
+  IconButton, MenuItem, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import {
-  useUsers, useCreateUser, useUpdateUser, useResetUserPassword, useDeleteUser,
+  useUsersPaged, useCreateUser, useUpdateUser, useResetUserPassword, useDeleteUser,
 } from '../hooks/useUsers'
 import { useShops } from '../hooks/useShops'
 import { useInventories } from '../hooks/useInventories'
@@ -35,7 +35,8 @@ type FormValues = {
 }
 
 export default function Staff() {
-  const list = useUsers()
+  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+  const list = useUsersPaged(paginationModel.page + 1, paginationModel.pageSize)
   const shopsQuery = useShops()
   const inventoriesQuery = useInventories()
   const create = useCreateUser()
@@ -47,8 +48,9 @@ export default function Staff() {
   const [pendingDelete, setPendingDelete] = useState<UserDto | null>(null)
   const [resetTarget, setResetTarget] = useState<UserDto | null>(null)
 
-  const users = list.data ?? []
-  const shops = shopsQuery.data ?? []
+  const users       = list.data?.items ?? []
+  const total       = list.data?.total ?? 0
+  const shops       = shopsQuery.data ?? []
   const inventories = inventoriesQuery.data ?? []
 
   const closeForm = () => setFormMode({ kind: 'closed' })
@@ -127,6 +129,8 @@ export default function Staff() {
     {
       field: 'actions', headerName: 'Actions', width: 160, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
+      cellClassName: 'col-pin-right',
+      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" title="Reset password" onClick={() => setResetTarget(row)}>
@@ -155,7 +159,7 @@ export default function Staff() {
         subtitle={
           list.isLoading
             ? 'Loading…'
-            : `${users.length} ${users.length === 1 ? 'user' : 'users'} configured`
+            : `${total} ${total === 1 ? 'user' : 'users'} configured`
         }
         action={
           <Button
@@ -189,8 +193,11 @@ export default function Staff() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          initialState={{ pagination: { paginationModel: { pageSize: 10 } } }}
-          pageSizeOptions={[10, 25, 50]}
+          paginationMode="server"
+          rowCount={total}
+          paginationModel={paginationModel}
+          onPaginationModelChange={setPaginationModel}
+          pageSizeOptions={[10, 25, 50, 100]}
         />
       </Paper>
 
@@ -246,6 +253,7 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
   const isEdit = !!user
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [fullName, setFullName] = useState('')
   const [role, setRole] = useState<StaffRole>('ShopUser')
   const [shopId, setShopId] = useState('')
@@ -257,6 +265,7 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
     if (!open) return
     setUsername(user?.username ?? '')
     setPassword('')
+    setShowPassword(false)
     setFullName(user?.fullName ?? '')
     const initialRole: StaffRole = (user?.role === 'Inventory' || user?.role === 'ShopUser')
       ? user.role
@@ -303,7 +312,16 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
   }
 
   return (
-    <Dialog open={open} onClose={submitting ? undefined : onClose} maxWidth="sm" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick' || submitting) return
+        onClose()
+      }}
+      maxWidth="sm"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <UserIcon className="w-5 h-5" />
@@ -323,11 +341,47 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
           {!isEdit && (
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
               <TextField label="Username" value={username} onChange={e => setUsername(e.target.value)} required size="small" disabled={submitting} />
-              <TextField label="Password" type="password" value={password} onChange={e => setPassword(e.target.value)} required size="small" placeholder="min 6 chars" disabled={submitting} />
+              <TextField
+                label="Password"
+                type={showPassword ? 'text' : 'password'}
+                value={password}
+                onChange={e => setPassword(e.target.value)}
+                required
+                size="small"
+                placeholder="min 6 chars"
+                disabled={submitting}
+                slotProps={{
+                  input: {
+                    endAdornment: (
+                      <IconButton
+                        size="small"
+                        onClick={() => setShowPassword(s => !s)}
+                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                      >
+                        {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                      </IconButton>
+                    ),
+                  },
+                }}
+              />
             </Box>
           )}
 
-          <TextField label="Full Name" value={fullName} onChange={e => setFullName(e.target.value)} required size="small" disabled={submitting} />
+          <TextField
+            label="Full Name"
+            value={fullName}
+            onChange={e => setFullName(
+              e.target.value.replace(/[^A-Za-z\s.'\-]/g, '').slice(0, 60)
+            )}
+            onKeyDown={e => {
+              if (e.key.length === 1 && !/[A-Za-z\s.'\-]/.test(e.key)) e.preventDefault()
+            }}
+            required
+            size="small"
+            slotProps={{ htmlInput: { maxLength: 60 } }}
+            disabled={submitting}
+          />
 
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
             <TextField select label="Role" value={role} onChange={e => setRole(e.target.value as StaffRole)} size="small" disabled={submitting}>
@@ -349,10 +403,10 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
             )}
           </Box>
 
-          <FormControlLabel
-            control={<Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} />}
-            label="Active"
-          />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          </Box>
 
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
@@ -377,11 +431,13 @@ function ResetPasswordDialog({ open, username, submitting, submitError, onConfir
   onCancel: () => void
 }) {
   const [newPassword, setNewPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [err, setErr] = useState<string | null>(null)
 
   useEffect(() => {
     if (!open) return
     setNewPassword('')
+    setShowPassword(false)
     setErr(null)
   }, [open])
 
@@ -398,7 +454,16 @@ function ResetPasswordDialog({ open, username, submitting, submitError, onConfir
   }
 
   return (
-    <Dialog open={open} onClose={submitting ? undefined : onCancel} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+    <Dialog
+      open={open}
+      onClose={(_e, reason) => {
+        if (reason === 'backdropClick' || submitting) return
+        onCancel()
+      }}
+      maxWidth="xs"
+      fullWidth
+      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+    >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1, fontWeight: 600 }}>
         <KeyRound className="w-5 h-5" />
         Reset password
@@ -410,12 +475,26 @@ function ResetPasswordDialog({ open, username, submitting, submitError, onConfir
           </Box>
           <TextField
             label="New Password"
-            type="password"
+            type={showPassword ? 'text' : 'password'}
             value={newPassword}
             onChange={e => setNewPassword(e.target.value)}
             required size="small" autoFocus
             placeholder="min 6 chars"
             disabled={submitting}
+            slotProps={{
+              input: {
+                endAdornment: (
+                  <IconButton
+                    size="small"
+                    onClick={() => setShowPassword(s => !s)}
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                    tabIndex={-1}
+                  >
+                    {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                  </IconButton>
+                ),
+              },
+            }}
           />
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}

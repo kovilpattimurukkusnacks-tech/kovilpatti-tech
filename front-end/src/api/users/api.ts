@@ -1,10 +1,11 @@
 import { apiClient } from '../client'
 import type {
-  UserDto, CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest,
+  UserDto, CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest, PagedResult,
 } from './types'
 
 export const usersApi = {
   list:          ()                                                => apiClient.get<UserDto[]>('/api/users'),
+  listPaged:     (page: number, pageSize: number)                  => apiClient.get<PagedResult<UserDto>>(`/api/users/paged?page=${page}&pageSize=${pageSize}`),
   get:           (id: string)                                      => apiClient.get<UserDto>(`/api/users/${id}`),
   create:        (req: CreateStaffRequest)                         => apiClient.post<UserDto>('/api/users', req),
   update:        (id: string, req: UpdateStaffRequest)             => apiClient.put<UserDto>(`/api/users/${id}`, req),

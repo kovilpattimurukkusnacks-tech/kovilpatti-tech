@@ -1,7 +1,7 @@
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
+import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { productsApi } from '../api/products/api'
 import type {
-  CreateProductRequest, UpdateProductRequest, ProductListFilters,
+  CreateProductRequest, UpdateProductRequest, ProductListFilters, PagedResult, ProductDto,
 } from '../api/products/types'
 
 export const productsKeys = {
@@ -14,6 +14,9 @@ export function useProducts(filters?: ProductListFilters) {
   return useQuery({
     queryKey: productsKeys.list(filters),
     queryFn: () => productsApi.list(filters),
+    // Keep showing the previous page while the next page is loading, so the
+    // grid doesn't flicker / collapse during pagination.
+    placeholderData: keepPreviousData,
   })
 }
 
@@ -29,8 +32,18 @@ export function useCreateProduct() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: CreateProductRequest) => productsApi.create(req),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: productsKeys.all })
+    // Patch the paged list cache directly with the new row. New rows get the
+    // highest code (sorted last), so we only append when the current page
+    // isn't already full — otherwise the new row belongs on a later page.
+    onSuccess: (created) => {
+      qc.setQueriesData<PagedResult<ProductDto>>(
+        { queryKey: ['products', 'list'] },
+        (old) => old ? {
+          ...old,
+          total: old.total + 1,
+          items: old.items.length < old.pageSize ? [...old.items, created] : old.items,
+        } : old,
+      )
     },
   })
 }
@@ -40,9 +53,15 @@ export function useUpdateProduct() {
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: UpdateProductRequest }) =>
       productsApi.update(id, req),
-    onSuccess: (_data, vars) => {
-      qc.invalidateQueries({ queryKey: productsKeys.all })
-      qc.invalidateQueries({ queryKey: productsKeys.detail(vars.id) })
+    // Instead of invalidating (which triggers a full list refetch — slow over
+    // a cross-region BE→DB hop), patch the cached paged lists in place using
+    // the returned product. UI updates instantly with no extra network call.
+    onSuccess: (updated, vars) => {
+      qc.setQueryData(productsKeys.detail(vars.id), updated)
+      qc.setQueriesData<PagedResult<ProductDto>>(
+        { queryKey: ['products', 'list'] },
+        (old) => old ? { ...old, items: old.items.map(p => p.id === vars.id ? updated : p) } : old,
+      )
     },
   })
 }

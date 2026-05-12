@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Products;
 using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
@@ -17,10 +18,15 @@ public class ProductService(
     IValidator<UpdateProductRequest> updateValidator
 ) : IProductService
 {
-    public async Task<IReadOnlyList<ProductDto>> ListAsync(string? search, int? categoryId, CancellationToken ct = default)
+    public async Task<PagedResult<ProductDto>> ListAsync(string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
     {
-        var rows = await products.ListAsync(search, categoryId, ct);
-        return rows.Select(MapToDto).ToList();
+        // Defensive clamp — controller already defaults, but a 0 page or pageSize would break LIMIT/OFFSET.
+        var safePage     = page     < 1   ? 1   : page;
+        var safePageSize = pageSize < 1   ? 10  : (pageSize > 200 ? 200 : pageSize);
+
+        var (rows, total) = await products.ListPagedAsync(search, categoryId, safePage, safePageSize, ct);
+        var items = rows.Select(MapToDto).ToList();
+        return new PagedResult<ProductDto>(items, total, safePage, safePageSize);
     }
 
     public async Task<ProductDto> GetAsync(Guid id, CancellationToken ct = default)

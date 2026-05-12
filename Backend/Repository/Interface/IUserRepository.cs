@@ -9,6 +9,7 @@ public interface IUserRepository
     Task<Guid> CreateAsync(User user, Guid? createdBy, CancellationToken ct = default);
 
     Task<List<User>> ListStaffAsync(CancellationToken ct = default);
+    Task<(List<User> Rows, long Total)> ListStaffPagedAsync(int page, int pageSize, CancellationToken ct = default);
     Task<User?> GetByIdAsync(Guid id, CancellationToken ct = default);
     Task<bool> UsernameExistsAsync(string username, CancellationToken ct = default);
     Task<bool> UpdateAsync(User user, Guid userId, CancellationToken ct = default);

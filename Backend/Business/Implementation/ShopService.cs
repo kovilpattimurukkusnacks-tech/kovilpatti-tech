@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Shops;
 using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
@@ -21,6 +22,14 @@ public class ShopService(
     {
         var rows = await shops.ListAsync(ct);
         return rows.Select(MapToDto).ToList();
+    }
+
+    public async Task<PagedResult<ShopDto>> ListPagedAsync(int page, int pageSize, CancellationToken ct = default)
+    {
+        var safePage     = page     < 1 ? 1  : page;
+        var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
+        var (rows, total) = await shops.ListPagedAsync(safePage, safePageSize, ct);
+        return new PagedResult<ShopDto>(rows.Select(MapToDto).ToList(), total, safePage, safePageSize);
     }
 
     public async Task<ShopDto> GetAsync(Guid id, CancellationToken ct = default)
