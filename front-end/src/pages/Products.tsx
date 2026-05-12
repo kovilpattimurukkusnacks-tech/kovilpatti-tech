@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
+import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon, Tag } from 'lucide-react'
 import {
   Alert, Badge, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, MenuItem, Paper, TextField,
@@ -33,6 +34,7 @@ type FormValues = {
 }
 
 export default function Products() {
+  const navigate = useNavigate()
   const [filters, setFilters] = useState<ProductListFilters>({})
   // DataGrid uses 0-indexed pages; BE uses 1-indexed. Convert on the wire.
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
@@ -178,6 +180,15 @@ export default function Products() {
             <Button
               variant="outlined"
               color="primary"
+              startIcon={<Tag className="w-4 h-4" />}
+              onClick={() => navigate('/admin/categories')}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
+            >
+              Manage Categories
+            </Button>
+            <Button
+              variant="outlined"
+              color="primary"
               startIcon={<Upload className="w-4 h-4" />}
               onClick={() => setImportOpen(true)}
               sx={{ textTransform: 'none', fontWeight: 600 }}
@@ -201,8 +212,17 @@ export default function Products() {
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
 
       {!categoriesQuery.isLoading && categories.length === 0 && (
-        <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px solid #1F1F1F', fontSize: 14, color: '#1F1F1F' }}>
-          No categories exist on the backend yet. Insert at least one category row before adding products.
+        <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px solid #1F1F1F', fontSize: 14, color: '#1F1F1F', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 2 }}>
+          <span>No categories yet. Add at least one before creating products.</span>
+          <Button
+            size="small"
+            variant="contained"
+            startIcon={<Tag className="w-4 h-4" />}
+            onClick={() => navigate('/admin/categories')}
+            sx={{ textTransform: 'none', fontWeight: 600 }}
+          >
+            Manage Categories
+          </Button>
         </Box>
       )}
 
@@ -573,7 +593,8 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
                 name, category, type, weight_value, weight_unit, mrp, purchase_price, active
               </Box>
               <p style={{ marginTop: 8, color: '#1F1F1F99' }}>
-                <b>category</b> must match an existing category name. Rows whose <b>name</b> already exists are skipped.
+                <b>category</b> must match an existing category name. Rows where the same
+                <b> name + type + weight + category</b> already exists are skipped — different sizes/variants are kept.
                 If any row has a hard error, no products are imported.
               </p>
             </Box>
@@ -638,7 +659,7 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
 
             {result.skipped.length > 0 && (
               <Box>
-                <Box sx={{ fontWeight: 600, mb: 1, fontSize: 13 }}>Skipped (name already exists):</Box>
+                <Box sx={{ fontWeight: 600, mb: 1, fontSize: 13 }}>Skipped (same name + type + weight + category already exists):</Box>
                 <Box sx={{ maxHeight: 160, overflow: 'auto', border: '1px solid #1F1F1F', borderRadius: 1, p: 1, bgcolor: '#FFF8DC' }}>
                   {result.skipped.map(s => (
                     <Box key={s.rowNumber} sx={{ fontSize: 12, mb: 0.5, fontFamily: 'monospace' }}>

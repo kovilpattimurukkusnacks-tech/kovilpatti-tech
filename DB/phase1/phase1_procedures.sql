@@ -79,6 +79,104 @@ LANGUAGE sql STABLE AS $$
   ORDER BY c.name;
 $$;
 
+CREATE OR REPLACE FUNCTION fn_category_get(p_id int)
+RETURNS TABLE (
+  id     int,
+  name   varchar,
+  active boolean
+)
+LANGUAGE sql STABLE AS $$
+  SELECT c.id, c.name, c.active
+  FROM categories c
+  WHERE c.id = p_id AND c.is_deleted = false
+  LIMIT 1;
+$$;
+
+-- Case-insensitive name lookup, optionally excluding a specific id (used for
+-- update-time uniqueness so a row doesn't conflict with itself).
+CREATE OR REPLACE FUNCTION fn_category_exists_by_name(
+  p_name       varchar,
+  p_exclude_id int DEFAULT NULL
+)
+RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS(
+    SELECT 1 FROM categories
+    WHERE lower(name) = lower(p_name)
+      AND is_deleted = false
+      AND (p_exclude_id IS NULL OR id <> p_exclude_id)
+  );
+$$;
+
+CREATE OR REPLACE FUNCTION fn_category_create(
+  p_name    varchar,
+  p_active  boolean,
+  p_user_id uuid
+)
+RETURNS int
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_id int;
+BEGIN
+  INSERT INTO categories (name, active, created_by, updated_by)
+  VALUES (p_name, p_active, p_user_id, p_user_id)
+  RETURNING id INTO v_id;
+  RETURN v_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION fn_category_update(
+  p_id      int,
+  p_name    varchar,
+  p_active  boolean,
+  p_user_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE categories
+  SET name       = p_name,
+      active     = p_active,
+      updated_by = p_user_id
+  WHERE id = p_id AND is_deleted = false;
+  RETURN FOUND;
+END;
+$$;
+
+-- Soft delete. Blocks if ANY non-deleted product still references the category,
+-- because hard-deleting would dangle category_id (FK has ON DELETE RESTRICT,
+-- but products keep the row visible via the soft-delete flag).
+-- Returns:
+--   true   — soft-deleted
+--   false  — not found (or already deleted)
+-- Raises  — when in-use, with a clear message the BE surfaces to the user.
+CREATE OR REPLACE FUNCTION fn_category_soft_delete(
+  p_id      int,
+  p_user_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_in_use_count int;
+BEGIN
+  SELECT count(*) INTO v_in_use_count
+  FROM products
+  WHERE category_id = p_id AND is_deleted = false;
+
+  IF v_in_use_count > 0 THEN
+    RAISE EXCEPTION 'Cannot delete category — % product(s) still use it. Reassign or delete those products first.', v_in_use_count
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  UPDATE categories
+  SET is_deleted = true,
+      active     = false,
+      updated_by = p_user_id
+  WHERE id = p_id AND is_deleted = false;
+  RETURN FOUND;
+END;
+$$;
+
 -- ============== Products =========================================
 
 CREATE OR REPLACE FUNCTION fn_product_list(
