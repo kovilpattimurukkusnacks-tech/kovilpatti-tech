@@ -67,7 +67,7 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             SELECT fn_product_create(
                 @p_code, @p_name, @p_category_id, @p_type,
                 @p_weight_value, @p_weight_unit, @p_mrp, @p_purchase_price,
-                @p_active, @p_user_id)";
+                @p_gst, @p_active, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
@@ -79,6 +79,7 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             p_weight_unit    = product.WeightUnit,
             p_mrp            = product.Mrp,
             p_purchase_price = product.PurchasePrice,
+            p_gst            = product.Gst,
             p_active         = product.Active,
             p_user_id        = userId
         }, cancellationToken: ct));
@@ -91,7 +92,7 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             SELECT fn_product_update(
                 @p_id, @p_name, @p_category_id, @p_type,
                 @p_weight_value, @p_weight_unit, @p_mrp, @p_purchase_price,
-                @p_active, @p_user_id)";
+                @p_gst, @p_active, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
         {
@@ -103,6 +104,7 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             p_weight_unit    = product.WeightUnit,
             p_mrp            = product.Mrp,
             p_purchase_price = product.PurchasePrice,
+            p_gst            = product.Gst,
             p_active         = product.Active,
             p_user_id        = userId
         }, cancellationToken: ct));

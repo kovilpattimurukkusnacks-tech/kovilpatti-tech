@@ -179,6 +179,14 @@ $$;
 
 -- ============== Products =========================================
 
+-- The product SPs gained a `gst` column. CREATE OR REPLACE cannot change a
+-- function's return type or argument list, so drop the old signatures first.
+-- IF EXISTS makes this safe on a fresh DB.
+DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
+DROP FUNCTION IF EXISTS fn_product_get(uuid);
+DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search      varchar DEFAULT NULL,
   p_category_id int     DEFAULT NULL
@@ -194,12 +202,13 @@ RETURNS TABLE (
   weight_unit    varchar,
   mrp            numeric,
   purchase_price numeric,
+  gst            numeric,
   active         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.active
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
@@ -222,12 +231,13 @@ RETURNS TABLE (
   weight_unit    varchar,
   mrp            numeric,
   purchase_price numeric,
+  gst            numeric,
   active         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.active
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.id = p_id AND p.is_deleted = false
@@ -271,6 +281,7 @@ CREATE OR REPLACE FUNCTION fn_product_create(
   p_weight_unit    varchar,
   p_mrp            numeric,
   p_purchase_price numeric,
+  p_gst            numeric,
   p_active         boolean,
   p_user_id        uuid
 )
@@ -281,10 +292,10 @@ DECLARE
 BEGIN
   INSERT INTO products (code, name, category_id, type,
                         weight_value, weight_unit, mrp, purchase_price,
-                        active, created_by, updated_by)
+                        gst, active, created_by, updated_by)
   VALUES (p_code, p_name, p_category_id, p_type,
           p_weight_value, p_weight_unit, p_mrp, p_purchase_price,
-          p_active, p_user_id, p_user_id)
+          p_gst, p_active, p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -299,6 +310,7 @@ CREATE OR REPLACE FUNCTION fn_product_update(
   p_weight_unit    varchar,
   p_mrp            numeric,
   p_purchase_price numeric,
+  p_gst            numeric,
   p_active         boolean,
   p_user_id        uuid
 )
@@ -313,6 +325,7 @@ BEGIN
       weight_unit    = p_weight_unit,
       mrp            = p_mrp,
       purchase_price = p_purchase_price,
+      gst            = p_gst,
       active         = p_active,
       updated_by     = p_user_id,
       updated_at     = now()

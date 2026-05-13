@@ -78,6 +78,7 @@ public class ProductService(
             WeightUnit     = weightUnit,
             Mrp            = request.Mrp,
             PurchasePrice  = request.PurchasePrice,
+            Gst            = request.Gst,
             Active         = request.Active
         };
 
@@ -122,6 +123,9 @@ public class ProductService(
             WeightUnit     = weightUnit,
             Mrp            = request.Mrp,
             PurchasePrice  = request.PurchasePrice,
+            // FE form doesn't expose GST yet — if the request omits it, keep
+            // whatever was persisted so the update doesn't wipe the value.
+            Gst            = request.Gst ?? existing.Gst,
             Active         = request.Active
         };
 
@@ -349,6 +353,7 @@ public class ProductService(
             WeightUnit:    p.WeightUnit,
             Mrp:           p.Mrp,
             PurchasePrice: hidePurchase ? null : p.PurchasePrice,
+            Gst:           p.Gst,
             Active:        p.Active
         );
     }

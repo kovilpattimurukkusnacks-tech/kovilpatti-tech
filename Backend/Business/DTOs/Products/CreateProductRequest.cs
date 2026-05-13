@@ -9,5 +9,7 @@ public record CreateProductRequest(
     string? WeightUnit,
     decimal Mrp,
     decimal PurchasePrice,
+    // Optional. Hidden in the FE form for now — defaults to null.
+    decimal? Gst = null,
     bool Active = true
 );

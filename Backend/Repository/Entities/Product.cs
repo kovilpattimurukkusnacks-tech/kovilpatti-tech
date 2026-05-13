@@ -12,5 +12,7 @@ public class Product
     public string? WeightUnit { get; set; }
     public decimal Mrp { get; set; }
     public decimal PurchasePrice { get; set; }
+    // Hidden in the UI for now; persisted as percent (0..100), nullable.
+    public decimal? Gst { get; set; }
     public bool Active { get; set; }
 }

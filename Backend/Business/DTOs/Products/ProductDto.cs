@@ -11,5 +11,7 @@ public record ProductDto(
     string? WeightUnit,
     decimal Mrp,
     decimal? PurchasePrice,
+    // GST rate (percent). Hidden in the UI for now; surfaced later.
+    decimal? Gst,
     bool Active
 );
