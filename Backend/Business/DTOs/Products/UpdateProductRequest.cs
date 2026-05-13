@@ -8,5 +8,7 @@ public record UpdateProductRequest(
     string? WeightUnit,
     decimal Mrp,
     decimal PurchasePrice,
+    // Optional. Hidden in the FE form for now — left as-is if omitted.
+    decimal? Gst,
     bool Active
 );

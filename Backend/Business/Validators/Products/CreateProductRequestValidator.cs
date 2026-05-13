@@ -17,5 +17,6 @@ public class CreateProductRequestValidator : AbstractValidator<CreateProductRequ
             .WithMessage("WeightUnit must be 'g' or 'kg'.");
         RuleFor(x => x.Mrp).GreaterThanOrEqualTo(0);
         RuleFor(x => x.PurchasePrice).GreaterThanOrEqualTo(0);
+        RuleFor(x => x.Gst).InclusiveBetween(0m, 100m).When(x => x.Gst.HasValue);
     }
 }

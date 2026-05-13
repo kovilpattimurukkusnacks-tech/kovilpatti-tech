@@ -142,6 +142,9 @@ CREATE TABLE products (
   weight_unit    varchar(5)    DEFAULT 'g',
   mrp            numeric(10,2) NOT NULL DEFAULT 0,
   purchase_price numeric(10,2) NOT NULL DEFAULT 0,
+  -- GST rate as a percentage (e.g. 5, 12, 18, 28). Nullable + hidden in the UI
+  -- for now; client will surface it in a later phase.
+  gst            numeric(5,2),
   active         boolean       NOT NULL DEFAULT true,
   is_deleted     boolean       NOT NULL DEFAULT false,
   created_at     timestamptz   NOT NULL DEFAULT now(),
@@ -149,7 +152,8 @@ CREATE TABLE products (
   updated_at     timestamptz   NOT NULL DEFAULT now(),
   updated_by     uuid          REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT chk_products_weight_unit   CHECK (weight_unit IN ('g','kg')),
-  CONSTRAINT chk_products_prices_nonneg CHECK (mrp >= 0 AND purchase_price >= 0)
+  CONSTRAINT chk_products_prices_nonneg CHECK (mrp >= 0 AND purchase_price >= 0),
+  CONSTRAINT chk_products_gst_range     CHECK (gst IS NULL OR (gst >= 0 AND gst <= 100))
 );
 
 CREATE INDEX idx_products_category ON products(category_id);
