@@ -11,6 +11,7 @@ export type ProductDto = {
   weightUnit: string | null           // 'g' | 'kg'
   mrp: number
   purchasePrice: number | null        // null when caller is shop_user (BE filters)
+  gst: number | null                  // GST % (0..100). Hidden in the UI for now.
   active: boolean
 }
 
@@ -23,6 +24,7 @@ export type CreateProductRequest = {
   weightUnit?: string | null
   mrp: number
   purchasePrice: number
+  gst?: number | null                 // hidden — omit from the form
   active?: boolean
 }
 
@@ -34,6 +36,7 @@ export type UpdateProductRequest = {
   weightUnit?: string | null
   mrp: number
   purchasePrice: number
+  gst?: number | null                 // hidden — omit from the form; BE preserves existing value
   active: boolean
 }
 

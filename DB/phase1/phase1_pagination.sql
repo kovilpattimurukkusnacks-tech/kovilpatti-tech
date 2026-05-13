@@ -16,6 +16,9 @@
 -- ------------------------------------------------------------
 -- PRODUCTS
 -- ------------------------------------------------------------
+-- Return type gained a `gst` column → must DROP before redefining.
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int, int, int);
+
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
   p_search      varchar DEFAULT NULL,
   p_category_id int     DEFAULT NULL,
@@ -33,12 +36,13 @@ RETURNS TABLE (
   weight_unit    varchar,
   mrp            numeric,
   purchase_price numeric,
+  gst            numeric,
   active         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.active
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
