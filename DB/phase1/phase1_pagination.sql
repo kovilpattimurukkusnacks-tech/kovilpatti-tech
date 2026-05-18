@@ -161,6 +161,11 @@ $$;
 -- ------------------------------------------------------------
 -- USERS (non-admin only — admin row is excluded from staff list)
 -- ------------------------------------------------------------
+-- Return shape's `role` column type changed from user_role → varchar (cast
+-- so Npgsql 8+ can read it as a plain string). DROP needed because
+-- RETURNS TABLE shape change can't be applied via CREATE OR REPLACE.
+DROP FUNCTION IF EXISTS fn_user_list_paged(int, int);
+
 CREATE OR REPLACE FUNCTION fn_user_list_paged(
   p_page      int DEFAULT 1,
   p_page_size int DEFAULT 25
@@ -170,7 +175,7 @@ RETURNS TABLE (
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -178,7 +183,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active

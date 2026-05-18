@@ -124,7 +124,7 @@ RETURNS TABLE (
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
-  status                  request_status,
+  status                  varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
@@ -152,7 +152,11 @@ LANGUAGE sql STABLE AS $$
          ua.full_name   AS approved_by_name,
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
-         r.status, r.total_items, r.total_qty,
+         -- Cast the enum to varchar so Npgsql 8+ (which is stricter about
+         -- unmapped custom enum types) can deserialize without needing the
+         -- BE to MapEnum<>() the request_status type at the data source.
+         r.status::varchar AS status,
+         r.total_items, r.total_qty,
          -- NULL until any item on this request has been dispatched.
          -- Explicit casts pin the column type so Npgsql doesn't see a NULL
          -- with DataTypeName '-' (causes InvalidCastException on the BE).
@@ -268,7 +272,7 @@ RETURNS TABLE (
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
-  status                  request_status,
+  status                  varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
@@ -295,7 +299,11 @@ LANGUAGE sql STABLE AS $$
          ua.full_name   AS approved_by_name,
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
-         r.status, r.total_items, r.total_qty,
+         -- Cast the enum to varchar — Npgsql 8+ rejects unmapped custom
+         -- enum types; keeping the cast makes this SP portable across
+         -- Npgsql versions without BE registration changes.
+         r.status::varchar AS status,
+         r.total_items, r.total_qty,
          -- Explicit ::int / ::numeric casts to keep the column types pinned
          -- even when SUM returns NULL (no dispatched items). Without these,
          -- Npgsql throws InvalidCastException reading DataTypeName '-'.

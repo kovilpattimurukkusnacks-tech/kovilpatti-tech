@@ -8,19 +8,27 @@ BEGIN;
 
 -- ============== Users ============================================
 
+-- Return shape's `role` column flipped from user_role → varchar so Npgsql 8+
+-- can read it as a plain string without enum registration. DROP needed
+-- because RETURNS TABLE shape change can't be applied via CREATE OR REPLACE.
+DROP FUNCTION IF EXISTS fn_user_find_by_username(varchar);
+
 CREATE OR REPLACE FUNCTION fn_user_find_by_username(p_username varchar)
 RETURNS TABLE (
   id            uuid,
   username      varchar,
   password_hash varchar,
   full_name     varchar,
-  role          user_role,
+  role          varchar,
   shop_id       uuid,
   inventory_id  uuid,
   active        boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  -- u.role::varchar — Npgsql 8+ rejects unmapped custom enum types on the
+  -- read path. Casting to varchar here lets the BE stay agnostic of enum
+  -- registration at the data source level.
+  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
          u.shop_id, u.inventory_id, u.active
   FROM users u
   WHERE u.username = p_username
@@ -615,13 +623,17 @@ LANGUAGE sql STABLE AS $$
   SELECT EXISTS(SELECT 1 FROM users WHERE username = p_username);
 $$;
 
+-- `role` column cast user_role → varchar; signature stays but RETURNS TABLE
+-- shape changed. DROP needed.
+DROP FUNCTION IF EXISTS fn_user_list();
+
 CREATE OR REPLACE FUNCTION fn_user_list()
 RETURNS TABLE (
   id              uuid,
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -629,7 +641,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active
@@ -640,13 +652,15 @@ LANGUAGE sql STABLE AS $$
   ORDER BY u.username;
 $$;
 
+DROP FUNCTION IF EXISTS fn_user_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_user_get(p_id uuid)
 RETURNS TABLE (
   id              uuid,
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -654,7 +668,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active
