@@ -154,11 +154,13 @@ LANGUAGE sql STABLE AS $$
          urcv.full_name AS received_by_name,
          r.status, r.total_items, r.total_qty,
          -- NULL until any item on this request has been dispatched.
+         -- Explicit casts pin the column type so Npgsql doesn't see a NULL
+         -- with DataTypeName '-' (causes InvalidCastException on the BE).
          (SELECT SUM(it.dispatched_qty)::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          r.total_amount,
-         (SELECT SUM(it.dispatched_qty * it.unit_price)
+         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
@@ -294,11 +296,14 @@ LANGUAGE sql STABLE AS $$
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
          r.status, r.total_items, r.total_qty,
+         -- Explicit ::int / ::numeric casts to keep the column types pinned
+         -- even when SUM returns NULL (no dispatched items). Without these,
+         -- Npgsql throws InvalidCastException reading DataTypeName '-'.
          (SELECT SUM(it.dispatched_qty)::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          r.total_amount,
-         (SELECT SUM(it.dispatched_qty * it.unit_price)
+         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
