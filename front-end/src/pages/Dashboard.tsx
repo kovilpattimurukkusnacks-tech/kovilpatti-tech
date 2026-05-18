@@ -5,6 +5,7 @@ import StatCard from '../components/StatCard'
 import PageHeader from '../components/PageHeader'
 import { useApp } from '../context/AppContext'
 import type { Product } from '../types'
+import { formatINR } from '../utils/format'
 import './Dashboard.css'
 
 export default function Dashboard() {
@@ -27,7 +28,7 @@ export default function Dashboard() {
     },
     {
       field: 'unitPrice', headerName: 'Unit Price', width: 140,
-      renderCell: ({ row }) => <span>₹ {row.unitPrice} / {row.unit}</span>,
+      renderCell: ({ row }) => <span>{formatINR(Number(row.unitPrice))} / {row.unit}</span>,
     },
   ]
 

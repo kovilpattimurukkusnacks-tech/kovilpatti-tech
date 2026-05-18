@@ -19,4 +19,22 @@ public class CurrentUserService(IHttpContextAccessor accessor) : ICurrentUser
     public string? Role => accessor.HttpContext?.User.FindFirstValue(ClaimTypes.Role);
 
     public bool IsAuthenticated => accessor.HttpContext?.User.Identity?.IsAuthenticated == true;
+
+    public Guid? ShopId
+    {
+        get
+        {
+            var raw = accessor.HttpContext?.User.FindFirstValue("shopId");
+            return Guid.TryParse(raw, out var id) ? id : null;
+        }
+    }
+
+    public Guid? InventoryId
+    {
+        get
+        {
+            var raw = accessor.HttpContext?.User.FindFirstValue("inventoryId");
+            return Guid.TryParse(raw, out var id) ? id : null;
+        }
+    }
 }

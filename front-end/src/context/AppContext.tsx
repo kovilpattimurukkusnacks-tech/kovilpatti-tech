@@ -1,4 +1,5 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import type { Product, Inventory, Shop, Staff, CurrentUser } from '../types'
 import { seedProducts } from '../data/seedProducts'
 import { seedInventories } from '../data/seedInventories'
@@ -97,6 +98,7 @@ const loadStoredUser = (): CurrentUser => {
 }
 
 export function AppProvider({ children }: { children: ReactNode }) {
+  const queryClient = useQueryClient()
   const [currentUser, setCurrentUserState] = useState<CurrentUser>(loadStoredUser())
   const [products, setProducts] = useState<Product[]>(seedProducts)
   const [inventories, setInventories] = useState<Inventory[]>(seedInventories)
@@ -124,6 +126,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
         shopId: res.shopId,
         inventoryId: res.inventoryId,
       }
+      // Wipe the previous user's cached query results before swapping identity.
+      // Otherwise the new user sees stale data from the previous session for
+      // up to `staleTime` (30s) — see /inventory/requests after an admin approval.
+      queryClient.clear()
       setCurrentUser(user)
       return user
     } catch {
@@ -133,6 +139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const logout = () => {
     tokenStore.clear()
+    queryClient.clear()
     setCurrentUser(null)
   }
 
@@ -141,12 +148,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // (Layout.tsx) bounces the user to /admin/login on next render.
   useEffect(() => {
     const handler = () => {
+      queryClient.clear()
       setCurrentUserState(null)
       try { localStorage.removeItem(STORAGE_KEY) } catch { /* noop */ }
     }
     window.addEventListener(UNAUTHORIZED_EVENT, handler)
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler)
-  }, [])
+  }, [queryClient])
 
   // Products ---------------------------------------------------------------
 

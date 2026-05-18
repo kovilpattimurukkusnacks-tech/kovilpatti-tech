@@ -1,0 +1,205 @@
+/* Standalone print pages — minimal styling so the browser print dialog
+   ("Save as PDF" or send to printer) produces a clean, paper-friendly page. */
+
+.print-page {
+  background: #FFFFFF;
+  color: #1F1F1F;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  padding: 24px 32px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+.print-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #1F1F1F;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.print-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+.print-meta {
+  font-size: 13px;
+  color: #1F1F1F;
+}
+
+.print-meta-right {
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1F1F1F;
+}
+
+.print-parties {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #FFF8DC;
+  border: 1px solid rgba(31, 31, 31, 0.2);
+  border-radius: 4px;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.print-table thead th {
+  background: #FCD835;
+  text-align: left;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  padding: 8px;
+  border-bottom: 2px solid #1F1F1F;
+}
+
+.print-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+  vertical-align: top;
+}
+
+.print-table tbody tr:nth-child(even) td {
+  background: #FFFBE6;
+}
+
+.print-table tfoot td {
+  padding: 10px 8px;
+  border-top: 2px solid #1F1F1F;
+  background: #FFF8DC;
+  font-weight: 700;
+}
+
+/* Category banner row inside the cumulative-pending table. Sits above
+   the products that belong to that category so the kitchen sees "Snacks:
+   N SKUs · M units" before scanning the rows.
+   Specificity bumped (`.print-table tbody …`) to beat the zebra-stripe
+   `tr:nth-child(even)` rule that would otherwise wash out section rows
+   landing on an even index. !important on background as belt-and-braces
+   for print where some browsers drop dark backgrounds entirely. */
+.print-table tbody tr.print-section-row td {
+  background: #1F1F1F !important;
+  color: #FFFFFF;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  font-size: 11px;
+  padding: 8px;
+  border-top: 2px solid #1F1F1F;
+  border-bottom: 1px solid #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-table tbody tr.print-section-row td .muted {
+  color: rgba(255, 255, 255, 0.65);
+}
+
+/* Money summary printed below the picklist. Compact two-column rows, right
+   side bold. A faint divider separates the Requested block from the
+   post-dispatch Dispatched block when both are present. */
+.print-summary {
+  margin-top: 12px;
+  margin-left: auto;
+  max-width: 380px;
+  padding: 12px 14px;
+  background: #FFF8DC;
+  border: 1px solid #1F1F1F;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.print-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 3px 0;
+}
+
+.print-summary-row .danger {
+  color: #C62828;
+}
+
+.print-summary-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: rgba(31, 31, 31, 0.2);
+}
+
+.print-notes {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(31, 31, 31, 0.5);
+  background: #FFFBE6;
+  font-size: 13px;
+}
+
+.print-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(31, 31, 31, 0.3);
+  font-size: 11px;
+  color: rgba(31, 31, 31, 0.7);
+}
+
+.print-trigger {
+  border: 1px solid #1F1F1F;
+  background: #FCD835;
+  color: #1F1F1F;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.print-trigger:hover {
+  background: #1F1F1F;
+  color: #FCD835;
+}
+
+.muted  { color: #1F1F1F99; }
+.small  { font-size: 11px; color: #1F1F1F99; margin-top: 2px; }
+.strong { font-weight: 700; }
+
+/* Browser-print rules. Hide UI affordances; tighten margins for paper. */
+@media print {
+  body {
+    background: #FFFFFF !important;
+    background-image: none !important;
+  }
+  .print-page {
+    padding: 0;
+    max-width: none;
+  }
+  .print-only,
+  .print-trigger {
+    display: none !important;
+  }
+  /* MUI Drawer / Sidebar in the rest of the app might inject content; the
+     /print/* routes don't mount Layout but this is a belt-and-braces guard. */
+  nav, aside, .MuiDrawer-root, .sidebar {
+    display: none !important;
+  }
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}

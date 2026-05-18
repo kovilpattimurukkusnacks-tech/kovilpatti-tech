@@ -16,14 +16,20 @@
 -- ------------------------------------------------------------
 -- PRODUCTS
 -- ------------------------------------------------------------
--- Return type gained a `gst` column → must DROP before redefining.
+-- Filter signature now takes arrays for category and type to support
+-- multi-select on the FE. Pass NULL or an empty array to skip a filter.
+-- (Drop the previous shapes — signatures changed → CREATE OR REPLACE cannot.)
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int, int, int);
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
+DROP FUNCTION IF EXISTS fn_product_count(varchar, int);
+DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
-  p_search      varchar DEFAULT NULL,
-  p_category_id int     DEFAULT NULL,
-  p_page        int     DEFAULT 1,
-  p_page_size   int     DEFAULT 25
+  p_search       varchar    DEFAULT NULL,
+  p_category_ids int[]      DEFAULT NULL,
+  p_types        varchar[]  DEFAULT NULL,
+  p_page         int        DEFAULT 1,
+  p_page_size    int        DEFAULT 25
 )
 RETURNS TABLE (
   id             uuid,
@@ -49,7 +55,10 @@ LANGUAGE sql STABLE AS $$
     AND (p_search IS NULL
          OR p.name ILIKE '%' || p_search || '%'
          OR p.code ILIKE '%' || p_search || '%')
-    AND (p_category_id IS NULL OR p.category_id = p_category_id)
+    AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
+         OR p.category_id = ANY(p_category_ids))
+    AND (p_types IS NULL OR cardinality(p_types) = 0
+         OR p.type = ANY(p_types))
   ORDER BY p.code
   LIMIT  GREATEST(p_page_size, 1)
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
@@ -57,8 +66,9 @@ $$;
 
 
 CREATE OR REPLACE FUNCTION fn_product_count(
-  p_search      varchar DEFAULT NULL,
-  p_category_id int     DEFAULT NULL
+  p_search       varchar    DEFAULT NULL,
+  p_category_ids int[]      DEFAULT NULL,
+  p_types        varchar[]  DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
@@ -68,7 +78,10 @@ LANGUAGE sql STABLE AS $$
     AND (p_search IS NULL
          OR p.name ILIKE '%' || p_search || '%'
          OR p.code ILIKE '%' || p_search || '%')
-    AND (p_category_id IS NULL OR p.category_id = p_category_id);
+    AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
+         OR p.category_id = ANY(p_category_ids))
+    AND (p_types IS NULL OR cardinality(p_types) = 0
+         OR p.type = ANY(p_types));
 $$;
 
 

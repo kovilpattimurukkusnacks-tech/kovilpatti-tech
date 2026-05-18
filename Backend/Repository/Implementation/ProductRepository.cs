@@ -17,22 +17,26 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
     }
 
     public async Task<(List<Product> Rows, long Total)> ListPagedAsync(
-        string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
+        string? search, int[]? categoryIds, string[]? types, int page, int pageSize, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
-        const string sqlList  = "SELECT * FROM fn_product_list_paged(@p_search, @p_category_id, @p_page, @p_page_size)";
-        const string sqlCount = "SELECT fn_product_count(@p_search, @p_category_id)";
+        const string sqlList  = "SELECT * FROM fn_product_list_paged(@p_search, @p_category_ids, @p_types, @p_page, @p_page_size)";
+        const string sqlCount = "SELECT fn_product_count(@p_search, @p_category_ids, @p_types)";
 
-        var rows = (await conn.QueryAsync<Product>(new CommandDefinition(
-            sqlList,
-            new { p_search = search, p_category_id = categoryId, p_page = page, p_page_size = pageSize },
-            cancellationToken: ct))).ToList();
+        // Npgsql converts a .NET array to the matching Postgres array type.
+        // Null → NULL → SP treats it as "no filter".
+        var args = new
+        {
+            p_search       = search,
+            p_category_ids = categoryIds,
+            p_types        = types,
+            p_page         = page,
+            p_page_size    = pageSize,
+        };
 
-        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-            sqlCount,
-            new { p_search = search, p_category_id = categoryId },
-            cancellationToken: ct));
+        var rows = (await conn.QueryAsync<Product>(new CommandDefinition(sqlList, args, cancellationToken: ct))).ToList();
+        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, args, cancellationToken: ct));
 
         return (rows, total);
     }

@@ -40,6 +40,10 @@ public static class DependencyInjection
         services.AddScoped<IUserService, UserService>();
         services.AddScoped<ICategoryService, CategoryService>();
 
+        // Phase 2
+        services.AddScoped<IAppSettingService, AppSettingService>();
+        services.AddScoped<IStockRequestService, StockRequestService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");

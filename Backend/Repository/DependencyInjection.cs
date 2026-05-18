@@ -32,6 +32,10 @@ public static class DependencyInjection
         services.AddScoped<IInventoryRepository, InventoryRepository>();
         services.AddScoped<IShopRepository, ShopRepository>();
 
+        // Phase 2
+        services.AddScoped<IAppSettingRepository, AppSettingRepository>();
+        services.AddScoped<IStockRequestRepository, StockRequestRepository>();
+
         return services;
     }
 }

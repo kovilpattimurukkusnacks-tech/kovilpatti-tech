@@ -119,3 +119,44 @@ h1 { font-weight: 700; }
 .MuiDataGrid-columnHeader.col-pin-right {
   background-color: #FCD835;
 }
+
+/* ─── New Stock Request — per-row qty input ────────────────────────
+   Plain styled <input> used in place of MUI TextField for the qty
+   cell on the New Stock Request page. With ~200 product rows on
+   screen, TextField's nested components dragged the Category
+   dropdown into "frozen" territory; this input keeps the same
+   look at a tenth of the per-row render cost. */
+.qty-input {
+  width: 70px;
+  padding: 6px 8px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: center;
+  color: #1F1F1F;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 4px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.qty-input:hover {
+  border-color: #1F1F1F;
+}
+
+.qty-input:focus {
+  border-color: #1F1F1F;
+  box-shadow: 0 0 0 2px #FCD835;
+}
+
+/* Hide the spinner buttons — keystroke-only entry matches the previous
+   TextField behavior and keeps the box width predictable. */
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.qty-input[type=number] {
+  -moz-appearance: textfield;
+}

@@ -42,8 +42,9 @@ export type UpdateProductRequest = {
 
 export type ProductListFilters = {
   search?: string
-  categoryId?: number
-  page?: number      // 1-indexed for BE
+  categoryIds?: number[]    // multi-select; empty/undefined = any
+  types?: string[]          // multi-select; empty/undefined = any
+  page?: number             // 1-indexed for BE
   pageSize?: number
 }
 

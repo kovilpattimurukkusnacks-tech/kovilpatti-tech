@@ -15,6 +15,7 @@ import type {
 } from '../api/products/types'
 import type { CategoryDto } from '../api/categories/types'
 import { ValidationError } from '../api/errors'
+import { formatINR } from '../utils/format'
 import './Products.css'
 
 type FormMode =
@@ -55,7 +56,7 @@ export default function Products() {
   const [filterOpen, setFilterOpen] = useState(false)
 
   const activeFilterCount =
-    (filters.search ? 1 : 0) + (filters.categoryId != null ? 1 : 0)
+    (filters.search ? 1 : 0) + (filters.categoryIds?.length ? 1 : 0)
 
   const products  = list.data?.items ?? []
   const total     = list.data?.total ?? 0
@@ -65,7 +66,7 @@ export default function Products() {
   // first page of the newly-filtered result set instead of an empty page N.
   useEffect(() => {
     setPaginationModel(prev => ({ ...prev, page: 0 }))
-  }, [filters.search, filters.categoryId])
+  }, [filters.search, filters.categoryIds])
 
   const closeForm = () => setFormMode({ kind: 'closed' })
 
@@ -115,12 +116,12 @@ export default function Products() {
     },
     {
       field: 'mrp',          headerName: 'MRP',          width: 110, sortable: false, filterable: false,
-      renderCell: ({ value }) => <span>₹ {value}</span>,
+      renderCell: ({ value }) => <span>{formatINR(Number(value))}</span>,
     },
     {
       field: 'purchasePrice', headerName: 'Purchase Price', width: 130, sortable: false, filterable: false,
       renderCell: ({ value }) =>
-        value == null ? <span className="text-[#1F1F1F]/40">—</span> : <span>₹ {value}</span>,
+        value == null ? <span className="text-[#1F1F1F]/40">—</span> : <span>{formatINR(Number(value))}</span>,
     },
     {
       field: 'active', headerName: 'Status', width: 100, sortable: false, filterable: false,
@@ -235,13 +236,17 @@ export default function Products() {
               onDelete={() => setFilters(f => ({ ...f, search: undefined }))}
             />
           )}
-          {filters.categoryId != null && (
+          {filters.categoryIds?.length ? (
             <Chip
-              label={`Category: ${categories.find(c => c.id === filters.categoryId)?.name ?? filters.categoryId}`}
+              label={`Category: ${
+                filters.categoryIds
+                  .map(id => categories.find(c => c.id === id)?.name ?? id)
+                  .join(', ')
+              }`}
               size="small"
-              onDelete={() => setFilters(f => ({ ...f, categoryId: undefined }))}
+              onDelete={() => setFilters(f => ({ ...f, categoryIds: undefined }))}
             />
-          )}
+          ) : null}
           <Button size="small" onClick={() => setFilters({})} sx={{ textTransform: 'none' }}>
             Clear all
           </Button>
@@ -702,14 +707,16 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
   useEffect(() => {
     if (!open) return
     setSearch(filters.search ?? '')
-    setCategoryId(filters.categoryId ?? '')
+    // Admin filter dialog is single-select; we keep the first of the array for UI,
+    // then re-wrap as a 1-element array when applying.
+    setCategoryId(filters.categoryIds?.[0] ?? '')
   }, [open, filters])
 
   const handleApply = (e: React.FormEvent) => {
     e.preventDefault()
     onApply({
       search: search.trim() || undefined,
-      categoryId: typeof categoryId === 'number' ? categoryId : undefined,
+      categoryIds: typeof categoryId === 'number' ? [categoryId] : undefined,
     })
   }
 

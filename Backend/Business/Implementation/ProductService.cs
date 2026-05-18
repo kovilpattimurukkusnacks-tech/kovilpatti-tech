@@ -18,13 +18,19 @@ public class ProductService(
     IValidator<UpdateProductRequest> updateValidator
 ) : IProductService
 {
-    public async Task<PagedResult<ProductDto>> ListAsync(string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
+    public async Task<PagedResult<ProductDto>> ListAsync(
+        string? search, int[]? categoryIds, string[]? types, int page, int pageSize, CancellationToken ct = default)
     {
         // Defensive clamp — controller already defaults, but a 0 page or pageSize would break LIMIT/OFFSET.
         var safePage     = page     < 1   ? 1   : page;
         var safePageSize = pageSize < 1   ? 10  : (pageSize > 200 ? 200 : pageSize);
 
-        var (rows, total) = await products.ListPagedAsync(search, categoryId, safePage, safePageSize, ct);
+        // Normalize empty arrays → null so the SP treats them as "no filter"
+        // (saves a needless cardinality check inside the SP).
+        var cats  = categoryIds is { Length: > 0 } ? categoryIds : null;
+        var typs  = types       is { Length: > 0 } ? types       : null;
+
+        var (rows, total) = await products.ListPagedAsync(search, cats, typs, safePage, safePageSize, ct);
         var items = rows.Select(MapToDto).ToList();
         return new PagedResult<ProductDto>(items, total, safePage, safePageSize);
     }
