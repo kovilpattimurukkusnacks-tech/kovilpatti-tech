@@ -17,6 +17,12 @@ public interface IStockRequestService
     Task<IReadOnlyList<CumulativePendingLineDto>> GetPendingCumulativeAsync(
         Guid? inventoryId, CancellationToken ct = default);
 
+    /// Per-shop request counts for a given status filter (NULL = all). Used
+    /// by the list page's shop quick-filter chips. Inventory role scoped to
+    /// own inventory; admin may pass inventoryId or NULL; shop user blocked.
+    Task<IReadOnlyList<ShopRequestCountDto>> GetCountByShopAsync(
+        string? status, Guid? inventoryId, CancellationToken ct = default);
+
     Task<StockRequestDto> CreateAsync(CreateStockRequestRequest request, CancellationToken ct = default);
     Task<StockRequestDto> UpdateAsync(Guid id, UpdateStockRequestRequest request, CancellationToken ct = default);
 

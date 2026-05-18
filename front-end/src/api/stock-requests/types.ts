@@ -13,6 +13,9 @@ export type StockRequestItemDto = {
   productId: string
   productCode: string
   productName: string
+  // Category name (read live from products at request-detail time; not snapshotted).
+  // Used by the picklist print to group products by category.
+  categoryName: string
   // Snapshot of the product's pack weight (e.g. 100 for 100 g). Null when
   // the product has no weight set.
   weightValue: number | null
@@ -89,6 +92,15 @@ export type CumulativePendingLine = {
   weightValue: number | null
   weightUnit: string | null
   totalQty: number
+  requestCount: number
+}
+
+/** One row of the per-shop request-count summary used by the list page's
+ *  shop quick-filter chips. Shops with zero matching requests are omitted. */
+export type ShopRequestCount = {
+  shopId: string
+  shopCode: string
+  shopName: string
   requestCount: number
 }
 

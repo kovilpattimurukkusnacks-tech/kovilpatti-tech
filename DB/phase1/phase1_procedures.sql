@@ -8,9 +8,24 @@ BEGIN;
 
 -- ============== Users ============================================
 
--- Return shape's `role` column flipped from user_role → varchar so Npgsql 8+
--- can read it as a plain string without enum registration. DROP needed
--- because RETURNS TABLE shape change can't be applied via CREATE OR REPLACE.
+-- Map the PG enum (snake_case: 'admin' / 'shop_user' / 'inventory') to the
+-- PascalCase labels the C# UserRole enum uses (Admin / ShopUser / Inventory).
+-- Without this, Dapper can't reconcile 'shop_user' ↔ ShopUser via its
+-- default case-insensitive string→enum match (the underscore breaks it),
+-- and shop user login fails with a 500 even though admin/inventory work.
+CREATE OR REPLACE FUNCTION fn_user_role_label(r user_role)
+RETURNS varchar
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE r
+    WHEN 'admin'     THEN 'Admin'
+    WHEN 'shop_user' THEN 'ShopUser'
+    WHEN 'inventory' THEN 'Inventory'
+  END::varchar;
+$$;
+
+-- All four user-listing SPs return `role` as varchar (via the helper above)
+-- because Npgsql 8+ rejects unmapped custom enum types on the read path.
+-- DROP needed where the RETURNS TABLE shape changed from user_role → varchar.
 DROP FUNCTION IF EXISTS fn_user_find_by_username(varchar);
 
 CREATE OR REPLACE FUNCTION fn_user_find_by_username(p_username varchar)
@@ -25,10 +40,10 @@ RETURNS TABLE (
   active        boolean
 )
 LANGUAGE sql STABLE AS $$
-  -- u.role::varchar — Npgsql 8+ rejects unmapped custom enum types on the
+  -- fn_user_role_label(u.role) — Npgsql 8+ rejects unmapped custom enum types on the
   -- read path. Casting to varchar here lets the BE stay agnostic of enum
   -- registration at the data source level.
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, u.inventory_id, u.active
   FROM users u
   WHERE u.username = p_username
@@ -579,6 +594,19 @@ BEGIN
 END;
 $$;
 
+-- TODO(multi-inventory): when PROD onboards a 2nd inventory/godown, this SP
+-- must also cascade the shop's new inventory_id onto in-flight stock requests.
+-- Today PROD has one inventory so reassignment never happens and this is safe.
+-- The day a 2nd inventory is added, also do the following inside this tx:
+--   UPDATE stock_requests
+--   SET    inventory_id = p_inventory_id,
+--          updated_at   = now()
+--   WHERE  shop_id  = p_id
+--     AND  status   IN ('Pending', 'Approved')
+--     AND  inventory_id IS DISTINCT FROM p_inventory_id;
+-- Dispatched/Received/Rejected/Cancelled stay frozen to the original godown
+-- because those rows represent goods that physically left that godown — the
+-- audit trail must remain consistent. Pre-dispatch rows follow the shop.
 CREATE OR REPLACE FUNCTION fn_shop_update(
   p_id              uuid,
   p_name            varchar,
@@ -641,7 +669,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active
@@ -668,7 +696,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active

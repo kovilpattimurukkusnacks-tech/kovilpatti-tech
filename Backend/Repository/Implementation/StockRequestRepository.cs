@@ -53,6 +53,18 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         return rows.ToList();
     }
 
+    public async Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
+        string? status, Guid? inventoryId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        // p_status is text in the SP; the SP itself casts to request_status enum
+        // so callers don't have to know the custom PG type name.
+        const string sql = "SELECT * FROM fn_request_count_by_shop(@p_status, @p_inventory_id)";
+        var rows = await conn.QueryAsync<ShopRequestCount>(new CommandDefinition(
+            sql, new { p_status = status, p_inventory_id = inventoryId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     public async Task<string> NextCodeAsync(CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);

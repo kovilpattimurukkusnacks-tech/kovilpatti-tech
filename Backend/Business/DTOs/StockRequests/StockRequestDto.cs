@@ -45,6 +45,9 @@ public record StockRequestItemDto(
     Guid    ProductId,
     string  ProductCode,
     string  ProductName,
+    /// Category name read live from the product master at request-detail time.
+    /// Used by the picklist print to group products by category.
+    string  CategoryName,
     /// Snapshot of the product's pack weight (e.g. 100 for 100 g, 1 for 1 kg).
     /// Null when the product has no weight set.
     decimal? WeightValue,

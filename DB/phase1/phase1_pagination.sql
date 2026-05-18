@@ -161,9 +161,11 @@ $$;
 -- ------------------------------------------------------------
 -- USERS (non-admin only — admin row is excluded from staff list)
 -- ------------------------------------------------------------
--- Return shape's `role` column type changed from user_role → varchar (cast
--- so Npgsql 8+ can read it as a plain string). DROP needed because
--- RETURNS TABLE shape change can't be applied via CREATE OR REPLACE.
+-- `role` column casts the user_role enum to a PascalCase varchar via
+-- fn_user_role_label so Dapper can map it to the C# UserRole enum
+-- (snake_case 'shop_user' would not match PascalCase 'ShopUser'
+-- under Dapper's default string→enum conversion). DROP needed since
+-- the RETURNS TABLE shape changed from the original user_role version.
 DROP FUNCTION IF EXISTS fn_user_list_paged(int, int);
 
 CREATE OR REPLACE FUNCTION fn_user_list_paged(
@@ -183,7 +185,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role::varchar,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active

@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tansta
 import { stockRequestsApi } from '../api/stock-requests/api'
 import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
-  RejectRequest, DispatchRequest, PagedResult, StockRequestDto,
+  RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -57,6 +57,18 @@ export function useCumulativePending(inventoryId?: string) {
   })
 }
 
+/** Per-shop request counts for the active status filter — drives the shop
+ *  quick-filter chips on the admin/inventory list pages. Refetches when the
+ *  status changes; keeps the prior result visible during the refetch so the
+ *  chip row doesn't blink to empty. */
+export function useRequestCountByShop(args?: { status?: RequestStatus; inventoryId?: string }) {
+  return useQuery({
+    queryKey: ['stock-requests', 'count-by-shop', args?.status ?? 'all', args?.inventoryId ?? 'all'] as const,
+    queryFn: () => stockRequestsApi.countByShop(args),
+    placeholderData: keepPreviousData,
+  })
+}
+
 // ─── Mutations ───────────────────────────────────────────
 
 /**
@@ -82,6 +94,10 @@ function patchAllListCaches(qc: ReturnType<typeof useQueryClient>, updated: Stoc
   qc.invalidateQueries({ queryKey: ['stock-requests', 'mine']     })
   qc.invalidateQueries({ queryKey: ['stock-requests', 'incoming'] })
   qc.invalidateQueries({ queryKey: ['stock-requests', 'all']      })
+  // Status changes (approve/reject/dispatch/etc.) shift the request across
+  // the shop-filter chips' badge counts — refetch them too.
+  qc.invalidateQueries({ queryKey: ['stock-requests', 'count-by-shop'] })
+  qc.invalidateQueries({ queryKey: ['stock-requests', 'cumulative']    })
 }
 
 export function useCreateStockRequest() {

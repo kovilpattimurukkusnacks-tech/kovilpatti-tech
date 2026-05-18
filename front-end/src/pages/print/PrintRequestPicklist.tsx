@@ -1,6 +1,7 @@
-import { useEffect, useMemo, useRef } from 'react'
+import { Fragment, useEffect, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
+import type { StockRequestItemDto } from '../../api/stock-requests/types'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import './print.css'
@@ -39,6 +40,22 @@ export default function PrintRequestPicklist() {
     )
   }, [request])
 
+  // Group items by category for the kitchen / packer to scan one section at
+  // a time. SP already orders by category then code, so we just bucket.
+  const sections = useMemo(() => {
+    if (!request?.items?.length) return []
+    const buckets = new Map<string, StockRequestItemDto[]>()
+    for (const it of request.items) {
+      const key = it.categoryName || 'Uncategorised'
+      const arr = buckets.get(key)
+      if (arr) arr.push(it)
+      else buckets.set(key, [it])
+    }
+    return Array.from(buckets.entries())
+      .sort(([a], [b]) => a.localeCompare(b))
+      .map(([category, items]) => ({ category, items }))
+  }, [request])
+
   if (isLoading) return <div className="print-page"><p>Loading…</p></div>
   if (error || !request) {
     return (
@@ -48,14 +65,15 @@ export default function PrintRequestPicklist() {
     )
   }
 
-  const items = request.items ?? []
   const hasDispatch = request.totalDispatchedQty != null
   const isShort = hasDispatch && deliveredAmount < request.totalAmount
 
   return (
     <div className="print-page">
-      <header className="print-header">
-        <div>
+      {/* Centered title bar with status pill underneath; timestamps live on
+          a separate row on the right so the title can dominate visually. */}
+      <header className="print-header print-header-centered">
+        <div className="print-title-block">
           <h1 className="print-title">Stock Request — Picklist</h1>
           <div className="print-meta">
             <strong>{request.code}</strong> · {request.status}
@@ -69,6 +87,7 @@ export default function PrintRequestPicklist() {
         </div>
       </header>
 
+      {/* Shop on the left, Inventory on the right edge of the page. */}
       <section className="print-parties">
         <div>
           <div className="muted">Shop</div>
@@ -77,7 +96,7 @@ export default function PrintRequestPicklist() {
             <div className="small">Requested by {request.submittedByName}</div>
           )}
         </div>
-        <div>
+        <div className="print-parties-right">
           <div className="muted">Inventory</div>
           <div className="strong">{request.inventoryCode} — {request.inventoryName}</div>
           {request.dispatchedByName && (
@@ -97,21 +116,37 @@ export default function PrintRequestPicklist() {
           </tr>
         </thead>
         <tbody>
-          {items.map((it, i) => (
-            <tr key={it.id}>
-              <td>{i + 1}</td>
-              <td>
-                <strong>{it.productCode}</strong> — {it.productName}
-              </td>
-              <td style={{ textAlign: 'right' }}>
-                {it.weightValue != null ? `${it.weightValue} ${it.weightUnit ?? ''}`.trim() : '—'}
-              </td>
-              <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
-              <td style={{ textAlign: 'right' }}>
-                <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
-              </td>
-            </tr>
-          ))}
+          {sections.map(section => {
+            const sectionQty = section.items.reduce((s, it) => s + it.requestedQty, 0)
+            return (
+              <Fragment key={section.category}>
+                <tr className="print-section-row">
+                  <td colSpan={5}>
+                    <span className="strong">{section.category}</span>
+                    <span className="muted" style={{ marginLeft: 8 }}>
+                      · {section.items.length} {section.items.length === 1 ? 'product' : 'products'}
+                      · {sectionQty} units
+                    </span>
+                  </td>
+                </tr>
+                {section.items.map((it, i) => (
+                  <tr key={it.id}>
+                    <td>{i + 1}</td>
+                    <td>
+                      <strong>{it.productCode}</strong> — {it.productName}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>
+                      {it.weightValue != null ? `${it.weightValue} ${it.weightUnit ?? ''}`.trim() : '—'}
+                    </td>
+                    <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
+                    <td style={{ textAlign: 'right' }}>
+                      <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
+                    </td>
+                  </tr>
+                ))}
+              </Fragment>
+            )
+          })}
         </tbody>
         <tfoot>
           <tr>

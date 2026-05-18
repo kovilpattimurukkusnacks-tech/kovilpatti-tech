@@ -36,15 +36,18 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, ct));
 
     // ─── Inventory user: requests for their godown ───────────
+    // shopId is an optional drill-down filter from the per-shop chip row;
+    // inventoryId is force-scoped to the caller's godown so this stays safe.
     [HttpGet("incoming")]
     [Authorize(Roles = "Inventory")]
     public async Task<ActionResult<PagedResult<StockRequestDto>>> ListIncoming(
+        [FromQuery] Guid?   shopId,
         [FromQuery] string? status,
         [FromQuery] string? search,
         [FromQuery] int     page     = 1,
         [FromQuery] int     pageSize = 10,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(null, currentUser.InventoryId, status, search, page, pageSize, ct));
+        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, ct));
 
     // ─── Cumulative pending workload (Inventory + Admin) ─────
     // Aggregate of every Pending request's items, grouped by SKU. Inventory
@@ -56,6 +59,18 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] Guid? inventoryId,
         CancellationToken ct)
         => Ok(await requests.GetPendingCumulativeAsync(inventoryId, ct));
+
+    // ─── Per-shop request counts (Inventory + Admin) ─────────
+    // Drives the list page's shop quick-filter chips. status=… mirrors the
+    // currently-active status preset; omit for "All". Shops with 0 matching
+    // requests are not returned (SP prunes them via INNER JOIN).
+    [HttpGet("count-by-shop")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<IReadOnlyList<ShopRequestCountDto>>> CountByShop(
+        [FromQuery] string? status,
+        [FromQuery] Guid?   inventoryId,
+        CancellationToken ct)
+        => Ok(await requests.GetCountByShopAsync(status, inventoryId, ct));
 
     // ─── Detail (any role — service enforces ownership) ──────
     [HttpGet("{id:guid}")]

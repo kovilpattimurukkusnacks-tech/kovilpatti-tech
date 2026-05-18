@@ -82,6 +82,27 @@ public class StockRequestService(
             r.Weight_Value, r.Weight_Unit, r.Total_Qty, r.Request_Count)).ToList();
     }
 
+    public async Task<IReadOnlyList<ShopRequestCountDto>> GetCountByShopAsync(
+        string? status, Guid? inventoryId, CancellationToken ct = default)
+    {
+        // Same role gating as GetPendingCumulativeAsync:
+        //   • ShopUser  → never (this is a cross-shop summary; not useful to them).
+        //   • Inventory → forced to their own inventory; ignore any caller-supplied
+        //                 inventoryId to prevent peeking into other godowns.
+        //   • Admin     → may pass any inventoryId or NULL for tenant-wide totals.
+        var role = currentUser.Role ?? "";
+        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+            throw new ForbiddenException("Shop users cannot view the per-shop summary.");
+
+        Guid? scope = string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
+            ? currentUser.InventoryId
+            : inventoryId;
+
+        var rows = await requests.GetCountByShopAsync(status, scope, ct);
+        return rows.Select(r => new ShopRequestCountDto(
+            r.Shop_Id, r.Shop_Code, r.Shop_Name, r.Request_Count)).ToList();
+    }
+
     // ───────── Write — Create ─────────
 
     public async Task<StockRequestDto> CreateAsync(CreateStockRequestRequest request, CancellationToken ct = default)
@@ -410,7 +431,7 @@ public class StockRequestService(
             ? new List<StockRequestItemDto>()
             : (JsonSerializer.Deserialize<List<RawItem>>(r.Items, ReadJsonOpts) ?? new List<RawItem>())
               .Select(i => new StockRequestItemDto(
-                  i.id, i.product_id, i.product_code, i.product_name,
+                  i.id, i.product_id, i.product_code, i.product_name, i.category_name,
                   i.weight_value, i.weight_unit,
                   i.requested_qty, i.dispatched_qty, i.unit_price, i.subtotal))
               .ToList();
@@ -434,6 +455,7 @@ public class StockRequestService(
     // Matches the JSON keys returned by fn_request_get's jsonb_build_object.
     private sealed record RawItem(
         Guid id, Guid product_id, string product_code, string product_name,
+        string category_name,
         decimal? weight_value, string? weight_unit,
         int requested_qty, int? dispatched_qty, decimal unit_price, decimal subtotal);
 }

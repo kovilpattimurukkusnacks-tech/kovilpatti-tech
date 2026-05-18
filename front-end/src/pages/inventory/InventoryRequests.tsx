@@ -5,7 +5,7 @@ import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useIncomingStockRequests } from '../../hooks/useStockRequests'
+import { useIncomingStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
@@ -33,6 +33,8 @@ export default function InventoryRequests() {
   const navigate = useNavigate()
   // Default: Needs Action (Approved)
   const [activePreset, setActivePreset] = useState<string>('pending')
+  // Optional second-level drill-down — clicking a shop chip toggles it.
+  const [shopId, setShopId] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState<string>('')
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
 
@@ -40,10 +42,21 @@ export default function InventoryRequests() {
 
   const list = useIncomingStockRequests({
     status: currentStatus,
+    shopId,
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
     pageSize: paginationModel.pageSize,
   })
+
+  // Inventory user's own scope is enforced server-side, so no inventoryId
+  // arg needed. We use it only to know whether the Print Cumulative button
+  // should be enabled (empty queue → nothing to print).
+  const cumulative = useCumulativePending()
+  const hasPending = (cumulative.data?.length ?? 0) > 0
+
+  // Per-shop chips for the active status filter. BE forces the inventory
+  // scope to this user's godown — so we only see shops served by it.
+  const shopCounts = useRequestCountByShop({ status: currentStatus })
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -132,6 +145,8 @@ export default function InventoryRequests() {
             variant="contained"
             startIcon={<Printer className="w-4 h-4" />}
             onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
+            disabled={!hasPending}
+            title={hasPending ? undefined : 'No pending requests to print'}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
             Print Cumulative
@@ -142,13 +157,19 @@ export default function InventoryRequests() {
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
 
       {/* Quick-filter chips + search */}
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
         {PRESETS.map(p => {
           const active = activePreset === p.key
           return (
             <Button
               key={p.key}
-              onClick={() => { setActivePreset(p.key); setPaginationModel(m => ({ ...m, page: 0 })) }}
+              onClick={() => {
+                setActivePreset(p.key)
+                // Drop the shop drill-down when the status changes — a shop
+                // that has rows in one status may have none in the next.
+                setShopId(undefined)
+                setPaginationModel(m => ({ ...m, page: 0 }))
+              }}
               disableElevation
               variant={active ? 'contained' : 'outlined'}
               size="small"
@@ -195,6 +216,44 @@ export default function InventoryRequests() {
           }}
         />
       </Box>
+
+      {/* Per-shop drill-down chips for the active status filter. Server
+          prunes zero-count shops; we hide the row entirely when nothing
+          matches. Click a chip to filter; click again to clear. */}
+      {(shopCounts.data?.length ?? 0) > 0 && (
+        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Box sx={{ fontSize: 12, fontWeight: 600, color: '#1F1F1F99', mr: 0.5 }}>
+            By shop:
+          </Box>
+          {shopCounts.data!.map(s => {
+            const active = shopId === s.shopId
+            return (
+              <Chip
+                key={s.shopId}
+                onClick={() => {
+                  setShopId(prev => prev === s.shopId ? undefined : s.shopId)
+                  setPaginationModel(m => ({ ...m, page: 0 }))
+                }}
+                label={`${s.shopName} (${s.requestCount})`}
+                size="small"
+                variant={active ? 'filled' : 'outlined'}
+                sx={{
+                  cursor: 'pointer',
+                  borderRadius: 999,
+                  fontWeight: 600,
+                  ...(active
+                    ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                    : {
+                        bgcolor: '#FFFFFF', color: '#1F1F1F',
+                        borderColor: 'rgba(31,31,31,0.2)',
+                        '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
+                      }),
+                }}
+              />
+            )
+          })}
+        </Box>
+      )}
 
       <Paper className="products-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <DataGrid

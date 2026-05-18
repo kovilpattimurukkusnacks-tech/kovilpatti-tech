@@ -13,6 +13,9 @@ public interface IStockRequestRepository
     Task<IReadOnlyList<CumulativePendingLine>> GetPendingCumulativeAsync(
         Guid? inventoryId, CancellationToken ct = default);
 
+    Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
+        string? status, Guid? inventoryId, CancellationToken ct = default);
+
     Task<string> NextCodeAsync(CancellationToken ct = default);
 
     Task<Guid> CreateAsync(

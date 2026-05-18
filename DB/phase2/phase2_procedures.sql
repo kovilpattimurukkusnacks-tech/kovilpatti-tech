@@ -253,6 +253,41 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 
+-- Per-shop request counts for a given status filter, used by the admin and
+-- inventory list pages to render shop quick-filter chips with badge counts.
+-- Returns one row per shop that has at least 1 matching request — shops with
+-- zero requests for the current filter are pruned by the INNER JOIN.
+--
+-- p_status        NULL → all statuses (mirrors the "All" chip on the UI).
+-- p_inventory_id  NULL → tenant-wide (admin only); otherwise scoped to one
+--                        inventory's queue (forced for the Inventory role).
+CREATE OR REPLACE FUNCTION fn_request_count_by_shop(
+  p_status       text DEFAULT NULL,
+  p_inventory_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+  shop_id       uuid,
+  shop_code     varchar,
+  shop_name     varchar,
+  request_count bigint
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    s.id     AS shop_id,
+    s.code   AS shop_code,
+    s.name   AS shop_name,
+    COUNT(*)::bigint AS request_count
+  FROM stock_requests r
+  INNER JOIN shops s ON s.id = r.shop_id
+  WHERE r.is_deleted = false
+    AND s.is_deleted = false
+    AND (p_status       IS NULL OR r.status       = p_status::request_status)
+    AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+  GROUP BY s.id, s.code, s.name
+  ORDER BY s.code;
+$$;
+
+
 -- Single request with all items aggregated as a JSON array (single round-trip).
 -- BE deserializes `items` as `List<StockRequestItemDto>`.
 -- Return shape gained `total_dispatched_qty` → must DROP before redefining.
@@ -325,6 +360,10 @@ LANGUAGE sql STABLE AS $$
                'product_id',     it.product_id,
                'product_code',   p.code,
                'product_name',   p.name,
+               -- Category is read live from the product master (not snapshotted).
+               -- If a category is renamed later, old picklists reflect the new
+               -- name. Acceptable since categories rarely change post-launch.
+               'category_name',  c.name,
                -- Weight comes from the item row (snapshot at request time),
                -- NOT from the live product master. If the product is later
                -- repacked from 100 g → 120 g, history stays at 100 g.
@@ -334,10 +373,11 @@ LANGUAGE sql STABLE AS $$
                'dispatched_qty', it.dispatched_qty,
                'unit_price',     it.unit_price,
                'subtotal',       it.subtotal
-             ) ORDER BY p.code
+             ) ORDER BY c.name, p.code
            )
            FROM stock_request_items it
-           INNER JOIN products p ON p.id = it.product_id
+           INNER JOIN products   p ON p.id = it.product_id
+           INNER JOIN categories c ON c.id = p.category_id
            WHERE it.request_id = r.id
          ), '[]'::jsonb) AS items
   FROM stock_requests r
