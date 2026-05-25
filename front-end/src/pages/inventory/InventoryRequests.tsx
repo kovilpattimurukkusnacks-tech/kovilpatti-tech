@@ -1,29 +1,43 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Search, Printer } from 'lucide-react'
+import { FileEdit, Search, Printer } from 'lucide-react'
 import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useIncomingStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
+import {
+  useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
+  useInventoryDispatchDrafts,
+} from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
+const fmtIst = (iso: string | null | undefined) =>
+  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'
+
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // Inventory list excludes Draft server-side. Mapping kept for type-safety.
+  Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
 }
 
 // Quick-filter presets. Each maps to a single status the BE understands.
-// `undefined` = show all statuses.
+// `undefined` = show all statuses. Order mirrors the request lifecycle so
+// the chip row reads left-to-right as the workflow: Pending → Approved →
+// Dispatched → Received → catch-all.
+//
+// Approval step is "legacy" per workflow guidance — a freshly submitted
+// request is Pending and goes straight to inventory for dispatch. The
+// Approved chip is here because the Approve button is still live in the
+// detail page, and any request the inventory user has approved needs a
+// home in the filter row (otherwise it silently vanishes from Needs
+// Action and only the "All" chip finds it).
 type Preset = { key: string; label: string; status: RequestStatus | undefined }
-// Approval step was removed from the workflow — a freshly submitted request
-// is Pending and goes straight to inventory for dispatch. Legacy rows still
-// in Approved state remain dispatchable (BE allows both), but new traffic
-// flows Pending → Dispatched → Received.
 const PRESETS: Preset[] = [
   { key: 'pending',    label: 'Needs Action',  status: 'Pending'    },
+  { key: 'approved',   label: 'Approved',      status: 'Approved'   },
   { key: 'dispatched', label: 'In Transit',    status: 'Dispatched' },
   { key: 'received',   label: 'Delivered',     status: 'Received'   },
   { key: 'all',        label: 'All',           status: undefined    },
@@ -58,10 +72,16 @@ export default function InventoryRequests() {
   // scope to this user's godown — so we only see shops served by it.
   const shopCounts = useRequestCountByShop({ status: currentStatus })
 
+  // Pending/Approved requests with a saved dispatch draft — surfaced as
+  // strips below the page title so the user can jump back into any WIP
+  // dispatch session in one click.
+  const dispatchDrafts = useInventoryDispatchDrafts()
+
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
-  const columns = useMemo<GridColDef<StockRequestDto>[]>(() => [
+  const columns = useMemo<GridColDef<StockRequestDto>[]>(() => {
+    const cols: GridColDef<StockRequestDto>[] = [
     {
       // Most useful triage signal — date the request landed in the queue.
       // Date-only (no time) so it stays compact at the leading edge.
@@ -70,6 +90,40 @@ export default function InventoryRequests() {
         ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
         : <span className="text-[#1F1F1F]/40">—</span>,
     },
+  ]
+  // Approved chip only — surface when each request was approved. Hidden on
+  // every other preset to keep the grid uncluttered (the column would be a
+  // dash for Pending and a no-op for finalised states).
+  if (activePreset === 'approved') {
+    cols.push({
+      field: 'approvedAt', headerName: 'Approved Date', width: 150, sortable: false, filterable: false,
+      renderCell: ({ value }) => value
+        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        : <span className="text-[#1F1F1F]/40">—</span>,
+    })
+  }
+  // In Transit chip only — show when the request was dispatched. Same
+  // rationale as Approved Date: meaningful only for this state, hidden
+  // elsewhere to keep the grid focused.
+  if (activePreset === 'dispatched') {
+    cols.push({
+      field: 'dispatchedAt', headerName: 'Dispatched Date', width: 150, sortable: false, filterable: false,
+      renderCell: ({ value }) => value
+        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        : <span className="text-[#1F1F1F]/40">—</span>,
+    })
+  }
+  // Delivered chip only — show when the shop confirmed receipt. Same
+  // single-state rationale as above.
+  if (activePreset === 'received') {
+    cols.push({
+      field: 'receivedAt', headerName: 'Received Date', width: 150, sortable: false, filterable: false,
+      renderCell: ({ value }) => value
+        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        : <span className="text-[#1F1F1F]/40">—</span>,
+    })
+  }
+  cols.push(
     { field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false },
     {
       field: 'submittedByName', headerName: 'User', flex: 1, minWidth: 140, sortable: false, filterable: false,
@@ -129,7 +183,9 @@ export default function InventoryRequests() {
         />
       ),
     },
-  ], [])
+  )
+  return cols
+  }, [activePreset])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
@@ -155,6 +211,53 @@ export default function InventoryRequests() {
       />
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
+
+      {/* Dispatch draft strips — one Paper per request that has WIP dispatch
+          qtys saved. Mirrors the shop-side "Resume Draft" strip but can
+          stack multiple cards since an inventory user may have drafts on
+          several requests. Hidden when the list is empty. */}
+      {(dispatchDrafts.data?.length ?? 0) > 0 && (
+        <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {dispatchDrafts.data!.map(d => (
+            <Paper
+              key={d.id}
+              elevation={0}
+              sx={{
+                borderRadius: 2,
+                border: '2px solid #1F1F1F',
+                bgcolor: '#FFF8DC',
+                px: 2,
+                py: 1.5,
+                display: 'flex',
+                alignItems: 'center',
+                gap: 2,
+                flexWrap: 'wrap',
+              }}
+            >
+              <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+              <Box sx={{ flex: 1, minWidth: 0 }}>
+                <Box sx={{ fontWeight: 700, fontSize: 14 }}>
+                  Resume dispatch draft — {d.code}
+                </Box>
+                <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+                  {d.shopCode} · {d.shopName}
+                  · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
+                  · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
+                  · Last saved {fmtIst(d.updatedAt)}
+                </Box>
+              </Box>
+              <Button
+                variant="contained"
+                size="small"
+                onClick={() => navigate(`/inventory/requests/${d.id}`)}
+                sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+              >
+                Resume
+              </Button>
+            </Paper>
+          ))}
+        </Box>
+      )}
 
       {/* Quick-filter chips + search */}
       <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>

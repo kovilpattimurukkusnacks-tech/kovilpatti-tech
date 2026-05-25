@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
-import type { StockRequestItemDto } from '../../api/stock-requests/types'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
+import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import './print.css'
 
 const fmtIst = (iso: string | null | undefined) =>
@@ -40,21 +40,15 @@ export default function PrintRequestPicklist() {
     )
   }, [request])
 
-  // Group items by category for the kitchen / packer to scan one section at
-  // a time. SP already orders by category then code, so we just bucket.
-  const sections = useMemo(() => {
-    if (!request?.items?.length) return []
-    const buckets = new Map<string, StockRequestItemDto[]>()
-    for (const it of request.items) {
-      const key = it.categoryName || 'Uncategorised'
-      const arr = buckets.get(key)
-      if (arr) arr.push(it)
-      else buckets.set(key, [it])
-    }
-    return Array.from(buckets.entries())
-      .sort(([a], [b]) => a.localeCompare(b))
-      .map(([category, items]) => ({ category, items }))
-  }, [request])
+  // Two-level grouping for the picklist: category → weight → items. The
+  // kitchen scans one weight bucket at a time within each category.
+  const sections = useMemo(
+    () => groupByCategoryWeight(
+      request?.items ?? [],
+      it => ({ category: it.categoryName, weightValue: it.weightValue, weightUnit: it.weightUnit }),
+    ),
+    [request],
+  )
 
   if (isLoading) return <div className="print-page"><p>Loading…</p></div>
   if (error || !request) {
@@ -105,52 +99,88 @@ export default function PrintRequestPicklist() {
         </div>
       </section>
 
-      <table className="print-table">
+      {/* Items — one card per category, mirrors the on-screen detail layout.
+          Each card has its own table; the print stylesheet keeps cards on a
+          single page when they fit. Column header row shows once at the top
+          so the reader knows what the numbers mean. */}
+      <table className="print-table" style={{ marginBottom: 8 }}>
+        <colgroup>
+          <col style={{ width: 50 }} />
+          <col />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 110 }} />
+        </colgroup>
         <thead>
           <tr>
-            <th style={{ width: 50 }}>#</th>
+            <th>#</th>
             <th>Product</th>
-            <th style={{ width: 80, textAlign: 'right' }}>Weight</th>
-            <th style={{ width: 100, textAlign: 'right' }}>Requested</th>
-            <th style={{ width: 110, textAlign: 'right' }}>Dispatched</th>
+            <th style={{ textAlign: 'right' }}>Requested</th>
+            <th style={{ textAlign: 'right' }}>Dispatched</th>
           </tr>
         </thead>
-        <tbody>
-          {sections.map(section => {
-            const sectionQty = section.items.reduce((s, it) => s + it.requestedQty, 0)
-            return (
-              <Fragment key={section.category}>
-                <tr className="print-section-row">
-                  <td colSpan={5}>
-                    <span className="strong">{section.category}</span>
-                    <span className="muted" style={{ marginLeft: 8 }}>
-                      · {section.items.length} {section.items.length === 1 ? 'product' : 'products'}
-                      · {sectionQty} units
-                    </span>
-                  </td>
-                </tr>
-                {section.items.map((it, i) => (
-                  <tr key={it.id}>
-                    <td>{i + 1}</td>
-                    <td>
-                      <strong>{it.productCode}</strong> — {it.productName}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>
-                      {it.weightValue != null ? `${it.weightValue} ${it.weightUnit ?? ''}`.trim() : '—'}
-                    </td>
-                    <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
-                    <td style={{ textAlign: 'right' }}>
-                      <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
-                    </td>
-                  </tr>
-                ))}
-              </Fragment>
-            )
-          })}
-        </tbody>
+      </table>
+
+      {sections.map(section => {
+        const sectionQty = section.weightGroups.reduce(
+          (s, wg) => s + wg.items.reduce((a, it) => a + it.requestedQty, 0), 0)
+        const productCount = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
+        return (
+          <div key={section.category} className="print-card">
+            <div className="print-card-header">
+              {section.category}
+              <span className="muted">
+                · {productCount} {productCount === 1 ? 'product' : 'products'}
+                · {sectionQty} units
+              </span>
+            </div>
+            <table className="print-table">
+              <colgroup>
+                <col style={{ width: 50 }} />
+                <col />
+                <col style={{ width: 100 }} />
+                <col style={{ width: 110 }} />
+              </colgroup>
+              <tbody>
+                {section.weightGroups.map(wg => {
+                  let idx = 0
+                  return (
+                    <Fragment key={`${section.category}__${wg.label}`}>
+                      <tr className="print-weight-row">
+                        <td colSpan={4}>{wg.label}</td>
+                      </tr>
+                      {wg.items.map(it => {
+                        idx++
+                        return (
+                          <tr key={it.id}>
+                            <td>{idx}</td>
+                            <td><strong>{it.productName}</strong></td>
+                            <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
+                            <td style={{ textAlign: 'right' }}>
+                              <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </Fragment>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )
+      })}
+
+      {/* Grand totals — printed as a single strip below all category cards. */}
+      <table className="print-table" style={{ marginTop: 4 }}>
+        <colgroup>
+          <col style={{ width: 50 }} />
+          <col />
+          <col style={{ width: 100 }} />
+          <col style={{ width: 110 }} />
+        </colgroup>
         <tfoot>
           <tr>
-            <td colSpan={3} className="strong" style={{ textAlign: 'right' }}>Total</td>
+            <td colSpan={2} className="strong" style={{ textAlign: 'right' }}>Total</td>
             <td className="strong" style={{ textAlign: 'right' }}>{request.totalQty}</td>
             <td className="strong" style={{ textAlign: 'right' }}>
               {request.totalDispatchedQty ?? '—'}

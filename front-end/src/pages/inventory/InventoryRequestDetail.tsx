@@ -1,10 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2 } from 'lucide-react'
 import {
   Alert, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, TextField,
+  TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -14,11 +14,18 @@ import { formatINR } from '../../utils/format'
 import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
+  useSaveDispatchDraft, useClearDispatchDraft,
 } from '../../hooks/useStockRequests'
+import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
+import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
+import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // Inventory never sees Draft requests (BE excludes them from /incoming).
+  // Mapping kept to satisfy the exhaustive Record type.
+  Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
 }
@@ -37,28 +44,65 @@ export default function InventoryRequestDetail() {
   const approveMutation  = useApproveStockRequest()
   const rejectMutation   = useRejectStockRequest()
   const revokeMutation   = useRevokeStockRequest()
+  const saveDraftMutation  = useSaveDispatchDraft()
+  const clearDraftMutation = useClearDispatchDraft()
 
   // Per-item "to dispatch" quantities. Starts at requested_qty; inventory can
   // ship less if they're out of stock (clamped to ≤ requested_qty).
   const [dispatchQtys, setDispatchQtys] = useState<Map<string, number>>(new Map())
+  const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // True when dispatch qtys have changed since the last successful draft
+  // save (or since the seed from a stored draft). Drives the Save as Draft
+  // button's disabled state so the user can't redundantly re-save the
+  // same data.
+  const [isDraftDirty, setIsDraftDirty] = useState(false)
   const [confirmOpen, setConfirmOpen] = useState(false)
   const [approveConfirm, setApproveConfirm] = useState(false)
   const [rejectOpen, setRejectOpen]   = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [revokeConfirm, setRevokeConfirm] = useState(false)
 
-  // Seed dispatchQtys from items when the request loads (only for Approved requests).
+  // Seed dispatchQtys from items when the request loads. Priority order:
+  //   1. draftDispatchedQty  — inventory user's saved WIP from a previous visit
+  //   2. dispatchedQty       — legacy data where the qty was already set
+  //   3. requestedQty default — only for Approved (post-approval auto-fill,
+  //                             matches the pre-draft "ready to dispatch" UX)
+  //   4. (none)              — empty input; user has to type each line
+  //                            (Pending without a saved draft)
+  //
+  // isDraftDirty:
+  //   - false when the seed came from BE-persisted values (draft / dispatched)
+  //     — what's in memory matches what's saved, so Save as Draft greys out.
+  //   - true when the seed came from the requestedQty default — those are
+  //     unsaved fresh defaults, so both Save as Draft AND Mark as Dispatched
+  //     light up after Approve, per the inventory workflow.
   useEffect(() => {
     if (!request) return
-    if (request.status !== 'Approved') {
+    const status = request.status
+    const isDispatchable = status === 'Pending' || status === 'Approved'
+    if (!isDispatchable) {
       setDispatchQtys(new Map())
+      setIsDraftDirty(false)
       return
     }
     const map = new Map<string, number>()
+    let seededAsUnsavedDefaults = false
     for (const item of request.items ?? []) {
-      map.set(item.id, item.dispatchedQty ?? item.requestedQty)
+      if (item.draftDispatchedQty != null) {
+        map.set(item.id, item.draftDispatchedQty)
+      } else if (item.dispatchedQty != null) {
+        map.set(item.id, item.dispatchedQty)
+      } else if (status === 'Approved') {
+        // Approved-state default: every line at full requested qty so the
+        // godown can dispatch immediately. User can dial individual lines
+        // down (e.g. out-of-stock) before clicking Mark as Dispatched.
+        map.set(item.id, item.requestedQty)
+        seededAsUnsavedDefaults = true
+      }
+      // Pending without a draft → no seed → input stays empty.
     }
     setDispatchQtys(map)
+    setIsDraftDirty(seededAsUnsavedDefaults)
   }, [request])
 
   // Stats surfaced in the sticky bottom bar. Declared before any early return
@@ -83,6 +127,78 @@ export default function InventoryRequestDetail() {
   // the entry from dispatchQtys, so a missing key = not filled in.
   const allLinesFilled = items.length > 0 && items.every(it => dispatchQtys.has(it.id))
 
+  // Card-per-category grouping. Computed unconditionally so hooks order
+  // stays stable across loading / error renders.
+  const grouped = useMemo(
+    () => groupByCategoryWeight(
+      items,
+      it => ({ category: it.categoryName, weightValue: it.weightValue, weightUnit: it.weightUnit }),
+    ),
+    [items],
+  )
+
+  // ── Hooks below MUST stay before the early-return block. React's rules
+  //    of hooks demand a stable count per render; if we run only the hooks
+  //    above on the loading render and these too on the loaded render,
+  //    React throws "Rendered more hooks than during the previous render". ──
+
+  // Unsaved-changes guard — fires when the user tries to leave the dispatch
+  // screen with dirty qtys (in-app nav like clicking Back to list, sidebar
+  // menu, or browser refresh / back / tab close). Only active while the
+  // request is dispatchable; once Dispatched/Received/Cancelled there's no
+  // draft concept and no editable state to protect.
+  //
+  // submittingRef bypasses the guard during finalising mutations (dispatch,
+  // approve, reject, revoke, receive, cancel) where the navigation that
+  // follows is the intended outcome of the user's click.
+  const submittingRef = useRef(false)
+  const guard = useUnsavedChangesGuard(
+    () => !submittingRef.current && canDispatch && isDraftDirty,
+  )
+
+  // Auto-save change counter — see ShopRequestNew for the rationale. Used
+  // to prevent the post-save dirty-clear from racing with mid-flight edits.
+  const changeCountRef = useRef(0)
+
+  // Auto-save dispatch draft 1.5s after the user stops typing. Same debounce
+  // pattern as the shop side — cleanup cancels the pending timer on every
+  // change, so continuous typing doesn't spam the BE.
+  useEffect(() => {
+    if (!canDispatch || !isDraftDirty || dispatchQtys.size === 0) return
+    // request can be undefined on the very first render before the query
+    // resolves; canDispatch evaluates to false in that case so we're
+    // already returning above, but the optional chain below is defensive.
+    const requestId = request?.id
+    if (!requestId) return
+
+    const timer = setTimeout(() => {
+      const startCount = changeCountRef.current
+      const itemsPayload = items.map(it => ({
+        id: it.id,
+        dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
+      }))
+      saveDraftMutation.mutate(
+        { id: requestId, req: { items: itemsPayload } },
+        {
+          onSuccess: () => {
+            setDraftSavedAt(new Date())
+            if (changeCountRef.current === startCount) {
+              setIsDraftDirty(false)
+            }
+          },
+          // onError: silent — manual Save as Draft remains available, and the
+          // saveDraftError alert above the sticky bar surfaces the BE message.
+        },
+      )
+    }, 1500)
+
+    return () => clearTimeout(timer)
+    // saveDraftMutation / items / request deliberately not in deps — see the
+    // shop-side auto-save effect for the rationale (re-renders would reset
+    // the debounce on every keystroke).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canDispatch, isDraftDirty, dispatchQtys])
+
   if (isLoading) return <Box><PageHeader title="Loading…" subtitle="" /></Box>
   if (error || !request) {
     return (
@@ -93,7 +209,11 @@ export default function InventoryRequestDetail() {
     )
   }
 
-  const setItemQty = (itemId: string, raw: string, requestedQty: number) => {
+  const setItemQty = (itemId: string, raw: string, _requestedQty: number) => {
+    // Any user-driven change marks the draft as having unsaved changes,
+    // re-enabling the Save as Draft button.
+    setIsDraftDirty(true)
+    changeCountRef.current += 1
     // Empty field = clear the override. The dispatch payload (and the line
     // total) then falls back to requested_qty for that item. This is what
     // lets the user erase the existing number and re-type — if we stored 0
@@ -104,9 +224,9 @@ export default function InventoryRequestDetail() {
     }
     const n = parseInt(raw, 10)
     if (Number.isNaN(n) || n < 0) return
-    // Clamp to requested qty (DB constraint enforces this too).
-    const clamped = Math.min(n, requestedQty)
-    setDispatchQtys(prev => { const m = new Map(prev); m.set(itemId, clamped); return m })
+    // Upper-bound cap removed — inventory can dispatch any positive qty,
+    // even above requested_qty (forced case-sizes, rounding up, etc.).
+    setDispatchQtys(prev => { const m = new Map(prev); m.set(itemId, n); return m })
   }
 
   const handleDispatch = async () => {
@@ -118,6 +238,51 @@ export default function InventoryRequestDetail() {
       await dispatchMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
     } finally {
       setConfirmOpen(false)
+    }
+  }
+
+  /**
+   * Save what's been entered so far without finalising. Lines that the user
+   * hasn't typed in yet are sent as their requested_qty so the BE's
+   * non-null constraint on the draft column isn't tripped — those values
+   * are easy to overwrite when the user returns.
+   *
+   * Save-as-Draft has NO "all lines filled" gate (unlike Mark-as-Dispatched).
+   * The whole point of a draft is that it's incomplete.
+   */
+  const handleSaveDraft = async () => {
+    const startCount = changeCountRef.current
+    const itemsPayload = items.map(it => ({
+      id: it.id,
+      dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
+    }))
+    try {
+      await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
+      setDraftSavedAt(new Date())
+      // Only mark clean if no in-flight edit happened during the save (same
+      // race-protection as the auto-save effect above).
+      if (changeCountRef.current === startCount) {
+        setIsDraftDirty(false)
+      }
+    } catch {
+      // surfaced via the error alert below
+    }
+  }
+
+  /**
+   * Discard the saved dispatch draft. The BE clears draft_dispatched_qty on
+   * every item; the refreshed request flows back into the useEffect seed,
+   * which then re-applies the appropriate defaults (empty for Pending,
+   * requestedQty for Approved).
+   */
+  const handleDiscardDraft = async () => {
+    try {
+      await clearDraftMutation.mutateAsync(request.id)
+      setDraftSavedAt(null)
+      // The useEffect seeded the new state from the refreshed cache — leave
+      // isDraftDirty to it (seed sets it based on what's there now).
+    } catch {
+      // surfaced via the error alert below
     }
   }
 
@@ -152,10 +317,20 @@ export default function InventoryRequestDetail() {
     e instanceof ValidationError ? e.flatten()
     : e instanceof Error ? e.message
     : null
-  const dispatchError = flatErr(dispatchMutation.error)
-  const approveError  = flatErr(approveMutation.error)
-  const rejectError   = flatErr(rejectMutation.error)
-  const revokeError   = flatErr(revokeMutation.error)
+  const dispatchError   = flatErr(dispatchMutation.error)
+  const approveError    = flatErr(approveMutation.error)
+  const rejectError     = flatErr(rejectMutation.error)
+  const revokeError     = flatErr(revokeMutation.error)
+  const saveDraftError  = flatErr(saveDraftMutation.error)
+  const clearDraftError = flatErr(clearDraftMutation.error)
+
+  // Was this request opened with a previously-saved draft? Used to surface
+  // a quiet "Draft restored" hint until the user explicitly saves again.
+  const hasInitialDraft = items.some(it => it.draftDispatchedQty != null)
+
+  // ── guard / submittingRef / changeCountRef / auto-save useEffect all
+  //    moved above the isLoading early return (see top of the component)
+  //    to keep React's hooks order stable across loading / loaded renders. ──
 
   return (
     <Box sx={{ pb: canDispatch ? 12 : 4 }}>
@@ -246,68 +421,98 @@ export default function InventoryRequestDetail() {
         <PillStep label="Received"   at={request.receivedAt}   by={request.receivedByName}  done={!!request.receivedAt} />
       </Box>
 
-      {/* Items table — input column changes based on status */}
-      <Paper elevation={0} sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: '#FCD835' }}>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>Product</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Weight</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 90 }} align="right">Requested</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 130 }} align="center">
-                  {canDispatch ? 'Dispatch Qty' : 'Dispatched'}
-                </TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Unit Price</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 110 }} align="right">Subtotal</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {items.map(item => {
-                const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
-                const lineTotal = currentDispatch * item.unitPrice
-                const isShort = canDispatch && currentDispatch < item.requestedQty
-                return (
-                  <TableRow key={item.id} hover>
-                    <TableCell sx={{ py: 0.75 }}>
-                      <Box sx={{ fontWeight: 600, fontSize: 13 }}>{item.productCode} — {item.productName}</Box>
-                    </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75 }}>
-                      {item.weightValue != null
-                        ? `${item.weightValue} ${item.weightUnit ?? ''}`.trim()
-                        : <span className="text-[#1F1F1F]/40">—</span>}
-                    </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75 }}>{item.requestedQty}</TableCell>
-                    <TableCell align="center" sx={{ py: 0.5 }}>
-                      {canDispatch ? (
-                        <TextField
-                          type="number"
-                          size="small"
-                          value={dispatchQtys.get(item.id) ?? ''}
-                          onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
-                          onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
-                          slotProps={{ htmlInput: { min: 0, max: item.requestedQty, inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px' } } }}
-                          sx={{
-                            width: 86,
-                            '& .MuiOutlinedInput-root': {
-                              bgcolor: isShort ? '#FFEBEE' : '#FFF8DC',
-                              '& fieldset': { borderColor: isShort ? '#C62828' : '#1F1F1F' },
-                            },
-                          }}
-                        />
-                      ) : (
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                      )}
-                    </TableCell>
-                    <TableCell align="right" sx={{ py: 0.75 }}>{formatINR(item.unitPrice)}</TableCell>
-                    <TableCell align="right" sx={{ py: 0.75, fontWeight: 600 }}>{formatINR(lineTotal)}</TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+      {/* Items — one bordered card per category. Yellow header strip with the
+          category name; weight sub-headings + product rows inside. Dispatch
+          quantity column flips between editable TextField (pre-dispatch) and
+          read-only DispatchedCell (post-dispatch). */}
+      {grouped.map(catGroup => (
+        <Paper
+          key={catGroup.category}
+          elevation={0}
+          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+        >
+          <Box
+            sx={{
+              bgcolor: '#FCD835',
+              borderBottom: '2px solid #1F1F1F',
+              px: 2,
+              py: 1.25,
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: 'uppercase',
+              letterSpacing: 0.6,
+              color: '#1F1F1F',
+            }}
+          >
+            {catGroup.category}
+          </Box>
+          <TableContainer>
+            <Table size="small">
+              <TableBody>
+                {catGroup.weightGroups.map((wg, wIdx) => (
+                  <Fragment key={`${catGroup.category}__${wg.label}`}>
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        sx={{
+                          bgcolor: '#FFFFFF',
+                          pl: 2,
+                          pt: wIdx === 0 ? 1.5 : 2.5,
+                          pb: 0.5,
+                          fontWeight: 700,
+                          fontSize: 10,
+                          textTransform: 'uppercase',
+                          letterSpacing: 1.4,
+                          color: '#1F1F1F66',
+                          borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        }}
+                      >
+                        {wg.label}
+                      </TableCell>
+                    </TableRow>
+                    {wg.items.map(item => {
+                      const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
+                      const lineTotal = currentDispatch * item.unitPrice
+                      const isShort = canDispatch && currentDispatch < item.requestedQty
+                      return (
+                        <TableRow key={item.id} hover>
+                          <TableCell sx={{ pl: 3, py: 1 }}>
+                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
+                          <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
+                            {canDispatch ? (
+                              <TextField
+                                type="number"
+                                size="small"
+                                value={dispatchQtys.get(item.id) ?? ''}
+                                onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
+                                onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                                slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px' } } }}
+                                sx={{
+                                  width: 86,
+                                  '& .MuiOutlinedInput-root': {
+                                    bgcolor: isShort ? '#FFEBEE' : '#FFF8DC',
+                                    '& fieldset': { borderColor: isShort ? '#C62828' : '#1F1F1F' },
+                                  },
+                                }}
+                              />
+                            ) : (
+                              <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                            )}
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
+                          <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600 }}>{formatINR(lineTotal)}</TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      ))}
 
       {/* Summary panel — overall totals broken out for clarity.
           Pre-dispatch editing flow keeps live numbers in the sticky bottom bar. */}
@@ -322,10 +527,12 @@ export default function InventoryRequestDetail() {
         </Paper>
       )}
 
-      {dispatchError && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{dispatchError}</Alert>}
-      {approveError  && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{approveError}</Alert>}
-      {rejectError   && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{rejectError}</Alert>}
-      {revokeError   && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{revokeError}</Alert>}
+      {dispatchError   && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{dispatchError}</Alert>}
+      {approveError    && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{approveError}</Alert>}
+      {rejectError     && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{rejectError}</Alert>}
+      {revokeError     && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{revokeError}</Alert>}
+      {saveDraftError  && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{saveDraftError}</Alert>}
+      {clearDraftError && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{clearDraftError}</Alert>}
 
       {/* Sticky bottom dispatch bar — only when this request is dispatchable. */}
       {canDispatch && (
@@ -362,18 +569,75 @@ export default function InventoryRequestDetail() {
                     : 'All lines at requested qty'}
               </Box>
               <Box sx={{ fontSize: 18, fontWeight: 700, color: '#1F1F1F' }}>Dispatch total {formatINR(stats.dispatchTotal)}</Box>
+              {/* Quiet draft state hint — shown when the page opens with a
+                  previously-saved draft, or right after a fresh save. */}
+              {(draftSavedAt || hasInitialDraft) && (
+                <Box sx={{ fontSize: 11, color: '#1F1F1F99', mt: 0.25 }}>
+                  Draft {draftSavedAt
+                    ? `saved at ${draftSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+                    : 'restored from your last visit'}
+                </Box>
+              )}
             </Box>
           </Box>
-          <Button
-            variant="contained"
-            startIcon={<PackageCheck className="w-4 h-4" />}
-            onClick={() => setConfirmOpen(true)}
-            disabled={dispatchMutation.isPending || !allLinesFilled}
-            title={!allLinesFilled ? 'Enter a quantity for every product first (0 = out of stock)' : undefined}
-            sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
-          >
-            {dispatchMutation.isPending ? 'Dispatching…' : 'Mark as Dispatched'}
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+            {/* Discard Draft — only shown when there's actually a saved
+                draft on the BE. Clears draft_dispatched_qty on every item
+                and lets the seed effect re-apply the defaults. */}
+            {hasInitialDraft && (
+              <Button
+                variant="outlined"
+                onClick={handleDiscardDraft}
+                disabled={clearDraftMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap',
+                  borderColor: '#C62828', color: '#C62828',
+                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+                }}
+              >
+                {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
+              </Button>
+            )}
+            {/* Save as Draft — no "all lines filled" gate so the user can
+                step away mid-dispatch and come back. Disabled when nothing
+                is pending to save: save already in flight, no quantities
+                entered, or no changes since the last save. The label
+                reflects state so the user knows whether the click did
+                anything. */}
+            <Button
+              variant="outlined"
+              onClick={handleSaveDraft}
+              disabled={saveDraftMutation.isPending || dispatchQtys.size === 0 || !isDraftDirty}
+              title={
+                dispatchQtys.size === 0
+                  ? 'Enter at least one quantity before saving'
+                  : !isDraftDirty
+                    ? 'Already saved — make a change to save again'
+                    : undefined
+              }
+              sx={{
+                textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+              }}
+            >
+              {saveDraftMutation.isPending
+                ? 'Saving…'
+                : !isDraftDirty && dispatchQtys.size > 0
+                  ? 'Saved'
+                  : 'Save as Draft'}
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<PackageCheck className="w-4 h-4" />}
+              onClick={() => setConfirmOpen(true)}
+              disabled={dispatchMutation.isPending || !allLinesFilled}
+              title={!allLinesFilled ? 'Enter a quantity for every product first (0 = out of stock)' : undefined}
+              sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+            >
+              {dispatchMutation.isPending ? 'Dispatching…' : 'Mark as Dispatched'}
+            </Button>
+          </Box>
         </Paper>
       )}
 
@@ -445,6 +709,30 @@ export default function InventoryRequestDetail() {
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Unsaved-changes guard modal. "Save as Draft" option is only offered
+          while the request is in a dispatchable state (Pending/Approved) —
+          for any other status there's no draft concept to save into. */}
+      <UnsavedChangesDialog
+        open={guard.state === 'blocked'}
+        onSaveDraft={canDispatch
+          ? async () => {
+              if (dispatchQtys.size === 0) {
+                throw new Error('Enter at least one quantity before saving.')
+              }
+              const itemsPayload = items.map(it => ({
+                id: it.id,
+                dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
+              }))
+              await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
+              setDraftSavedAt(new Date())
+              setIsDraftDirty(false)
+              guard.proceed?.()
+            }
+          : undefined}
+        onDiscard={() => guard.proceed?.()}
+        onCancel={() => guard.reset?.()}
+      />
     </Box>
   )
 }

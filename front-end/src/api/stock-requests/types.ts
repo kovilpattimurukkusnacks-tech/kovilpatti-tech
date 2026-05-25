@@ -1,6 +1,7 @@
 /** Mirrors the BE StockRequestDto + supporting request DTOs. */
 
 export type RequestStatus =
+  | 'Draft'
   | 'Pending'
   | 'Approved'
   | 'Rejected'
@@ -22,6 +23,10 @@ export type StockRequestItemDto = {
   weightUnit: string | null   // 'g' | 'kg'
   requestedQty: number
   dispatchedQty: number | null
+  // Inventory user's saved-but-not-finalised dispatch qty. Used to pre-fill
+  // the dispatch screen's qty inputs from a saved draft. Null when no draft
+  // exists (or after the dispatch has been finalised).
+  draftDispatchedQty: number | null
   unitPrice: number
   subtotal: number
 }
@@ -55,6 +60,9 @@ export type StockRequestDto = {
   rejectionReason: string | null
   editableUntil: string                // ISO string
   submittedAt: string
+  // Last row-touch timestamp. For drafts this is the last save; for
+  // finalised requests it's the last status flip or edit.
+  updatedAt: string
   approvedAt: string | null
   approvedBy: string | null
   dispatchedAt: string | null

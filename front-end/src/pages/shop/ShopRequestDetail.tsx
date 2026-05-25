@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow,
+  TableRow,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -15,8 +15,12 @@ import {
 } from '../../hooks/useStockRequests'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
+import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // Drafts are reached via the dedicated draft endpoint, not the detail
+  // route. The mapping exists only to satisfy the exhaustive Record type.
+  Draft:      'default',
   Pending:    'warning',
   Approved:   'info',
   Rejected:   'error',
@@ -28,6 +32,7 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
 const fmtIst = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '—'
 
+
 export default function ShopRequestDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -36,6 +41,16 @@ export default function ShopRequestDetail() {
   const receiveMutation = useReceiveStockRequest()
   const [cancelOpen, setCancelOpen]   = useState(false)
   const [receiveOpen, setReceiveOpen] = useState(false)
+
+  // Always compute the grouped items, even when `request` is still loading —
+  // hooks order must stay stable across renders. The empty input → empty array.
+  const grouped = useMemo(
+    () => groupByCategoryWeight(
+      request?.items ?? [],
+      it => ({ category: it.categoryName, weightValue: it.weightValue, weightUnit: it.weightUnit }),
+    ),
+    [request?.items],
+  )
 
   if (isLoading) {
     return (
@@ -167,53 +182,92 @@ export default function ShopRequestDetail() {
         </Box>
       </Paper>
 
-      {/* Items table */}
-      <Paper elevation={0} sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: '#FCD835' }}>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>Product</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Weight</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 90 }} align="right">Requested</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Dispatched</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 110 }} align="right">Unit Price</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 120 }} align="right">Subtotal</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {(request.items ?? []).map(item => {
-                // Subtotal reflects what's actually counted: before dispatch
-                // that's the requested qty, after dispatch it's the dispatched qty.
-                // Without this the column shows "₹65" even when only 2 of 5 shipped.
-                const effectiveQty = item.dispatchedQty ?? item.requestedQty
-                const effectiveSubtotal = effectiveQty * item.unitPrice
-                const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
-                return (
-                  <TableRow key={item.id} hover>
-                    <TableCell>
-                      <Box sx={{ fontWeight: 600 }}>{item.productCode} — {item.productName}</Box>
-                    </TableCell>
-                    <TableCell align="right">
-                      {item.weightValue != null
-                        ? `${item.weightValue} ${item.weightUnit ?? ''}`.trim()
-                        : <span className="text-[#1F1F1F]/40">—</span>}
-                    </TableCell>
-                    <TableCell align="right">{item.requestedQty}</TableCell>
-                    <TableCell align="right">
-                      <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                    </TableCell>
-                    <TableCell align="right">{formatINR(item.unitPrice)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
-                      {formatINR(effectiveSubtotal)}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+      {/* Items — one bordered card per category. Each card has its own yellow
+          header strip with the category name, then a body with weight
+          sub-headings and product rows. Cards make the boundaries between
+          categories unambiguous, so the user always knows "what is this
+          product under?" at a glance. */}
+      {grouped.map(catGroup => (
+        <Paper
+          key={catGroup.category}
+          elevation={0}
+          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+        >
+          {/* Category header strip */}
+          <Box
+            sx={{
+              bgcolor: '#FCD835',
+              borderBottom: '2px solid #1F1F1F',
+              px: 2,
+              py: 1.25,
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: 'uppercase',
+              letterSpacing: 0.6,
+              color: '#1F1F1F',
+            }}
+          >
+            {catGroup.category}
+          </Box>
+
+          {/* Card body — table without its own column header (kept clean per
+              the picked layout). Column meaning is implied by alignment and
+              context; the request detail audience already knows the shape. */}
+          <TableContainer>
+            <Table size="small">
+              <TableBody>
+                {catGroup.weightGroups.map((wg, wIdx) => (
+                  <Fragment key={`${catGroup.category}__${wg.label}`}>
+                    {/* Weight sub-heading — small uppercase eyebrow, muted */}
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        sx={{
+                          bgcolor: '#FFFFFF',
+                          pl: 2,
+                          pt: wIdx === 0 ? 1.5 : 2.5,
+                          pb: 0.5,
+                          fontWeight: 700,
+                          fontSize: 10,
+                          textTransform: 'uppercase',
+                          letterSpacing: 1.4,
+                          color: '#1F1F1F66',
+                          borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        }}
+                      >
+                        {wg.label}
+                      </TableCell>
+                    </TableRow>
+                    {wg.items.map(item => {
+                      // Subtotal reflects what's actually counted: before dispatch
+                      // that's the requested qty, after dispatch it's the dispatched qty.
+                      // Without this the column shows "₹65" even when only 2 of 5 shipped.
+                      const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                      const effectiveSubtotal = effectiveQty * item.unitPrice
+                      const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                      return (
+                        <TableRow key={item.id} hover>
+                          <TableCell sx={{ pl: 3, py: 1.25 }}>
+                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
+                            <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                            {formatINR(effectiveSubtotal)}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      ))}
 
       {/* Summary panel — overall totals broken out for clarity. */}
       <Box sx={{ mb: 2 }}>

@@ -364,6 +364,136 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    // ───────── Shop drafts ─────────
+
+    public async Task<StockRequestDto> SaveShopDraftAsync(
+        CreateStockRequestRequest request, CancellationToken ct = default)
+    {
+        // Reuse the create-request validator — payload shape and constraints
+        // (≥1 item, qty > 0, etc.) are identical to a finalised submit.
+        var validation = await createValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var shopId = currentUser.ShopId
+            ?? throw new ForbiddenException("Only shop users can save drafts.");
+
+        var shop = await shops.GetAsync(shopId, ct)
+            ?? throw new NotFoundException("Your shop record was not found.");
+
+        var productMap = await ResolveAndValidateProducts(
+            request.Items.Select(i => i.ProductId).ToHashSet(), ct);
+
+        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
+        {
+            product_id    = i.ProductId,
+            requested_qty = i.RequestedQty,
+            unit_price    = productMap[i.ProductId].Mrp,
+        }), JsonOpts);
+
+        var draftId = await requests.SaveShopDraftAsync(
+            shop.Id, shop.InventoryId, request.Notes, itemsJson, userId, ct);
+
+        return await GetAsync(draftId, ct);
+    }
+
+    public async Task<StockRequestDto?> GetShopDraftAsync(CancellationToken ct = default)
+    {
+        var shopId = currentUser.ShopId
+            ?? throw new ForbiddenException("Only shop users have drafts.");
+
+        var row = await requests.GetShopDraftAsync(shopId, ct);
+        return row is null ? null : MapWithItems(row);
+    }
+
+    public async Task<bool> DeleteShopDraftAsync(CancellationToken ct = default)
+    {
+        var shopId = currentUser.ShopId
+            ?? throw new ForbiddenException("Only shop users have drafts.");
+
+        return await requests.DeleteShopDraftAsync(shopId, ct);
+    }
+
+    // ───────── Inventory dispatch draft ─────────
+
+    public async Task<IReadOnlyList<StockRequestDto>> ListInventoryDispatchDraftsAsync(
+        Guid? inventoryId, CancellationToken ct = default)
+    {
+        // Same role gates as the cumulative + count-by-shop endpoints:
+        //   • ShopUser  → never (no concept of inventory drafts for them).
+        //   • Inventory → forced to their own godown; ignore caller param.
+        //   • Admin     → may pass any inventoryId or NULL for tenant-wide.
+        var role = currentUser.Role ?? "";
+        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+            throw new ForbiddenException("Shop users cannot view inventory drafts.");
+
+        Guid? scope = string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
+            ? currentUser.InventoryId
+            : inventoryId;
+
+        var rows = await requests.ListInventoryDispatchDraftsAsync(scope, ct);
+        return rows.Select(MapHeaderToDto).ToList();
+    }
+
+    public async Task<StockRequestDto> ClearDispatchDraftAsync(Guid id, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as save/dispatch — inventory only their own godown.
+        var role = currentUser.Role ?? "";
+        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
+            && currentUser.InventoryId != existing.Inventory_Id)
+            throw new ForbiddenException("This request is for a different inventory.");
+
+        var ok = await requests.ClearDispatchDraftAsync(id, userId, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot discard dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> SaveDispatchDraftAsync(
+        Guid id, DispatchRequest request, CancellationToken ct = default)
+    {
+        var validation = await dispatchValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as DispatchAsync — inventory can only save drafts
+        // for their own godown's requests; admin may save for any.
+        var role = currentUser.Role ?? "";
+        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
+            && currentUser.InventoryId != existing.Inventory_Id)
+            throw new ForbiddenException("This request is for a different inventory.");
+
+        // Same payload shape as DispatchAsync; SP writes to draft_dispatched_qty
+        // instead of dispatched_qty and leaves status unchanged.
+        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
+        {
+            id              = i.Id,
+            dispatched_qty  = i.DispatchedQty,
+        }), JsonOpts);
+
+        var ok = await requests.SaveDispatchDraftAsync(id, userId, itemsJson, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot save dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     // ───────── Helpers ─────────
 
     private async Task<Dictionary<Guid, Product>> ResolveAndValidateProducts(HashSet<Guid> ids, CancellationToken ct)
@@ -419,7 +549,7 @@ public class StockRequestService(
             r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
             r.Status, r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
             r.Notes, r.Rejection_Reason,
-            r.Editable_Until, r.Submitted_At,
+            r.Editable_Until, r.Submitted_At, r.Updated_At,
             r.Approved_At, r.Approved_By,
             r.Dispatched_At, r.Dispatched_By,
             r.Received_At, r.Cancelled_At, r.Cancelled_By,
@@ -433,7 +563,8 @@ public class StockRequestService(
               .Select(i => new StockRequestItemDto(
                   i.id, i.product_id, i.product_code, i.product_name, i.category_name,
                   i.weight_value, i.weight_unit,
-                  i.requested_qty, i.dispatched_qty, i.unit_price, i.subtotal))
+                  i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
+                  i.unit_price, i.subtotal))
               .ToList();
 
         return new StockRequestDto(
@@ -443,7 +574,7 @@ public class StockRequestService(
             r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
             r.Status, r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
             r.Notes, r.Rejection_Reason,
-            r.Editable_Until, r.Submitted_At,
+            r.Editable_Until, r.Submitted_At, r.Updated_At,
             r.Approved_At, r.Approved_By,
             r.Dispatched_At, r.Dispatched_By,
             r.Received_At, r.Cancelled_At, r.Cancelled_By,
@@ -457,5 +588,6 @@ public class StockRequestService(
         Guid id, Guid product_id, string product_code, string product_name,
         string category_name,
         decimal? weight_value, string? weight_unit,
-        int requested_qty, int? dispatched_qty, decimal unit_price, decimal subtotal);
+        int requested_qty, int? dispatched_qty, int? draft_dispatched_qty,
+        decimal unit_price, decimal subtotal);
 }

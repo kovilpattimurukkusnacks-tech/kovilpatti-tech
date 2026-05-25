@@ -134,6 +134,7 @@ RETURNS TABLE (
   rejection_reason        varchar,
   editable_until          timestamptz,
   submitted_at            timestamptz,
+  updated_at              timestamptz,
   approved_at             timestamptz,
   approved_by             uuid,
   dispatched_at           timestamptz,
@@ -168,7 +169,8 @@ LANGUAGE sql STABLE AS $$
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
-         r.submitted_at, r.approved_at, r.approved_by,
+         r.submitted_at, r.updated_at,
+         r.approved_at, r.approved_by,
          r.dispatched_at, r.dispatched_by, r.received_at,
          r.cancelled_at, r.cancelled_by
   FROM stock_requests r
@@ -179,6 +181,7 @@ LANGUAGE sql STABLE AS $$
   LEFT  JOIN users       ud   ON ud.id   = r.dispatched_by
   LEFT  JOIN users       urcv ON urcv.id = r.received_by
   WHERE r.is_deleted = false
+    AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
@@ -200,6 +203,7 @@ LANGUAGE sql STABLE AS $$
   SELECT COUNT(*)
   FROM stock_requests r
   WHERE r.is_deleted = false
+    AND r.status     <> 'Draft'   -- match fn_request_list_paged: drafts excluded from list/count
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
@@ -246,10 +250,97 @@ LANGUAGE sql STABLE AS $$
   INNER JOIN products            p  ON p.id  = it.product_id
   INNER JOIN categories          c  ON c.id  = p.category_id
   WHERE r.is_deleted = false
+    -- Pending only; Draft is already excluded by this filter, but the
+    -- explicit clause documents intent for future maintainers.
     AND r.status = 'Pending'
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   GROUP BY p.id, p.code, p.name, c.name, p.type, it.weight_value, it.weight_unit
   ORDER BY p.code;
+$$;
+
+
+-- Pending/Approved requests that have at least one item with a saved
+-- dispatch draft (draft_dispatched_qty IS NOT NULL). Drives the "Resume
+-- dispatch draft" strip on the inventory list page so the user sees
+-- exactly which incoming requests they have WIP qtys saved on.
+--
+-- p_inventory_id NULL → tenant-wide (admin only); otherwise scoped to a
+--                       single inventory's queue (forced for Inventory role).
+--
+-- Return shape mirrors the list/header columns so the BE can reuse the
+-- existing StockRequest entity + MapHeaderToDto mapper.
+CREATE OR REPLACE FUNCTION fn_request_list_inventory_dispatch_drafts(
+  p_inventory_id uuid DEFAULT NULL
+)
+RETURNS TABLE (
+  id                    uuid,
+  code                  varchar,
+  shop_id               uuid,
+  shop_code             varchar,
+  shop_name             varchar,
+  inventory_id          uuid,
+  inventory_code        varchar,
+  inventory_name        varchar,
+  submitted_by_name       varchar,
+  approved_by_name        varchar,
+  dispatched_by_name      varchar,
+  received_by_name        varchar,
+  status                  varchar,
+  total_items             int,
+  total_qty               int,
+  total_dispatched_qty    int,
+  total_amount            numeric,
+  total_dispatched_amount numeric,
+  notes                   varchar,
+  rejection_reason        varchar,
+  editable_until          timestamptz,
+  submitted_at            timestamptz,
+  updated_at              timestamptz,
+  approved_at             timestamptz,
+  approved_by             uuid,
+  dispatched_at           timestamptz,
+  dispatched_by           uuid,
+  received_at             timestamptz,
+  cancelled_at            timestamptz,
+  cancelled_by            uuid
+)
+LANGUAGE sql STABLE AS $$
+  SELECT r.id, r.code,
+         r.shop_id, s.code, s.name,
+         r.inventory_id, i.code, i.name,
+         u.full_name    AS submitted_by_name,
+         ua.full_name   AS approved_by_name,
+         ud.full_name   AS dispatched_by_name,
+         urcv.full_name AS received_by_name,
+         r.status::varchar AS status,
+         r.total_items, r.total_qty,
+         (SELECT SUM(it.dispatched_qty)::int
+          FROM stock_request_items it
+          WHERE it.request_id = r.id) AS total_dispatched_qty,
+         r.total_amount,
+         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
+          FROM stock_request_items it
+          WHERE it.request_id = r.id) AS total_dispatched_amount,
+         r.notes, r.rejection_reason, r.editable_until,
+         r.submitted_at, r.updated_at,
+         r.approved_at, r.approved_by,
+         r.dispatched_at, r.dispatched_by, r.received_at,
+         r.cancelled_at, r.cancelled_by
+  FROM stock_requests r
+  INNER JOIN shops       s    ON s.id    = r.shop_id
+  INNER JOIN inventories i    ON i.id    = r.inventory_id
+  LEFT  JOIN users       u    ON u.id    = r.created_by
+  LEFT  JOIN users       ua   ON ua.id   = r.approved_by
+  LEFT  JOIN users       ud   ON ud.id   = r.dispatched_by
+  LEFT  JOIN users       urcv ON urcv.id = r.received_by
+  WHERE r.is_deleted = false
+    AND r.status IN ('Pending', 'Approved')
+    AND EXISTS (
+      SELECT 1 FROM stock_request_items it
+      WHERE it.request_id = r.id AND it.draft_dispatched_qty IS NOT NULL
+    )
+    AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+  ORDER BY r.updated_at DESC;
 $$;
 
 
@@ -281,6 +372,7 @@ LANGUAGE sql STABLE AS $$
   INNER JOIN shops s ON s.id = r.shop_id
   WHERE r.is_deleted = false
     AND s.is_deleted = false
+    AND r.status     <> 'Draft'   -- drafts never contribute to the per-shop chip counts
     AND (p_status       IS NULL OR r.status       = p_status::request_status)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   GROUP BY s.id, s.code, s.name
@@ -317,6 +409,7 @@ RETURNS TABLE (
   rejection_reason        varchar,
   editable_until          timestamptz,
   submitted_at            timestamptz,
+  updated_at              timestamptz,
   approved_at             timestamptz,
   approved_by             uuid,
   dispatched_at           timestamptz,
@@ -350,7 +443,8 @@ LANGUAGE sql STABLE AS $$
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
-         r.submitted_at, r.approved_at, r.approved_by,
+         r.submitted_at, r.updated_at,
+         r.approved_at, r.approved_by,
          r.dispatched_at, r.dispatched_by, r.received_at,
          r.cancelled_at, r.cancelled_by,
          COALESCE((
@@ -371,6 +465,10 @@ LANGUAGE sql STABLE AS $$
                'weight_unit',    it.weight_unit,
                'requested_qty',  it.requested_qty,
                'dispatched_qty', it.dispatched_qty,
+               -- Inventory user's WIP dispatch qty (NULL when no draft saved).
+               -- Used by the dispatch screen to pre-fill the qty inputs so a
+               -- saved draft survives navigating away.
+               'draft_dispatched_qty', it.draft_dispatched_qty,
                'unit_price',     it.unit_price,
                'subtotal',       it.subtotal
              ) ORDER BY c.name, p.code
@@ -397,6 +495,11 @@ $$;
 
 -- Create header + all items in one atomic call. BE computes editable_until.
 -- p_items is JSON array of: { product_id, requested_qty, unit_price }
+--
+-- Side effect: a successful submit ALSO consumes any in-flight shop draft.
+-- Because Submit's intent is "this is the finalised version of what I was
+-- drafting", the draft is hard-deleted in the same transaction — atomic so
+-- we can never end up with a submitted Pending plus a stale Draft.
 CREATE OR REPLACE FUNCTION fn_request_create(
   p_code           varchar,
   p_shop_id        uuid,
@@ -460,7 +563,191 @@ BEGIN
       total_amount = v_total_amount
   WHERE id = v_id;
 
+  -- Consume the shop's draft (if any). Items cascade via ON DELETE CASCADE.
+  DELETE FROM stock_requests
+  WHERE shop_id = p_shop_id
+    AND status  = 'Draft'
+    AND is_deleted = false;
+
   RETURN v_id;
+END
+$$;
+
+
+-- ============================================================
+-- 4a. STOCK REQUEST — SHOP DRAFTS (single live draft per shop)
+-- ============================================================
+--
+-- Drafts live in stock_requests with status='Draft'. The partial unique
+-- index uq_stock_requests_one_draft_per_shop guarantees at most one open
+-- draft per shop, so all draft operations are keyed on shop_id rather
+-- than an opaque draft id.
+
+-- Upsert the shop's draft. If one exists, items + notes are replaced;
+-- if not, a fresh draft row is created. Returns the draft's uuid in
+-- both cases.
+--
+-- Drafts are exempt from the daily editing cutoff — editable_until is
+-- set to 'infinity' so they never lock. Once submitted (fn_request_create
+-- consumes the draft), the new Pending row gets a real editable_until
+-- from the BE.
+CREATE OR REPLACE FUNCTION fn_request_save_shop_draft(
+  p_shop_id      uuid,
+  p_inventory_id uuid,
+  p_notes        varchar,
+  p_items        jsonb,
+  p_user_id      uuid
+)
+RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_id           uuid;
+  v_total_items  int := 0;
+  v_total_qty    int := 0;
+  v_total_amount numeric(12,2) := 0;
+  v_item         jsonb;
+  v_qty          int;
+  v_price        numeric(10,2);
+BEGIN
+  IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+    RAISE EXCEPTION 'Draft must include at least one item';
+  END IF;
+
+  -- Existing draft? Update in place; otherwise insert fresh.
+  SELECT id INTO v_id
+  FROM stock_requests
+  WHERE shop_id = p_shop_id AND status = 'Draft' AND is_deleted = false
+  LIMIT 1;
+
+  IF v_id IS NULL THEN
+    INSERT INTO stock_requests (
+      code, shop_id, inventory_id, status,
+      editable_until, notes,
+      created_by, updated_by
+    ) VALUES (
+      -- Synthetic code distinct from the REQ-NNNN sequence. The `code`
+      -- column is varchar(20), so we use the first 8 hex chars of the
+      -- shop uuid (≈ 4 billion combinations) for uniqueness without
+      -- spilling past the column limit.
+      'DRAFT-' || substring(p_shop_id::text, 1, 8),
+      p_shop_id, p_inventory_id, 'Draft',
+      -- A century in the future is effectively "never" for our app and
+      -- avoids Npgsql's strict-by-default rejection of PostgreSQL's
+      -- 'infinity' timestamptz value when reading into DateTimeOffset.
+      now() + interval '100 years',
+      p_notes,
+      p_user_id, p_user_id
+    ) RETURNING id INTO v_id;
+  ELSE
+    -- Wipe existing items so the new set fully replaces (same strategy
+    -- as fn_request_update — atomic, no orphan items left behind).
+    DELETE FROM stock_request_items WHERE request_id = v_id;
+
+    UPDATE stock_requests
+    SET inventory_id = p_inventory_id,
+        notes        = p_notes,
+        updated_by   = p_user_id,
+        updated_at   = now()
+    WHERE id = v_id;
+  END IF;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_qty   := (v_item->>'requested_qty')::int;
+    v_price := (v_item->>'unit_price')::numeric(10,2);
+
+    INSERT INTO stock_request_items (
+      request_id, product_id, requested_qty, unit_price,
+      weight_value, weight_unit
+    )
+    SELECT v_id, p.id, v_qty, v_price, p.weight_value, p.weight_unit
+    FROM   products p
+    WHERE  p.id = (v_item->>'product_id')::uuid;
+
+    v_total_items  := v_total_items + 1;
+    v_total_qty    := v_total_qty   + v_qty;
+    v_total_amount := v_total_amount + (v_qty * v_price);
+  END LOOP;
+
+  UPDATE stock_requests
+  SET total_items  = v_total_items,
+      total_qty    = v_total_qty,
+      total_amount = v_total_amount
+  WHERE id = v_id;
+
+  RETURN v_id;
+END
+$$;
+
+
+-- Fetch a shop's current draft (if any). Returns the same shape as
+-- fn_request_get so the BE can deserialise into the same DTO. Empty
+-- result set when no draft exists.
+-- Return shape gained `updated_at` → must DROP before redefining.
+DROP FUNCTION IF EXISTS fn_request_get_shop_draft(uuid);
+
+CREATE OR REPLACE FUNCTION fn_request_get_shop_draft(p_shop_id uuid)
+RETURNS TABLE (
+  id                    uuid,
+  code                  varchar,
+  shop_id               uuid,
+  shop_code             varchar,
+  shop_name             varchar,
+  inventory_id          uuid,
+  inventory_code        varchar,
+  inventory_name        varchar,
+  submitted_by_name       varchar,
+  approved_by_name        varchar,
+  dispatched_by_name      varchar,
+  received_by_name        varchar,
+  status                  varchar,
+  total_items             int,
+  total_qty               int,
+  total_dispatched_qty    int,
+  total_amount            numeric,
+  total_dispatched_amount numeric,
+  notes                   varchar,
+  rejection_reason        varchar,
+  editable_until          timestamptz,
+  submitted_at            timestamptz,
+  updated_at              timestamptz,
+  approved_at             timestamptz,
+  approved_by             uuid,
+  dispatched_at           timestamptz,
+  dispatched_by           uuid,
+  received_at             timestamptz,
+  cancelled_at            timestamptz,
+  cancelled_by            uuid,
+  items                   jsonb
+)
+LANGUAGE plpgsql STABLE AS $$
+DECLARE
+  v_id uuid;
+BEGIN
+  SELECT r.id INTO v_id
+  FROM stock_requests r
+  WHERE r.shop_id = p_shop_id AND r.status = 'Draft' AND r.is_deleted = false
+  LIMIT 1;
+
+  IF v_id IS NULL THEN
+    RETURN;   -- empty set
+  END IF;
+
+  RETURN QUERY SELECT * FROM fn_request_get(v_id);
+END
+$$;
+
+
+-- Discard a shop's draft. Idempotent — returns true if a draft was
+-- deleted, false if none existed.
+CREATE OR REPLACE FUNCTION fn_request_delete_shop_draft(p_shop_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  DELETE FROM stock_requests
+  WHERE shop_id = p_shop_id
+    AND status  = 'Draft'
+    AND is_deleted = false;
+  RETURN FOUND;
 END
 $$;
 
@@ -644,11 +931,95 @@ BEGIN
     END LOOP;
   END IF;
 
+  -- Dispatch-draft qtys are now stale — clear them on the whole request so
+  -- nothing reads a half-saved draft after the dispatch is finalised.
+  UPDATE stock_request_items
+  SET draft_dispatched_qty = NULL
+  WHERE request_id = p_id;
+
   UPDATE stock_requests
   SET status        = 'Dispatched',
       dispatched_at = now(),
       dispatched_by = p_user_id,
       updated_by    = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Clear all draft_dispatched_qty on a request — the inventory user's
+-- "Discard dispatch draft" path. Status stays unchanged. Idempotent —
+-- safe to call when there's no draft (no-op + returns true).
+CREATE OR REPLACE FUNCTION fn_request_clear_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  -- Same dispatchable-state guard as save/finalise. Once a request has
+  -- moved past Pending/Approved there's no draft concept anymore.
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_request_items
+  SET draft_dispatched_qty = NULL
+  WHERE request_id = p_id;
+
+  UPDATE stock_requests
+  SET updated_by = p_user_id,
+      updated_at = now()
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Save inventory user's work-in-progress dispatch qtys WITHOUT finalising.
+-- p_items is JSON array of { id, dispatched_qty } — the dispatched_qty field
+-- name is reused so the FE can post the same payload shape to either this
+-- SP or fn_request_dispatch. We write into draft_dispatched_qty instead.
+--
+-- The request status is left unchanged (still Pending). Inventory can call
+-- this any number of times before clicking "Mark as Dispatched", which
+-- routes through fn_request_dispatch and clears the draft.
+CREATE OR REPLACE FUNCTION fn_request_save_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid,
+  p_items   jsonb
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_item jsonb;
+BEGIN
+  -- Only valid while the request is still in the dispatchable window.
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  IF p_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+      UPDATE stock_request_items
+      SET draft_dispatched_qty = (v_item->>'dispatched_qty')::int
+      WHERE id = (v_item->>'id')::uuid
+        AND request_id = p_id;
+    END LOOP;
+  END IF;
+
+  UPDATE stock_requests
+  SET updated_by = p_user_id,
+      updated_at = now()
   WHERE id = p_id;
 
   RETURN true;

@@ -143,6 +143,74 @@
   font-weight: 600;
 }
 
+/* Weight sub-heading row — subordinate to the category banner above. Slim
+   uppercase eyebrow label, lightly indented, muted colour, hairline bottom
+   border. No background fill so it doesn't compete with the category strip
+   for visual weight. Specificity bumped same way as the section row. */
+.print-table tbody tr.print-weight-row td {
+  background: #FFFFFF !important;
+  color: rgba(31, 31, 31, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px 8px 4px 16px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.08);
+}
+
+/* Category card — mirrors the card-per-category layout used on the request
+   detail screens. Solid black border, yellow header strip, weight sub-bands
+   and item rows inside. `page-break-inside: avoid` keeps a category on one
+   page when possible (browser falls back to a clean split when forced). */
+.print-card {
+  border: 2px solid #1F1F1F;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  page-break-inside: avoid;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Header strip — matches detail screen: 16px horizontal × 10px vertical
+   padding, 14px bold uppercase text, brand-yellow background. */
+.print-card-header {
+  background: #FCD835;
+  border-bottom: 2px solid #1F1F1F;
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-card-header .muted {
+  color: rgba(31, 31, 31, 0.65);
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+/* Table sitting inside a card — drops outer borders (card has its own),
+   and re-tunes the weight-row indent and metrics to match the detail
+   screen's eyebrow style exactly. */
+.print-card .print-table {
+  margin-bottom: 0;
+}
+
+.print-card .print-table tbody tr.print-weight-row td {
+  padding: 12px 8px 4px 16px;
+  letter-spacing: 0.14em;
+}
+
+/* Weight rows that follow another weight group in the same card get a
+   little extra top breathing room — same rhythm as the detail screen. */
+.print-card .print-table tbody tr.print-weight-row + tr td {
+  border-top: none;
+}
+
 /* Money summary printed below the picklist. Compact two-column rows, right
    side bold. A faint divider separates the Requested block from the
    post-dispatch Dispatched block when both are present. */

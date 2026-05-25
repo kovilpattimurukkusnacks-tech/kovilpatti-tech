@@ -39,6 +39,10 @@ public class StockRequest
 
     public DateTimeOffset Editable_Until { get; set; }
     public DateTimeOffset Submitted_At { get; set; }
+    // Set on every row write (via the set_updated_at trigger). For drafts
+    // this is the last "Save as Draft" timestamp; for finalised requests
+    // it's whenever the row was last touched (status flip, edit, etc.).
+    public DateTimeOffset Updated_At { get; set; }
 
     public DateTimeOffset? Approved_At { get; set; }
     public Guid?           Approved_By { get; set; }

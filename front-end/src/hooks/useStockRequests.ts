@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { stockRequestsApi } from '../api/stock-requests/api'
+import { NotFoundError } from '../api/errors'
 import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
@@ -11,6 +12,7 @@ export const stockRequestsKeys = {
   listIncoming: (f?: StockRequestListFilters) => ['stock-requests', 'incoming', f ?? {}] as const,
   listAll:      (f?: StockRequestListFilters) => ['stock-requests', 'all',      f ?? {}] as const,
   detail:       (id: string)                  => ['stock-requests', id] as const,
+  shopDraft:    ()                            => ['stock-requests', 'shop-draft'] as const,
 }
 
 // ─── Queries ─────────────────────────────────────────────
@@ -69,6 +71,32 @@ export function useRequestCountByShop(args?: { status?: RequestStatus; inventory
   })
 }
 
+/**
+ * The shop user's single live draft (or `null` when none exists). 404 from
+ * the BE is mapped to `null` so the UI doesn't need to special-case the
+ * "you don't have a draft yet" path as an error.
+ *
+ * Pass `enabled: false` when the caller isn't a ShopUser — the BE rejects
+ * the call with 403 otherwise.
+ */
+export function useShopDraft(options?: { enabled?: boolean }) {
+  return useQuery<StockRequestDto | null>({
+    queryKey: stockRequestsKeys.shopDraft(),
+    queryFn: async () => {
+      try {
+        return await stockRequestsApi.getDraft()
+      } catch (e) {
+        if (e instanceof NotFoundError) return null
+        throw e
+      }
+    },
+    enabled: options?.enabled ?? true,
+    // Drafts mutate from the same browser tab (Save/Submit/Delete buttons),
+    // so React Query's automatic refetch on focus is overkill — leave it on
+    // and rely on explicit invalidation from the mutation onSuccess handlers.
+  })
+}
+
 // ─── Mutations ───────────────────────────────────────────
 
 /**
@@ -98,6 +126,10 @@ function patchAllListCaches(qc: ReturnType<typeof useQueryClient>, updated: Stoc
   // the shop-filter chips' badge counts — refetch them too.
   qc.invalidateQueries({ queryKey: ['stock-requests', 'count-by-shop'] })
   qc.invalidateQueries({ queryKey: ['stock-requests', 'cumulative']    })
+  // Dispatching clears draft_dispatched_qty; approving/rejecting/revoking
+  // change the status. All can shift rows in/out of the inventory drafts
+  // list, so invalidate it on any of these mutations.
+  qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
 }
 
 export function useCreateStockRequest() {
@@ -109,7 +141,76 @@ export function useCreateStockRequest() {
     // to invalidate just the "mine" list since shop user lands back on it.
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
+      // Submit consumes the draft (BE-side, in fn_request_create). Clear the
+      // cached draft so the Resume Draft strip disappears immediately.
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
     },
+  })
+}
+
+/** Save (or replace) the shop user's single live draft. */
+export function useSaveShopDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (req: CreateStockRequestRequest) => stockRequestsApi.saveDraft(req),
+    onSuccess: (draft) => {
+      // Seed the cache with the fresh draft so subsequent reads (e.g. another
+      // tab) get the latest items without a refetch round-trip.
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), draft)
+    },
+  })
+}
+
+/** Discard the shop user's draft. */
+export function useDeleteShopDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => stockRequestsApi.deleteDraft(),
+    onSuccess: () => {
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
+    },
+  })
+}
+
+/** Save WIP dispatch quantities without finalising (Inventory/Admin). */
+export function useSaveDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: DispatchRequest }) =>
+      stockRequestsApi.saveDispatchDraft(id, req),
+    onSuccess: (updated) => {
+      // Status didn't change but the items DTO now carries the new
+      // draft_dispatched_qty values — refresh the detail cache so the
+      // dispatch screen can re-seed its qty inputs if it's remounted.
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      // The inventory list page shows a "Resume dispatch draft" strip
+      // sourced from this cache — refetch so a freshly saved draft
+      // appears (or stops appearing, if it was just cleared).
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Discard the saved dispatch draft on a request (Inventory/Admin). */
+export function useClearDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => stockRequestsApi.clearDispatchDraft(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Pending/Approved requests that have a saved dispatch draft on at least
+ *  one item. Drives the inventory list page's "Resume dispatch draft" strip.
+ *  Inventory user's scope is forced server-side, so no inventoryId arg. */
+export function useInventoryDispatchDrafts() {
+  return useQuery({
+    queryKey: ['stock-requests', 'dispatch-drafts'] as const,
+    queryFn: () => stockRequestsApi.dispatchDrafts(),
+    placeholderData: keepPreviousData,
   })
 }
 

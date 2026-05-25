@@ -131,4 +131,66 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [Authorize(Roles = "ShopUser,Admin")]
     public async Task<ActionResult<StockRequestDto>> Cancel(Guid id, CancellationToken ct)
         => Ok(await requests.CancelAsync(id, ct));
+
+    // ─── Shop draft (single live draft per shop) ─────────────
+    // ShopUser only. The shop_id is taken from the JWT — never trusted from
+    // the URL — so a shop can only ever read/write its own draft. Drafts
+    // are excluded from every list/count endpoint; this is the only way to
+    // reach one.
+
+    [HttpGet("draft")]
+    [Authorize(Roles = "ShopUser")]
+    public async Task<ActionResult<StockRequestDto>> GetDraft(CancellationToken ct)
+    {
+        var draft = await requests.GetShopDraftAsync(ct);
+        return draft is null ? NotFound() : Ok(draft);
+    }
+
+    [HttpPost("draft")]
+    [Authorize(Roles = "ShopUser")]
+    public async Task<ActionResult<StockRequestDto>> SaveDraft(
+        [FromBody] CreateStockRequestRequest request,
+        CancellationToken ct)
+        => Ok(await requests.SaveShopDraftAsync(request, ct));
+
+    [HttpDelete("draft")]
+    [Authorize(Roles = "ShopUser")]
+    public async Task<IActionResult> DeleteDraft(CancellationToken ct)
+    {
+        await requests.DeleteShopDraftAsync(ct);
+        return NoContent();
+    }
+
+    // ─── Dispatch draft (Inventory + Admin) ──────────────────
+    // Saves WIP dispatch qtys to draft_dispatched_qty without flipping the
+    // request status. Same payload shape as the finalising dispatch
+    // endpoint above so the FE can call either depending on the button.
+    [HttpPatch("{id:guid}/dispatch-draft")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> SaveDispatchDraft(
+        Guid id,
+        [FromBody] DispatchRequest request,
+        CancellationToken ct)
+        => Ok(await requests.SaveDispatchDraftAsync(id, request, ct));
+
+    // ─── Discard dispatch draft (Inventory + Admin) ──────────
+    // Clears draft_dispatched_qty on every item of the request, leaving
+    // the request itself in the same Pending/Approved state.
+    [HttpDelete("{id:guid}/dispatch-draft")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> ClearDispatchDraft(
+        Guid id,
+        CancellationToken ct)
+        => Ok(await requests.ClearDispatchDraftAsync(id, ct));
+
+    // ─── Inventory dispatch drafts list (Inventory + Admin) ──
+    // Returns Pending/Approved requests that have at least one item with a
+    // saved dispatch draft. Drives the "Resume dispatch draft" strip on
+    // the inventory list page.
+    [HttpGet("dispatch-drafts")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<IReadOnlyList<StockRequestDto>>> ListDispatchDrafts(
+        [FromQuery] Guid? inventoryId,
+        CancellationToken ct)
+        => Ok(await requests.ListInventoryDispatchDraftsAsync(inventoryId, ct));
 }

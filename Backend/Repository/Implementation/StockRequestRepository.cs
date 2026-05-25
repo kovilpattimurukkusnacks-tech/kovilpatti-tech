@@ -162,4 +162,75 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
             sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
+
+    // ── Shop drafts ───────────────────────────────────────────────
+
+    public async Task<Guid> SaveShopDraftAsync(
+        Guid shopId, Guid inventoryId, string? notes, string itemsJson, Guid userId,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = @"
+            SELECT fn_request_save_shop_draft(
+                @p_shop_id, @p_inventory_id, @p_notes,
+                @p_items::jsonb, @p_user_id)";
+
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+        {
+            p_shop_id      = shopId,
+            p_inventory_id = inventoryId,
+            p_notes        = notes,
+            p_items        = itemsJson,
+            p_user_id      = userId,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<StockRequest?> GetShopDraftAsync(Guid shopId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_request_get_shop_draft(@p_shop_id)";
+        return await conn.QuerySingleOrDefaultAsync<StockRequest>(
+            new CommandDefinition(sql, new { p_shop_id = shopId }, cancellationToken: ct));
+    }
+
+    public async Task<bool> DeleteShopDraftAsync(Guid shopId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_delete_shop_draft(@p_shop_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_shop_id = shopId }, cancellationToken: ct));
+    }
+
+    // ── Inventory dispatch draft ──────────────────────────────────
+
+    public async Task<bool> SaveDispatchDraftAsync(
+        Guid id, Guid userId, string itemsJson, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_save_dispatch_draft(@p_id, @p_user_id, @p_items::jsonb)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
+        {
+            p_id      = id,
+            p_user_id = userId,
+            p_items   = itemsJson,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<bool> ClearDispatchDraftAsync(Guid id, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_clear_dispatch_draft(@p_id, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
+        Guid? inventoryId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_request_list_inventory_dispatch_drafts(@p_inventory_id)";
+        var rows = await conn.QueryAsync<StockRequest>(new CommandDefinition(
+            sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+        return rows.ToList();
+    }
 }

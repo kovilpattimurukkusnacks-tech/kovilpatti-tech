@@ -1,19 +1,23 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ChevronDown, ChevronRight, Plus } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Plus } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Collapse, IconButton, MenuItem, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useMyStockRequests } from '../../hooks/useStockRequests'
+import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import type { StockRequestDto, RequestStatus, StockRequestListFilters } from '../../api/stock-requests/types'
 
 const STATUS_OPTIONS: RequestStatus[] = ['Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled']
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // Drafts surface only via the Resume Draft strip — they're filtered out
+  // of the /mine list endpoint, so a Draft chip never renders here. Entry
+  // kept to satisfy the exhaustive Record type.
+  Draft:      'default',
   Pending:    'warning',
   Approved:   'info',
   Rejected:   'error',
@@ -40,6 +44,10 @@ export default function ShopRequests() {
     pageSize,
   } satisfies StockRequestListFilters)
 
+  // Shop's single live draft (or null). Resume Draft strip renders only when
+  // this resolves to non-null.
+  const draftQuery = useShopDraft()
+
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
@@ -65,6 +73,48 @@ export default function ShopRequests() {
       />
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
+
+      {/* Resume Draft strip — visible only when the shop has a saved draft.
+          Clicking takes the user to /new where the cart auto-seeds from
+          the draft. Single live draft per shop, so there's at most one.
+          The "Last saved" timestamp comes from the row's updated_at, which
+          refreshes on every save (vs submitted_at which is the original
+          create time). */}
+      {draftQuery.data && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2,
+            borderRadius: 2,
+            border: '2px solid #1F1F1F',
+            bgcolor: '#FFF8DC',
+            px: 2,
+            py: 1.5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ fontWeight: 700, fontSize: 14 }}>You have an unsent draft</Box>
+            <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+              {draftQuery.data.totalItems} {draftQuery.data.totalItems === 1 ? 'product' : 'products'}
+              · {draftQuery.data.totalQty} {draftQuery.data.totalQty === 1 ? 'unit' : 'units'}
+              · Last saved {fmtIst(draftQuery.data.updatedAt)}
+            </Box>
+          </Box>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => navigate('/shop/requests/new')}
+            sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+          >
+            Resume Draft
+          </Button>
+        </Paper>
+      )}
 
       <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
         <TextField

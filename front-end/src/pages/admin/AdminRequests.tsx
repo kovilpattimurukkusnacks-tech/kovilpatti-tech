@@ -11,6 +11,9 @@ import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/ty
 import '../Products.css'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // 'Draft' is filtered out of all list endpoints by the BE; admin never
+  // sees one. Mapping kept to satisfy the exhaustive Record type.
+  Draft:      'default',
   Pending:    'warning',
   Approved:   'info',
   Rejected:   'error',

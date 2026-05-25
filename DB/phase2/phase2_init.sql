@@ -18,10 +18,15 @@ BEGIN;
 
 -- ------------------------------------------------------------
 -- 0. Enum — stock request lifecycle
+--
+-- 'Draft' = shop user's saved-but-not-submitted request. A shop has at most
+-- one Draft row at a time (enforced by partial unique index below). Once
+-- submitted, the draft row is consumed (deleted) and a fresh Pending row
+-- takes its place — so Draft never transitions to other statuses directly.
 -- ------------------------------------------------------------
 DO $$ BEGIN
   CREATE TYPE request_status AS ENUM (
-    'Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled'
+    'Draft', 'Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled'
   );
 EXCEPTION
   WHEN duplicate_object THEN NULL;
@@ -98,6 +103,15 @@ CREATE INDEX IF NOT EXISTS idx_stock_requests_inventory_status
 CREATE INDEX IF NOT EXISTS idx_stock_requests_status_submitted
   ON stock_requests(status, submitted_at DESC) WHERE is_deleted = false;
 
+-- One live draft per shop. Partial unique index — only enforces uniqueness
+-- on the Draft status (Pending/Dispatched/etc. rows are unaffected). Lets
+-- the DB itself reject a second draft insert; the BE can rely on this and
+-- treat duplicate_object as "another tab beat me" rather than coding a
+-- race-prone read-then-write.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_requests_one_draft_per_shop
+  ON stock_requests(shop_id)
+  WHERE status = 'Draft' AND is_deleted = false;
+
 -- ------------------------------------------------------------
 -- 3. stock_request_items  — line items (one row per product per request)
 --    UNIQUE(request_id, product_id) — same product can't appear twice
@@ -110,6 +124,10 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
 
   requested_qty   int           NOT NULL,
   dispatched_qty  int,                                                  -- NULL until dispatch
+  -- Inventory user's saved-but-not-finalised dispatch quantity (the WIP
+  -- "Save as Draft" on the dispatch screen). NULL when no draft is in
+  -- flight. Cleared by fn_request_dispatch when the dispatch is finalised.
+  draft_dispatched_qty int,
   unit_price      numeric(10,2) NOT NULL,                               -- snapshot of products.mrp at submit
   -- Snapshot of the product's pack size at request time so the audit/history
   -- view doesn't silently change if the product's master record is later edited.
@@ -124,8 +142,13 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
 
   CONSTRAINT uq_stock_request_items UNIQUE (request_id, product_id),
   CONSTRAINT chk_requested_qty_positive CHECK (requested_qty > 0),
+  -- Lower bound only — the upper-bound cap (≤ requested_qty) was removed
+  -- on client request so inventory can dispatch more than originally
+  -- requested (e.g. forced minimum case-size, last-mile rounding).
   CONSTRAINT chk_dispatched_qty_bounds
-    CHECK (dispatched_qty IS NULL OR (dispatched_qty >= 0 AND dispatched_qty <= requested_qty))
+    CHECK (dispatched_qty IS NULL OR dispatched_qty >= 0),
+  CONSTRAINT chk_draft_dispatched_qty_bounds
+    CHECK (draft_dispatched_qty IS NULL OR draft_dispatched_qty >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_request ON stock_request_items(request_id);

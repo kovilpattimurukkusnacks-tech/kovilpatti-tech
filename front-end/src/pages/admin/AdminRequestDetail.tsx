@@ -1,9 +1,9 @@
-import { useState } from 'react'
+import { Fragment, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, Pencil, Printer } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow,
+  TableRow,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -13,8 +13,13 @@ import { formatINR } from '../../utils/format'
 import { useStockRequest, useCancelStockRequest } from '../../hooks/useStockRequests'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
+import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
+  // 'Draft' is filtered out of admin lists/detail endpoints by the BE, so
+  // this branch shouldn't render in practice — the value is here to keep
+  // the type system happy if a Draft ever leaks through.
+  Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
 }
@@ -28,6 +33,16 @@ export default function AdminRequestDetail() {
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
   const [cancelConfirm, setCancelConfirm]   = useState(false)
+
+  // Card-per-category grouping. Computed unconditionally so hooks order stays
+  // stable across loading / error renders.
+  const grouped = useMemo(
+    () => groupByCategoryWeight(
+      request?.items ?? [],
+      it => ({ category: it.categoryName, weightValue: it.weightValue, weightUnit: it.weightUnit }),
+    ),
+    [request?.items],
+  )
 
   if (isLoading) return <Box><PageHeader title="Loading…" subtitle="" /></Box>
   if (error || !request) {
@@ -117,50 +132,84 @@ export default function AdminRequestDetail() {
         </Box>
       </Paper>
 
-      <Paper elevation={0} sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
-        <TableContainer>
-          <Table size="small">
-            <TableHead>
-              <TableRow sx={{ bgcolor: '#FCD835' }}>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>Product</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Weight</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 90 }} align="right">Requested</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 100 }} align="right">Dispatched</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 110 }} align="right">Unit Price</TableCell>
-                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 120 }} align="right">Subtotal</TableCell>
-              </TableRow>
-            </TableHead>
-            <TableBody>
-              {(request.items ?? []).map(item => {
-                // Subtotal reflects effective qty × price. Post-dispatch this is
-                // dispatched_qty; pre-dispatch (or never dispatched) it falls back
-                // to requested_qty so the column is meaningful in every state.
-                const effectiveQty = item.dispatchedQty ?? item.requestedQty
-                const effectiveSubtotal = effectiveQty * item.unitPrice
-                const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
-                return (
-                  <TableRow key={item.id} hover>
-                    <TableCell><Box sx={{ fontWeight: 600 }}>{item.productCode} — {item.productName}</Box></TableCell>
-                    <TableCell align="right">
-                      {item.weightValue != null
-                        ? `${item.weightValue} ${item.weightUnit ?? ''}`.trim()
-                        : <span className="text-[#1F1F1F]/40">—</span>}
-                    </TableCell>
-                    <TableCell align="right">{item.requestedQty}</TableCell>
-                    <TableCell align="right">
-                      <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                    </TableCell>
-                    <TableCell align="right">{formatINR(item.unitPrice)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
-                      {formatINR(effectiveSubtotal)}
-                    </TableCell>
-                  </TableRow>
-                )
-              })}
-            </TableBody>
-          </Table>
-        </TableContainer>
-      </Paper>
+      {/* Items — one bordered card per category. Yellow header strip at the
+          top of each card with the category name; inside, weight sub-headings
+          and product rows. Same pattern across all request-detail screens. */}
+      {grouped.map(catGroup => (
+        <Paper
+          key={catGroup.category}
+          elevation={0}
+          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+        >
+          <Box
+            sx={{
+              bgcolor: '#FCD835',
+              borderBottom: '2px solid #1F1F1F',
+              px: 2,
+              py: 1.25,
+              fontWeight: 700,
+              fontSize: 14,
+              textTransform: 'uppercase',
+              letterSpacing: 0.6,
+              color: '#1F1F1F',
+            }}
+          >
+            {catGroup.category}
+          </Box>
+          <TableContainer>
+            <Table size="small">
+              <TableBody>
+                {catGroup.weightGroups.map((wg, wIdx) => (
+                  <Fragment key={`${catGroup.category}__${wg.label}`}>
+                    <TableRow>
+                      <TableCell
+                        colSpan={5}
+                        sx={{
+                          bgcolor: '#FFFFFF',
+                          pl: 2,
+                          pt: wIdx === 0 ? 1.5 : 2.5,
+                          pb: 0.5,
+                          fontWeight: 700,
+                          fontSize: 10,
+                          textTransform: 'uppercase',
+                          letterSpacing: 1.4,
+                          color: '#1F1F1F66',
+                          borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        }}
+                      >
+                        {wg.label}
+                      </TableCell>
+                    </TableRow>
+                    {wg.items.map(item => {
+                      // Subtotal reflects effective qty × price. Post-dispatch this is
+                      // dispatched_qty; pre-dispatch (or never dispatched) it falls back
+                      // to requested_qty so the column is meaningful in every state.
+                      const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                      const effectiveSubtotal = effectiveQty * item.unitPrice
+                      const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                      return (
+                        <TableRow key={item.id} hover>
+                          <TableCell sx={{ pl: 3, py: 1.25 }}>
+                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
+                            <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                          </TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
+                          <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                            {formatINR(effectiveSubtotal)}
+                          </TableCell>
+                        </TableRow>
+                      )
+                    })}
+                  </Fragment>
+                ))}
+              </TableBody>
+            </Table>
+          </TableContainer>
+        </Paper>
+      ))}
 
       {/* Summary panel — overall totals broken out for clarity. */}
       <Box sx={{ mb: 2 }}>

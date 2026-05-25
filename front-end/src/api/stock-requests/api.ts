@@ -56,4 +56,26 @@ export const stockRequestsApi = {
   dispatch: (id: string, req: DispatchRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch`, req),
   receive:  (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/receive`),
   cancel:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/cancel`),
+
+  // Shop draft (ShopUser) — at most one live draft per shop, identified
+  // by the shop_id on the JWT. No URL id needed.
+  getDraft:    ()                                          => apiClient.get<StockRequestDto>('/api/stock-requests/draft'),
+  saveDraft:   (req: CreateStockRequestRequest)            => apiClient.post<StockRequestDto>('/api/stock-requests/draft', req),
+  deleteDraft: ()                                          => apiClient.delete<void>('/api/stock-requests/draft'),
+
+  // Inventory dispatch draft (Inventory/Admin) — same payload shape as the
+  // finalising dispatch endpoint; writes to draft_dispatched_qty only.
+  saveDispatchDraft: (id: string, req: DispatchRequest)    =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft`, req),
+
+  // Discard the dispatch draft — clears every item's draft_dispatched_qty.
+  clearDispatchDraft: (id: string) =>
+    apiClient.delete<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft`),
+
+  // Incoming requests with a saved dispatch draft (Inventory/Admin) — drives
+  // the "Resume dispatch draft" strip on the inventory list page.
+  dispatchDrafts: (inventoryId?: string) =>
+    apiClient.get<StockRequestDto[]>(
+      `/api/stock-requests/dispatch-drafts${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
+    ),
 }

@@ -29,6 +29,9 @@ public record StockRequestDto(
     string? RejectionReason,
     DateTimeOffset  EditableUntil,
     DateTimeOffset  SubmittedAt,
+    /// Last row-touch timestamp. Refreshed by every write — useful for
+    /// drafts (= last save) and for any "last activity" display.
+    DateTimeOffset  UpdatedAt,
     DateTimeOffset? ApprovedAt,
     Guid?           ApprovedBy,
     DateTimeOffset? DispatchedAt,
@@ -55,6 +58,11 @@ public record StockRequestItemDto(
     string?  WeightUnit,
     int     RequestedQty,
     int?    DispatchedQty,
+    /// Inventory user's saved-but-not-finalised dispatch quantity. Used by
+    /// the dispatch screen to pre-fill qty inputs from a saved draft.
+    /// NULL when no draft has been saved (or after the request is dispatched
+    /// — fn_request_dispatch clears these on finalisation).
+    int?    DraftDispatchedQty,
     decimal UnitPrice,
     decimal Subtotal
 );
