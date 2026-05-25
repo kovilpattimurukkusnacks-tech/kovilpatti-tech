@@ -173,10 +173,14 @@ export default function InventoryRequestDetail() {
 
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
-      const itemsPayload = items.map(it => ({
-        id: it.id,
-        dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-      }))
+      // Only save items the user has actually typed for — otherwise the
+      // `?? requestedQty` fallback used to silently pre-fill every other
+      // item with its full requested qty, which then re-seeded on next
+      // visit and made it look like the user had filled everything in.
+      const itemsPayload = items
+        .filter(it => dispatchQtys.has(it.id))
+        .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
+      if (itemsPayload.length === 0) return   // nothing to save
       saveDraftMutation.mutate(
         { id: requestId, req: { items: itemsPayload } },
         {
@@ -252,10 +256,12 @@ export default function InventoryRequestDetail() {
    */
   const handleSaveDraft = async () => {
     const startCount = changeCountRef.current
-    const itemsPayload = items.map(it => ({
-      id: it.id,
-      dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-    }))
+    // Same filter as the auto-save effect — only send items the user has
+    // typed for, never a requestedQty default for untouched items.
+    const itemsPayload = items
+      .filter(it => dispatchQtys.has(it.id))
+      .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
+    if (itemsPayload.length === 0) return
     try {
       await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
       setDraftSavedAt(new Date())
@@ -717,13 +723,15 @@ export default function InventoryRequestDetail() {
         open={guard.state === 'blocked'}
         onSaveDraft={canDispatch
           ? async () => {
-              if (dispatchQtys.size === 0) {
+              // Same payload-shape rule as the auto-save effect — only the
+              // items the user has typed for. No requestedQty fallback for
+              // untouched items.
+              const itemsPayload = items
+                .filter(it => dispatchQtys.has(it.id))
+                .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
+              if (itemsPayload.length === 0) {
                 throw new Error('Enter at least one quantity before saving.')
               }
-              const itemsPayload = items.map(it => ({
-                id: it.id,
-                dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-              }))
               await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
               setDraftSavedAt(new Date())
               setIsDraftDirty(false)
