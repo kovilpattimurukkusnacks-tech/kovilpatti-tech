@@ -27,7 +27,13 @@ public class StockRequestService(
     // Using a fixed offset avoids TimeZoneInfo cross-platform headaches.
     private static readonly TimeSpan IstOffset = TimeSpan.FromMinutes(330);
 
-    private static readonly JsonSerializerOptions JsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower };
+    // snake_case writes (matching the SPs' jsonb_extract keys) + case-insensitive
+    // reads. Shared by both serialize and deserialize paths.
+    private static readonly JsonSerializerOptions JsonOpts = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower,
+        PropertyNameCaseInsensitive = true,
+    };
 
     // ───────── Read ─────────
 
@@ -49,13 +55,8 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Role-based access: shop users only see their own; inventory users only their inventory's; admin sees all.
-        var role = currentUser.Role;
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase)
-            && currentUser.ShopId != row.Shop_Id)
-            throw new ForbiddenException("This request does not belong to your shop.");
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != row.Inventory_Id)
-            throw new ForbiddenException("This request does not belong to your inventory.");
+        EnsureShopScope(row);
+        EnsureInventoryScope(row);
 
         return MapWithItems(row);
     }
@@ -68,13 +69,10 @@ public class StockRequestService(
         //   • Inventory → forced to their own inventory; ignore any explicit
         //                 inventoryId param to prevent cross-godown peeking.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide total.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+        if (IsRole(RoleShop))
             throw new ForbiddenException("Shop users cannot view the cumulative report.");
 
-        Guid? scope = string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            ? currentUser.InventoryId
-            : inventoryId;
+        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.GetPendingCumulativeAsync(scope, ct);
         return rows.Select(r => new CumulativePendingLineDto(
@@ -90,13 +88,10 @@ public class StockRequestService(
         //   • Inventory → forced to their own inventory; ignore any caller-supplied
         //                 inventoryId to prevent peeking into other godowns.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide totals.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+        if (IsRole(RoleShop))
             throw new ForbiddenException("Shop users cannot view the per-shop summary.");
 
-        Guid? scope = string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            ? currentUser.InventoryId
-            : inventoryId;
+        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.GetCountByShopAsync(status, scope, ct);
         return rows.Select(r => new ShopRequestCountDto(
@@ -119,20 +114,11 @@ public class StockRequestService(
         var shop = await shops.GetAsync(shopId, ct)
             ?? throw new NotFoundException("Your shop record was not found.");
 
-        // Resolve product MRPs (snapshot at submit time) and validate they exist.
-        var productMap = await ResolveAndValidateProducts(request.Items.Select(i => i.ProductId).ToHashSet(), ct);
-
         // Compute editable_until from the configured cutoff.
         var cutoffStr = (await settings.GetAsync("request_lock_cutoff", ct))?.Value ?? "09:00";
         var editableUntil = ComputeEditableUntil(cutoffStr);
 
-        // Build items JSON for the SP (snake_case keys for jsonb_extract).
-        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
-        {
-            product_id    = i.ProductId,
-            requested_qty = i.RequestedQty,
-            unit_price    = productMap[i.ProductId].Mrp,
-        }), JsonOpts);
+        var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
         var code = await requests.NextCodeAsync(ct);
         var newId = await requests.CreateAsync(
@@ -157,21 +143,24 @@ public class StockRequestService(
 
         // Shop user can only edit own Pending requests within the time window.
         // Admin can edit any Pending or Approved request, ignoring time window.
-        var role = currentUser.Role ?? "";
-        var isAdmin = string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase);
+        var isAdmin = IsRole(RoleAdmin);
 
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+        if (IsRole(RoleShop))
         {
-            if (existing.Shop_Id != currentUser.ShopId)
-                throw new ForbiddenException("This request does not belong to your shop.");
+            EnsureShopScope(existing);
 
-            var nowIst = DateTimeOffset.UtcNow.ToOffset(IstOffset);
-            if (nowIst > existing.Editable_Until)
-                throw new ValidationException(new[]
-                {
-                    new ValidationFailure("editable_until",
-                        "Edit window has closed. This request is now locked. Only an admin can modify it.")
-                });
+            // request_lock_enabled = 'false' disables the cutoff window entirely.
+            // Status rule (Pending only for shop users) still applies below.
+            if (await IsRequestLockEnabledAsync(ct))
+            {
+                var nowIst = DateTimeOffset.UtcNow.ToOffset(IstOffset);
+                if (nowIst > existing.Editable_Until)
+                    throw new ValidationException(new[]
+                    {
+                        new ValidationFailure("editable_until",
+                            "Edit window has closed. This request is now locked. Only an admin can modify it.")
+                    });
+            }
         }
         else if (!isAdmin)
         {
@@ -190,14 +179,7 @@ public class StockRequestService(
                 new ValidationFailure("status", $"Cannot edit a request in '{existing.Status}' state.")
             });
 
-        var productMap = await ResolveAndValidateProducts(request.Items.Select(i => i.ProductId).ToHashSet(), ct);
-
-        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
-        {
-            product_id    = i.ProductId,
-            requested_qty = i.RequestedQty,
-            unit_price    = productMap[i.ProductId].Mrp,
-        }), JsonOpts);
+        var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
         var ok = await requests.UpdateAsync(id, request.Notes, itemsJson, userId, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -220,10 +202,7 @@ public class StockRequestService(
         // Inventory user may only approve requests routed to their own godown.
         // Admin can approve any. Approving locks the request — once status
         // moves out of Pending the shop can no longer edit.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         var ok = await requests.ApproveAsync(id, userId, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -244,10 +223,7 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Same scope rule as Approve — inventory only rejects their own.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         var ok = await requests.RejectAsync(id, userId, request.Reason, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -267,10 +243,7 @@ public class StockRequestService(
         // Inventory user may only revoke their own godown's action; admin any.
         // SP additionally guards status IN ('Approved','Rejected') so once the
         // request has been dispatched there's no taking it back.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         var ok = await requests.RevokeAsync(id, userId, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -291,10 +264,7 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Inventory user can only dispatch their own godown's requests.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
         {
@@ -318,10 +288,7 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Shop user can only mark their own request received.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase)
-            && currentUser.ShopId != existing.Shop_Id)
-            throw new ForbiddenException("This request does not belong to your shop.");
+        EnsureShopScope(existing);
 
         var ok = await requests.ReceiveAsync(id, userId, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -339,20 +306,23 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Shop user: own only + within edit window. Admin: any.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+        if (IsRole(RoleShop))
         {
-            if (existing.Shop_Id != currentUser.ShopId)
-                throw new ForbiddenException("This request does not belong to your shop.");
+            EnsureShopScope(existing);
 
-            var nowIst = DateTimeOffset.UtcNow.ToOffset(IstOffset);
-            if (nowIst > existing.Editable_Until)
-                throw new ValidationException(new[] {
-                    new ValidationFailure("editable_until",
-                        "Edit window has closed. Ask an admin to cancel this request.")
-                });
+            // Same flag governs cancel as governs edit — both are "shop modifies
+            // their Pending request" actions.
+            if (await IsRequestLockEnabledAsync(ct))
+            {
+                var nowIst = DateTimeOffset.UtcNow.ToOffset(IstOffset);
+                if (nowIst > existing.Editable_Until)
+                    throw new ValidationException(new[] {
+                        new ValidationFailure("editable_until",
+                            "Edit window has closed. Ask an admin to cancel this request.")
+                    });
+            }
         }
-        else if (!string.Equals(role, "Admin", StringComparison.OrdinalIgnoreCase))
+        else if (!IsRole(RoleAdmin))
         {
             throw new ForbiddenException("Only the shop's user or an admin can cancel a request.");
         }
@@ -383,15 +353,7 @@ public class StockRequestService(
         var shop = await shops.GetAsync(shopId, ct)
             ?? throw new NotFoundException("Your shop record was not found.");
 
-        var productMap = await ResolveAndValidateProducts(
-            request.Items.Select(i => i.ProductId).ToHashSet(), ct);
-
-        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
-        {
-            product_id    = i.ProductId,
-            requested_qty = i.RequestedQty,
-            unit_price    = productMap[i.ProductId].Mrp,
-        }), JsonOpts);
+        var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
         var draftId = await requests.SaveShopDraftAsync(
             shop.Id, shop.InventoryId, request.Notes, itemsJson, userId, ct);
@@ -425,13 +387,10 @@ public class StockRequestService(
         //   • ShopUser  → never (no concept of inventory drafts for them).
         //   • Inventory → forced to their own godown; ignore caller param.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "ShopUser", StringComparison.OrdinalIgnoreCase))
+        if (IsRole(RoleShop))
             throw new ForbiddenException("Shop users cannot view inventory drafts.");
 
-        Guid? scope = string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            ? currentUser.InventoryId
-            : inventoryId;
+        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.ListInventoryDispatchDraftsAsync(scope, ct);
         return rows.Select(MapHeaderToDto).ToList();
@@ -446,10 +405,7 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Same scope rule as save/dispatch — inventory only their own godown.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         var ok = await requests.ClearDispatchDraftAsync(id, userId, ct);
         if (!ok) throw new ValidationException(new[] {
@@ -473,10 +429,7 @@ public class StockRequestService(
 
         // Same scope rule as DispatchAsync — inventory can only save drafts
         // for their own godown's requests; admin may save for any.
-        var role = currentUser.Role ?? "";
-        if (string.Equals(role, "Inventory", StringComparison.OrdinalIgnoreCase)
-            && currentUser.InventoryId != existing.Inventory_Id)
-            throw new ForbiddenException("This request is for a different inventory.");
+        EnsureInventoryScope(existing);
 
         // Same payload shape as DispatchAsync; SP writes to draft_dispatched_qty
         // instead of dispatched_qty and leaves status unchanged.
@@ -496,6 +449,47 @@ public class StockRequestService(
 
     // ───────── Helpers ─────────
 
+    // Role checks via constants — keeps the magic strings out of the call sites.
+    private const string RoleShop      = "ShopUser";
+    private const string RoleInventory = "Inventory";
+    private const string RoleAdmin     = "Admin";
+
+    private bool IsRole(string role)
+        => string.Equals(currentUser.Role, role, StringComparison.OrdinalIgnoreCase);
+
+    // Throws Forbidden if the current user is a ShopUser and the row doesn't belong to their shop.
+    // No-op for Inventory/Admin roles (their own scope check below handles them).
+    private void EnsureShopScope(StockRequest existing)
+    {
+        if (IsRole(RoleShop) && currentUser.ShopId != existing.Shop_Id)
+            throw new ForbiddenException("This request does not belong to your shop.");
+    }
+
+    // Throws Forbidden if the current user is an Inventory user and the row is for a different inventory.
+    // No-op for ShopUser/Admin roles.
+    private void EnsureInventoryScope(StockRequest existing)
+    {
+        if (IsRole(RoleInventory) && currentUser.InventoryId != existing.Inventory_Id)
+            throw new ForbiddenException("This request is for a different inventory.");
+    }
+
+    // Build the items JSON payload consumed by fn_request_create / _update /
+    // _save_shop_draft. Each call resolves product MRPs (snapshot at submit time)
+    // and emits snake_case keys for the SPs' jsonb_extract_path lookups.
+    private async Task<string> BuildItemsJsonAsync(
+        IReadOnlyList<CreateStockRequestItem> items, CancellationToken ct)
+    {
+        var productMap = await ResolveAndValidateProducts(
+            items.Select(i => i.ProductId).ToHashSet(), ct);
+
+        return JsonSerializer.Serialize(items.Select(i => new
+        {
+            product_id    = i.ProductId,
+            requested_qty = i.RequestedQty,
+            unit_price    = productMap[i.ProductId].Mrp,
+        }), JsonOpts);
+    }
+
     private async Task<Dictionary<Guid, Product>> ResolveAndValidateProducts(HashSet<Guid> ids, CancellationToken ct)
     {
         // Phase 1 product repo's ListAsync returns all non-deleted products. Filter to requested IDs.
@@ -511,6 +505,17 @@ public class StockRequestService(
         }
 
         return map;
+    }
+
+    // Reads the request_lock_enabled flag from app_settings. Defaults to true if
+    // missing or unparseable — preserves the pre-flag behaviour on any environment
+    // that hasn't run the new migration yet.
+    private async Task<bool> IsRequestLockEnabledAsync(CancellationToken ct)
+    {
+        var raw = (await settings.GetAsync("request_lock_enabled", ct))?.Value;
+        // Treat only the literal "false" (case-insensitive) as disabled. Anything
+        // else (missing row, "true", typo) leaves the lock on for safety.
+        return !string.Equals(raw, "false", StringComparison.OrdinalIgnoreCase);
     }
 
     /// Compute the next cutoff timestamp from the configured cutoff time (HH:MM, IST).
@@ -555,33 +560,26 @@ public class StockRequestService(
             r.Received_At, r.Cancelled_At, r.Cancelled_By,
             Items: null);
 
+    // Composes MapHeaderToDto with the deserialised items list. Single source
+    // of truth for the 28 header fields — adding a new DTO field only needs
+    // updating MapHeaderToDto, not both.
     private static StockRequestDto MapWithItems(StockRequest r)
+        => MapHeaderToDto(r) with { Items = ParseItems(r.Items) };
+
+    private static List<StockRequestItemDto> ParseItems(string? itemsJson)
     {
-        var items = string.IsNullOrWhiteSpace(r.Items)
-            ? new List<StockRequestItemDto>()
-            : (JsonSerializer.Deserialize<List<RawItem>>(r.Items, ReadJsonOpts) ?? new List<RawItem>())
-              .Select(i => new StockRequestItemDto(
-                  i.id, i.product_id, i.product_code, i.product_name, i.category_name,
-                  i.weight_value, i.weight_unit,
-                  i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
-                  i.unit_price, i.subtotal))
-              .ToList();
+        if (string.IsNullOrWhiteSpace(itemsJson))
+            return new List<StockRequestItemDto>();
 
-        return new StockRequestDto(
-            r.Id, r.Code,
-            r.Shop_Id, r.Shop_Code, r.Shop_Name,
-            r.Inventory_Id, r.Inventory_Code, r.Inventory_Name,
-            r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
-            r.Status, r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
-            r.Notes, r.Rejection_Reason,
-            r.Editable_Until, r.Submitted_At, r.Updated_At,
-            r.Approved_At, r.Approved_By,
-            r.Dispatched_At, r.Dispatched_By,
-            r.Received_At, r.Cancelled_At, r.Cancelled_By,
-            items);
+        var raws = JsonSerializer.Deserialize<List<RawItem>>(itemsJson, JsonOpts)
+                   ?? new List<RawItem>();
+
+        return raws.Select(i => new StockRequestItemDto(
+            i.id, i.product_id, i.product_code, i.product_name, i.category_name,
+            i.weight_value, i.weight_unit,
+            i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
+            i.unit_price, i.subtotal)).ToList();
     }
-
-    private static readonly JsonSerializerOptions ReadJsonOpts = new() { PropertyNamingPolicy = JsonNamingPolicy.SnakeCaseLower, PropertyNameCaseInsensitive = true };
 
     // Matches the JSON keys returned by fn_request_get's jsonb_build_object.
     private sealed record RawItem(

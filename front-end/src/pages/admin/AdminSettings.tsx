@@ -2,21 +2,42 @@ import { useState, useEffect } from 'react'
 import { Edit2, X, Settings as SettingsIcon } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField,
+  FormControlLabel, IconButton, Paper, Switch, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, TextField,
 } from '@mui/material'
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+import { TimePicker } from '@mui/x-date-pickers/TimePicker'
+import dayjs, { type Dayjs } from 'dayjs'
 import PageHeader from '../../components/PageHeader'
 import { useSettings, useUpdateSetting } from '../../hooks/useSettings'
 import type { AppSettingDto } from '../../api/settings/types'
 import { ValidationError } from '../../api/errors'
 
-// Per-key validation. Keys are well-known so we can give better UX than generic
-// "string up to 200 chars".
-const KEY_HELP: Record<string, { label: string; placeholder: string; validate: (v: string) => string | null }> = {
+// Parse our stored "HH:mm" value into a Dayjs instance the TimePicker can use.
+// Returns null for empty/malformed input so the picker shows a clean empty state.
+function parseHhMm(v: string): Dayjs | null {
+  if (!/^\d{2}:\d{2}$/.test(v)) return null
+  const [h, m] = v.split(':').map(Number)
+  if (h < 0 || h > 23 || m < 0 || m > 59) return null
+  return dayjs().hour(h).minute(m).second(0).millisecond(0)
+}
+
+// Per-key validation + input-type hints. Keys are well-known so we can give
+// better UX than generic "string up to 200 chars". `inputType: 'time'` opts a
+// key into the MUI X TimePicker (clock dial + AM/PM; stores HH:mm 24h string).
+const KEY_HELP: Record<string, {
+  label: string
+  placeholder: string
+  inputType?: 'time' | 'text'
+  validate: (v: string) => string | null
+}> = {
   request_lock_cutoff: {
-    label: 'Cutoff time (24-hour, HH:MM, IST)',
+    label: 'Cutoff time (IST)',
     placeholder: '09:00',
+    inputType: 'time',
     validate: (v) => {
-      if (!/^\d{2}:\d{2}$/.test(v)) return 'Use HH:MM format (e.g. 09:00 or 17:30)'
+      if (!/^\d{2}:\d{2}$/.test(v)) return 'Pick a valid time'
       const [h, m] = v.split(':').map(Number)
       if (h < 0 || h > 23) return 'Hour must be 0–23'
       if (m < 0 || m > 59) return 'Minute must be 0–59'
@@ -25,8 +46,43 @@ const KEY_HELP: Record<string, { label: string; placeholder: string; validate: (
   },
 }
 
+// Keys whose value is a boolean stored as the literal string "true"/"false".
+// Rendered as an MUI Switch in the edit dialog instead of a TextField.
+const BOOLEAN_KEYS: Record<string, { onLabel: string; offLabel: string }> = {
+  request_lock_enabled: {
+    onLabel: 'Cutoff is ON — shop users locked out after cutoff',
+    offLabel: 'Cutoff is OFF — shop users can edit/cancel anytime',
+  },
+}
+
+// Friendly display names for known keys. Falls back to title-casing the key
+// (e.g. some_new_setting → "Some New Setting") so unmapped keys still read nicely.
+const KEY_LABEL: Record<string, string> = {
+  request_lock_cutoff: 'Cutoff Time',
+  request_lock_enabled: 'Cutoff Enabled',
+}
+
+function humanizeKey(key: string): string {
+  if (KEY_LABEL[key]) return KEY_LABEL[key]
+  return key
+    .split('_')
+    .map(w => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ')
+}
+
 const fmtIst = (iso: string) =>
   new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
+
+// "09:00" → "09:00 AM", "17:30" → "05:30 PM". Passes through unchanged if the
+// value isn't a well-formed 24h HH:MM. Used for the value chip on time-typed keys.
+function formatTime12h(hhmm: string): string {
+  if (!/^\d{2}:\d{2}$/.test(hhmm)) return hhmm
+  const [h, m] = hhmm.split(':').map(Number)
+  if (h < 0 || h > 23 || m < 0 || m > 59) return hhmm
+  const period = h >= 12 ? 'PM' : 'AM'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${String(h12).padStart(2, '0')}:${String(m).padStart(2, '0')} ${period}`
+}
 
 export default function AdminSettings() {
   const list = useSettings()
@@ -69,7 +125,7 @@ export default function AdminSettings() {
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <SettingsIcon className="w-4 h-4 text-[#1F1F1F]/60" />
                       <Box>
-                        <Box sx={{ fontWeight: 600, fontSize: 13, color: '#1F1F1F' }}>{s.key}</Box>
+                        <Box sx={{ fontWeight: 600, fontSize: 13, color: '#1F1F1F' }}>{humanizeKey(s.key)}</Box>
                         {s.description && (
                           <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>{s.description}</Box>
                         )}
@@ -77,7 +133,20 @@ export default function AdminSettings() {
                     </Box>
                   </TableCell>
                   <TableCell>
-                    <Chip label={s.value} size="small" sx={{ fontFamily: 'monospace', fontWeight: 700 }} />
+                    {BOOLEAN_KEYS[s.key] ? (
+                      <Chip
+                        label={s.value === 'true' ? 'ON' : 'OFF'}
+                        size="small"
+                        color={s.value === 'true' ? 'success' : 'default'}
+                        sx={{ fontWeight: 700 }}
+                      />
+                    ) : (
+                      <Chip
+                        label={s.key === 'request_lock_cutoff' ? formatTime12h(s.value) : s.value}
+                        size="small"
+                        sx={{ fontFamily: 'monospace', fontWeight: 700 }}
+                      />
+                    )}
                   </TableCell>
                   <TableCell sx={{ fontSize: 12, color: '#1F1F1F99' }}>{fmtIst(s.updatedAt)}</TableCell>
                   <TableCell align="right">
@@ -117,6 +186,9 @@ function EditSettingDialog({ setting, onClose }: { setting: AppSettingDto | null
   if (!setting) return null
 
   const help = KEY_HELP[setting.key]
+  const boolMeta = BOOLEAN_KEYS[setting.key]
+  const isBool = !!boolMeta
+  const boolOn = value === 'true'
 
   const handleSave = async () => {
     setLocalErr(null)
@@ -150,33 +222,60 @@ function EditSettingDialog({ setting, onClose }: { setting: AppSettingDto | null
       <DialogTitle sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
           <Edit2 className="w-5 h-5" />
-          Edit Setting
+          Edit {humanizeKey(setting.key)}
         </Box>
         <IconButton size="small" onClick={onClose} disabled={updateMutation.isPending}>
           <X className="w-4 h-4" />
         </IconButton>
       </DialogTitle>
       <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-        <Box>
-          <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Key</Box>
-          <Box sx={{ fontFamily: 'monospace', fontSize: 13, fontWeight: 700 }}>{setting.key}</Box>
-        </Box>
         {setting.description && (
           <Box>
             <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Description</Box>
             <Box sx={{ fontSize: 13, color: '#1F1F1F' }}>{setting.description}</Box>
           </Box>
         )}
-        <TextField
-          label={help?.label ?? 'Value'}
-          placeholder={help?.placeholder}
-          value={value}
-          onChange={e => setValue(e.target.value.slice(0, 200))}
-          required
-          size="small"
-          autoFocus
-          slotProps={{ htmlInput: { maxLength: 200 } }}
-        />
+        {isBool ? (
+          <Box>
+            <FormControlLabel
+              control={
+                <Switch
+                  checked={boolOn}
+                  onChange={e => setValue(e.target.checked ? 'true' : 'false')}
+                  color="success"
+                />
+              }
+              label={
+                <Box sx={{ fontSize: 13, fontWeight: 600 }}>
+                  {boolOn ? boolMeta.onLabel : boolMeta.offLabel}
+                </Box>
+              }
+            />
+          </Box>
+        ) : help?.inputType === 'time' ? (
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <TimePicker
+              label={help.label}
+              value={parseHhMm(value)}
+              onChange={(d) => setValue(d ? d.format('HH:mm') : '')}
+              ampm
+              slotProps={{
+                textField: { size: 'small', fullWidth: true, required: true, autoFocus: true },
+              }}
+            />
+          </LocalizationProvider>
+        ) : (
+          <TextField
+            label={help?.label ?? 'Value'}
+            placeholder={help?.placeholder}
+            value={value}
+            onChange={e => setValue(e.target.value.slice(0, 200))}
+            required
+            size="small"
+            autoFocus
+            slotProps={{ htmlInput: { maxLength: 200 } }}
+          />
+        )}
         {localErr && <Alert severity="error">{localErr}</Alert>}
         {apiErr   && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{apiErr}</Alert>}
       </DialogContent>

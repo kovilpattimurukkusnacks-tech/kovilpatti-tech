@@ -19,24 +19,16 @@ BEGIN;
 -- ============================================================
 -- 1. CODE GENERATION
 -- ============================================================
---   Uses numerical sort on the digit suffix — same fix pattern as
---   phase1_fix_next_code.sql — to avoid lexicographic-sort bugs
---   once we cross REQ9999 → REQ10000.
+--   Uses seq_request_code (defined in phase2_init.sql) so concurrent
+--   fn_request_create calls never collide on the same code — the
+--   previous SELECT MAX+1 pattern had a race that the UNIQUE(code)
+--   constraint papered over with a confusing error.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION fn_request_next_code()
 RETURNS varchar
-LANGUAGE plpgsql STABLE AS $$
-DECLARE
-  v_max bigint;
-BEGIN
-  SELECT COALESCE(MAX(CAST(substring(code FROM 4) AS bigint)), 0)
-    INTO v_max
-  FROM stock_requests
-  WHERE code ~ '^REQ[0-9]+$';
-
-  RETURN 'REQ' || lpad((v_max + 1)::text, 4, '0');
-END
+LANGUAGE sql AS $$
+  SELECT 'REQ' || lpad(nextval('seq_request_code')::text, 4, '0');
 $$;
 
 
@@ -646,8 +638,8 @@ BEGIN
     UPDATE stock_requests
     SET inventory_id = p_inventory_id,
         notes        = p_notes,
-        updated_by   = p_user_id,
-        updated_at   = now()
+        updated_by   = p_user_id
+        -- updated_at refreshed by trg_stock_requests_updated trigger
     WHERE id = v_id;
   END IF;
 
@@ -973,8 +965,8 @@ BEGIN
   WHERE request_id = p_id;
 
   UPDATE stock_requests
-  SET updated_by = p_user_id,
-      updated_at = now()
+  SET updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 
   RETURN true;
@@ -1018,8 +1010,8 @@ BEGIN
   END IF;
 
   UPDATE stock_requests
-  SET updated_by = p_user_id,
-      updated_at = now()
+  SET updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 
   RETURN true;

@@ -33,6 +33,16 @@ EXCEPTION
 END $$;
 
 -- ------------------------------------------------------------
+-- 0a. Sequence for request codes (REQ0001, REQ0002, …)
+--
+-- Replaces a previous SELECT MAX(...) + 1 pattern in fn_request_next_code,
+-- which had a concurrency hole — two simultaneous fn_request_create calls
+-- could compute the same next code and one would fail the UNIQUE(code)
+-- constraint with a confusing error. Sequences are atomic.
+-- ------------------------------------------------------------
+CREATE SEQUENCE IF NOT EXISTS seq_request_code START 1;
+
+-- ------------------------------------------------------------
 -- 1. app_settings  — key/value config (cutoff time, etc.)
 --    Designed extensible. Phase 2 stores one row (cutoff). Future
 --    settings (GST rate, notification toggles, …) reuse this table.
@@ -47,7 +57,9 @@ CREATE TABLE IF NOT EXISTS app_settings (
 
 INSERT INTO app_settings (key, value, description) VALUES
   ('request_lock_cutoff', '09:00',
-   'Daily IST cutoff (HH:MM) after which shop requests lock. Only admin may edit thereafter.')
+   'Daily IST cutoff (HH:MM) after which shop requests lock. Only admin may edit thereafter.'),
+  ('request_lock_enabled', 'true',
+   'Master switch for the daily cutoff. When false, the cutoff is ignored and shop users can edit/cancel Pending requests anytime.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ------------------------------------------------------------
@@ -112,6 +124,22 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_requests_one_draft_per_shop
   ON stock_requests(shop_id)
   WHERE status = 'Draft' AND is_deleted = false;
 
+-- Seed seq_request_code past any existing REQ-NNNN codes so re-runs of
+-- this script on an environment with data don't collide with codes
+-- already in use. setval(seq, n, true) makes the next nextval() return
+-- n+1. COALESCE(..., 0) handles the empty-table fresh-deploy case
+-- (sequence is left ready to return 1 on first nextval).
+SELECT setval(
+  'seq_request_code',
+  COALESCE(
+    (SELECT MAX(CAST(substring(code FROM 4) AS bigint))
+     FROM stock_requests
+     WHERE code ~ '^REQ[0-9]+$'),
+    0
+  ),
+  true
+);
+
 -- ------------------------------------------------------------
 -- 3. stock_request_items  — line items (one row per product per request)
 --    UNIQUE(request_id, product_id) — same product can't appear twice
@@ -153,6 +181,13 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
 
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_request ON stock_request_items(request_id);
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_product ON stock_request_items(product_id);
+
+-- Partial index for "items with an active dispatch draft". Drives the
+-- inventory list page's Resume Dispatch Draft strip — the EXISTS subquery
+-- can short-circuit against this index instead of scanning all items.
+CREATE INDEX IF NOT EXISTS idx_stock_request_items_active_draft
+  ON stock_request_items(request_id)
+  WHERE draft_dispatched_qty IS NOT NULL;
 
 -- ------------------------------------------------------------
 -- 4. updated_at triggers (reuse Phase 1's set_updated_at function)

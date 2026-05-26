@@ -3,31 +3,33 @@ using KovilpattiSnacks.Business.DTOs.StockRequests;
 
 namespace KovilpattiSnacks.Business.Validators.StockRequests;
 
-public class CreateStockRequestRequestValidator : AbstractValidator<CreateStockRequestRequest>
+// Base validator for stock-request payloads (create + update + save-draft all
+// share the same shape and constraints). Subclasses below close the generic.
+public abstract class StockRequestPayloadValidator<T> : AbstractValidator<T>
+    where T : IStockRequestPayload
 {
-    public CreateStockRequestRequestValidator()
+    protected StockRequestPayloadValidator()
     {
         RuleFor(x => x.Notes).MaximumLength(500);
+
         RuleFor(x => x.Items)
             .NotNull()
             .Must(items => items != null && items.Count > 0)
             .WithMessage("Request must include at least one item.");
+
+        // DB has UNIQUE(request_id, product_id) — catch duplicates here so the
+        // user gets a clean message instead of a cryptic Postgres constraint error.
+        RuleFor(x => x.Items)
+            .Must(items => items == null
+                || items.Select(i => i.ProductId).Distinct().Count() == items.Count)
+            .WithMessage("Each product can only appear once in a request.");
+
         RuleForEach(x => x.Items).SetValidator(new CreateStockRequestItemValidator());
     }
 }
 
-public class UpdateStockRequestRequestValidator : AbstractValidator<UpdateStockRequestRequest>
-{
-    public UpdateStockRequestRequestValidator()
-    {
-        RuleFor(x => x.Notes).MaximumLength(500);
-        RuleFor(x => x.Items)
-            .NotNull()
-            .Must(items => items != null && items.Count > 0)
-            .WithMessage("Request must include at least one item.");
-        RuleForEach(x => x.Items).SetValidator(new CreateStockRequestItemValidator());
-    }
-}
+public class CreateStockRequestRequestValidator : StockRequestPayloadValidator<CreateStockRequestRequest> { }
+public class UpdateStockRequestRequestValidator : StockRequestPayloadValidator<UpdateStockRequestRequest> { }
 
 public class CreateStockRequestItemValidator : AbstractValidator<CreateStockRequestItem>
 {
