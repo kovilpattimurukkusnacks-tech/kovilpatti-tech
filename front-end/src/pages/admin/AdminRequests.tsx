@@ -65,7 +65,8 @@ export default function AdminRequests() {
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
-  const columns = useMemo<GridColDef<StockRequestDto>[]>(() => [
+  const columns = useMemo<GridColDef<StockRequestDto>[]>(() => {
+    const cols: GridColDef<StockRequestDto>[] = [
     { field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false },
     {
       field: 'submittedByName', headerName: 'User', flex: 1, minWidth: 140, sortable: false, filterable: false,
@@ -79,6 +80,22 @@ export default function AdminRequests() {
       field: 'submittedAt', headerName: 'Submitted Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
       renderCell: ({ value }) => value ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—',
     },
+  ]
+
+  // Approved chip — surface when each request was approved, immediately
+  // after the Submitted Time column so the pair reads as a timeline.
+  // Hidden on every other preset (column would be a dash for Pending,
+  // redundant for finalised states).
+  if (activePreset === 'approved') {
+    cols.push({
+      field: 'approvedAt', headerName: 'Approved Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
+      renderCell: ({ value }) => value
+        ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        : <span className="text-[#1F1F1F]/40">—</span>,
+    })
+  }
+
+  cols.push(
     {
       field: 'totalItems', headerName: 'Submitted Items', width: 130, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
@@ -94,13 +111,21 @@ export default function AdminRequests() {
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => <DispatchedCell qty={row.totalDispatchedQty} requested={row.totalQty} />,
     },
-    {
-      // Null until the shop user confirms receipt. Muted "—" otherwise.
+  )
+
+  // Received Time is meaningless on the Approved chip — an approved request
+  // hasn't been received yet, so the column would just show "—" on every
+  // row. Hidden there to keep the grid focused.
+  if (activePreset !== 'approved') {
+    cols.push({
       field: 'receivedAt', headerName: 'Received Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
       renderCell: ({ value }) => value
         ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
         : <span className="text-[#1F1F1F]/40">—</span>,
-    },
+    })
+  }
+
+  cols.push(
     {
       // Pre-dispatch: single requested total.
       // Post-dispatch: requested (muted, top) + delivered (bold, red when short).
@@ -136,7 +161,9 @@ export default function AdminRequests() {
         />
       ),
     },
-  ], [])
+  )
+  return cols
+  }, [activePreset])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')

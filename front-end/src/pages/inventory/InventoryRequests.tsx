@@ -81,50 +81,68 @@ export default function InventoryRequests() {
   const total = list.data?.total ?? 0
 
   const columns = useMemo<GridColDef<StockRequestDto>[]>(() => {
-    const cols: GridColDef<StockRequestDto>[] = [
-    {
+    // toLocaleString option presets — picked once per render to avoid
+    // re-allocating identical objects on every cell render. The chips that
+    // surface a lifecycle timestamp (Approved / In Transit / Delivered) all
+    // show date + time; the others stay date-only.
+    const DATE_FMT     = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' } as const
+    const DATETIME_FMT = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' } as const
+    const showDateTime =
+      activePreset === 'approved' ||
+      activePreset === 'dispatched' ||
+      activePreset === 'received'
+
+    const codeCol: GridColDef<StockRequestDto> = {
+      field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false,
+    }
+    const requestedDateCol: GridColDef<StockRequestDto> = {
       // Most useful triage signal — date the request landed in the queue.
-      // Date-only (no time) so it stays compact at the leading edge.
-      field: 'submittedAt', headerName: 'Requested Date', width: 150, sortable: false, filterable: false,
+      // Default is date-only to stay compact; on the Approved / In Transit /
+      // Delivered chips we show date + time (and widen the column) so the
+      // user can correlate "requested at" vs "approved/dispatched/received
+      // at" timestamps at a glance.
+      field: 'submittedAt', headerName: 'Requested Date',
+      width: showDateTime ? 190 : 150,
+      sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        ? new Date(value as string).toLocaleString('en-IN',
+            showDateTime ? DATETIME_FMT : DATE_FMT)
         : <span className="text-[#1F1F1F]/40">—</span>,
-    },
-  ]
-  // Approved chip only — surface when each request was approved. Hidden on
-  // every other preset to keep the grid uncluttered (the column would be a
-  // dash for Pending and a no-op for finalised states).
+    }
+
+    // Code always leads — most reliable triage anchor across every chip
+    // (Pending, Approved, In Transit, Delivered, All). Date column(s) and
+    // user / shop / qty columns follow.
+    const cols: GridColDef<StockRequestDto>[] = [codeCol, requestedDateCol]
+  // Lifecycle-specific second column — surfaces the timestamp of the state
+  // each chip represents. Hidden on Needs Action / All to keep the grid
+  // uncluttered. Date + time format matches the Requested Date column on
+  // these chips so the pair reads consistently.
   if (activePreset === 'approved') {
     cols.push({
-      field: 'approvedAt', headerName: 'Approved Date', width: 150, sortable: false, filterable: false,
+      field: 'approvedAt', headerName: 'Approved Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
-  // In Transit chip only — show when the request was dispatched. Same
-  // rationale as Approved Date: meaningful only for this state, hidden
-  // elsewhere to keep the grid focused.
   if (activePreset === 'dispatched') {
     cols.push({
-      field: 'dispatchedAt', headerName: 'Dispatched Date', width: 150, sortable: false, filterable: false,
+      field: 'dispatchedAt', headerName: 'Dispatched Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
-  // Delivered chip only — show when the shop confirmed receipt. Same
-  // single-state rationale as above.
   if (activePreset === 'received') {
     cols.push({
-      field: 'receivedAt', headerName: 'Received Date', width: 150, sortable: false, filterable: false,
+      field: 'receivedAt', headerName: 'Received Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleDateString('en-IN', { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' })
+        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
   cols.push(
-    { field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false },
     {
       field: 'submittedByName', headerName: 'User', flex: 1, minWidth: 140, sortable: false, filterable: false,
       renderCell: ({ row }) =>

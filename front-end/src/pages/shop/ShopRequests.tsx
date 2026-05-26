@@ -1,8 +1,8 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Plus } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Plus, Search } from 'lucide-react'
 import {
-  Alert, Box, Button, Chip, Collapse, IconButton, MenuItem, Paper,
+  Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
@@ -11,7 +11,18 @@ import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import type { StockRequestDto, RequestStatus, StockRequestListFilters } from '../../api/stock-requests/types'
 
-const STATUS_OPTIONS: RequestStatus[] = ['Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled']
+// Quick-filter chip presets — same row of chips the admin / inventory pages
+// use, ordered along the request lifecycle. `undefined` status = show all.
+type Preset = { key: string; label: string; status: RequestStatus | undefined }
+const PRESETS: Preset[] = [
+  { key: 'all',        label: 'All',        status: undefined    },
+  { key: 'pending',    label: 'Pending',    status: 'Pending'    },
+  { key: 'approved',   label: 'Approved',   status: 'Approved'   },
+  { key: 'dispatched', label: 'Dispatched', status: 'Dispatched' },
+  { key: 'received',   label: 'Received',   status: 'Received'   },
+  { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
+  { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
+]
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
   // Drafts surface only via the Resume Draft strip — they're filtered out
@@ -31,18 +42,39 @@ const fmtIst = (iso: string | null | undefined) =>
 
 export default function ShopRequests() {
   const navigate = useNavigate()
-  const [filters, setFilters] = useState<{ status?: RequestStatus; search?: string }>({})
+  // Default to All — shop user usually wants the full list of their requests.
+  const [activePreset, setActivePreset] = useState<string>('all')
+  const [search, setSearch] = useState<string>('')
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   // Only one row open at a time so the table stays scannable.
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
+  const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
+
   const list = useMyStockRequests({
-    status: filters.status,
-    search: filters.search,
+    status: currentStatus,
+    search: search.trim() || undefined,
     page: page + 1,
     pageSize,
   } satisfies StockRequestListFilters)
+
+  // Status-specific extra column — surfaces the most relevant per-status
+  // info right after the Submitted column. Timestamp for approved /
+  // dispatched / received / cancelled; rejection reason text for rejected.
+  // NULL on the chips that don't have a meaningful extra signal
+  // ("All", "Pending") so the table stays compact.
+  const mutedDash = <span className="text-[#1F1F1F]/40">—</span>
+  const extraCol: { header: string; render: (r: StockRequestDto) => React.ReactNode } | null =
+      activePreset === 'approved'   ? { header: 'Approved',   render: r => r.approvedAt   ? fmtIst(r.approvedAt)   : mutedDash }
+    : activePreset === 'dispatched' ? { header: 'Dispatched', render: r => r.dispatchedAt ? fmtIst(r.dispatchedAt) : mutedDash }
+    : activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? fmtIst(r.receivedAt)   : mutedDash }
+    : activePreset === 'rejected'   ? { header: 'Reason',     render: r => r.rejectionReason ?? mutedDash }
+    : activePreset === 'cancelled'  ? { header: 'Cancelled',  render: r => r.cancelledAt  ? fmtIst(r.cancelledAt)  : mutedDash }
+    : null
+  // Total column count — used by the empty-state row and the expansion-row
+  // colSpan so the layout stays correct whichever chip is active.
+  const totalCols = extraCol ? 6 : 5
 
   // Shop's single live draft (or null). Resume Draft strip renders only when
   // this resolves to non-null.
@@ -116,31 +148,59 @@ export default function ShopRequests() {
         </Paper>
       )}
 
-      <Box sx={{ display: 'flex', gap: 2, mb: 2, flexWrap: 'wrap' }}>
+      {/* Quick-filter chips + search — mirrors the admin / inventory list
+          pages so the shop user sees the same affordance everywhere. */}
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+        {PRESETS.map(p => {
+          const active = activePreset === p.key
+          return (
+            <Button
+              key={p.key}
+              onClick={() => { setActivePreset(p.key); setPage(0) }}
+              disableElevation
+              variant={active ? 'contained' : 'outlined'}
+              size="small"
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                borderRadius: 999,
+                px: 2,
+                py: 0.5,
+                minHeight: 32,
+                ...(active
+                  ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                  : {
+                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      borderColor: 'rgba(31,31,31,0.25)',
+                      '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
+                    }),
+              }}
+            >
+              {p.label}
+            </Button>
+          )
+        })}
+
+        <Box sx={{ flex: 1 }} />
+
         <TextField
-          select
           size="small"
-          label="Status"
-          value={filters.status ?? ''}
-          onChange={e => {
-            setFilters(f => ({ ...f, status: (e.target.value || undefined) as RequestStatus | undefined }))
-            setPage(0)
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(0) }}
+          placeholder="Search by code"
+          sx={{
+            minWidth: 220,
+            '& .MuiOutlinedInput-root': { bgcolor: 'transparent' },
           }}
-          sx={{ minWidth: 180 }}
-        >
-          <MenuItem value="">All statuses</MenuItem>
-          {STATUS_OPTIONS.map(s => <MenuItem key={s} value={s}>{s}</MenuItem>)}
-        </TextField>
-        <TextField
-          size="small"
-          label="Search by code"
-          value={filters.search ?? ''}
-          onChange={e => {
-            setFilters(f => ({ ...f, search: e.target.value || undefined }))
-            setPage(0)
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search className="w-4 h-4 text-[#1F1F1F]" />
+                </InputAdornment>
+              ),
+            },
           }}
-          placeholder="e.g. REQ0001"
-          sx={{ minWidth: 200 }}
         />
       </Box>
 
@@ -152,6 +212,11 @@ export default function ShopRequests() {
                 <TableCell sx={{ width: 48 }} />
                 <TableCell sx={HEAD_SX}>Code</TableCell>
                 <TableCell sx={HEAD_SX}>Submitted</TableCell>
+                {/* Status-specific extra column — only on Approved /
+                    Dispatched chips today, more can be added by extending
+                    the `extraCol` config above. Sits right after Submitted
+                    so the pair reads as a timeline. */}
+                {extraCol && <TableCell sx={HEAD_SX}>{extraCol.header}</TableCell>}
                 <TableCell sx={{ ...HEAD_SX, width: 160 }} align="right">Total</TableCell>
                 <TableCell sx={{ ...HEAD_SX, width: 140 }} align="center">Status</TableCell>
               </TableRow>
@@ -159,7 +224,7 @@ export default function ShopRequests() {
             <TableBody>
               {rows.length === 0 && !list.isLoading && (
                 <TableRow>
-                  <TableCell colSpan={5} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>
+                  <TableCell colSpan={totalCols} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>
                     No requests yet.
                   </TableCell>
                 </TableRow>
@@ -190,6 +255,9 @@ export default function ShopRequests() {
                       </TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>{row.code}</TableCell>
                       <TableCell>{fmtIst(row.submittedAt)}</TableCell>
+                      {extraCol && (
+                        <TableCell>{extraCol.render(row)}</TableCell>
+                      )}
                       <TableCell align="right">
                         <TotalCell row={row} />
                       </TableCell>
@@ -204,7 +272,7 @@ export default function ShopRequests() {
                     </TableRow>
 
                     <TableRow>
-                      <TableCell colSpan={5} sx={{ p: 0, border: 0 }}>
+                      <TableCell colSpan={totalCols} sx={{ p: 0, border: 0 }}>
                         <Collapse in={isOpen} timeout="auto" unmountOnExit>
                           <ExpansionPanel
                             row={row}
