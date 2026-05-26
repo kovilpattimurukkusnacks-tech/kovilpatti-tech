@@ -21,6 +21,7 @@ import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
 import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
+import { formatIstTime } from '../../utils/formatDate'
 
 type CartLine = { product: ProductDto; qty: number }
 
@@ -627,7 +628,7 @@ export default function ShopRequestNew() {
             {draftEnabled && (draftSavedAt || draftQuery.data) && (
               <Box sx={{ fontSize: 11, color: '#1F1F1F99', mt: 0.25 }}>
                 Draft saved {draftSavedAt
-                  ? `at ${draftSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+                  ? `at ${formatIstTime(draftSavedAt)}`
                   : ''}
               </Box>
             )}

@@ -9,6 +9,7 @@ import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime } from '../../utils/formatDate'
 import type { StockRequestDto, RequestStatus, StockRequestListFilters } from '../../api/stock-requests/types'
 
 // Quick-filter chip presets — same row of chips the admin / inventory pages
@@ -37,9 +38,6 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Cancelled:  'default',
 }
 
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'
-
 export default function ShopRequests() {
   const navigate = useNavigate()
   // Default to All — shop user usually wants the full list of their requests.
@@ -66,11 +64,11 @@ export default function ShopRequests() {
   // ("All", "Pending") so the table stays compact.
   const mutedDash = <span className="text-[#1F1F1F]/40">—</span>
   const extraCol: { header: string; render: (r: StockRequestDto) => React.ReactNode } | null =
-      activePreset === 'approved'   ? { header: 'Approved',   render: r => r.approvedAt   ? fmtIst(r.approvedAt)   : mutedDash }
-    : activePreset === 'dispatched' ? { header: 'Dispatched', render: r => r.dispatchedAt ? fmtIst(r.dispatchedAt) : mutedDash }
-    : activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? fmtIst(r.receivedAt)   : mutedDash }
+      activePreset === 'approved'   ? { header: 'Approved',   render: r => r.approvedAt   ? formatIstDateTime(r.approvedAt)   : mutedDash }
+    : activePreset === 'dispatched' ? { header: 'Dispatched', render: r => r.dispatchedAt ? formatIstDateTime(r.dispatchedAt) : mutedDash }
+    : activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? formatIstDateTime(r.receivedAt)   : mutedDash }
     : activePreset === 'rejected'   ? { header: 'Reason',     render: r => r.rejectionReason ?? mutedDash }
-    : activePreset === 'cancelled'  ? { header: 'Cancelled',  render: r => r.cancelledAt  ? fmtIst(r.cancelledAt)  : mutedDash }
+    : activePreset === 'cancelled'  ? { header: 'Cancelled',  render: r => r.cancelledAt  ? formatIstDateTime(r.cancelledAt)  : mutedDash }
     : null
   // Total column count — used by the empty-state row and the expansion-row
   // colSpan so the layout stays correct whichever chip is active.
@@ -134,7 +132,7 @@ export default function ShopRequests() {
             <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
               {draftQuery.data.totalItems} {draftQuery.data.totalItems === 1 ? 'product' : 'products'}
               · {draftQuery.data.totalQty} {draftQuery.data.totalQty === 1 ? 'unit' : 'units'}
-              · Last saved {fmtIst(draftQuery.data.updatedAt)}
+              · Last saved {formatIstDateTime(draftQuery.data.updatedAt)}
             </Box>
           </Box>
           <Button
@@ -254,7 +252,7 @@ export default function ShopRequests() {
                         </IconButton>
                       </TableCell>
                       <TableCell sx={{ fontWeight: 600 }}>{row.code}</TableCell>
-                      <TableCell>{fmtIst(row.submittedAt)}</TableCell>
+                      <TableCell>{formatIstDateTime(row.submittedAt)}</TableCell>
                       {extraCol && (
                         <TableCell>{extraCol.render(row)}</TableCell>
                       )}
@@ -369,7 +367,7 @@ function ExpansionPanel({ row, onViewDetail }: { row: StockRequestDto; onViewDet
             chip={<DispatchedCell qty={row.totalDispatchedQty} requested={row.totalQty} />}
           />
           <Row label="Dispatched by"   value={row.dispatchedByName ?? '—'} />
-          <Row label="Received time"   value={row.receivedAt ? fmtIst(row.receivedAt) : '—'} />
+          <Row label="Received time"   value={row.receivedAt ? formatIstDateTime(row.receivedAt) : '—'} />
         </Box>
 
         {/* Right — amounts */}

@@ -11,6 +11,7 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime, formatIstTime } from '../../utils/formatDate'
 import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
@@ -29,12 +30,6 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
 }
-
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '—'
-
-const fmtShort = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' }) : ''
 
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -580,7 +575,7 @@ export default function InventoryRequestDetail() {
               {(draftSavedAt || hasInitialDraft) && (
                 <Box sx={{ fontSize: 11, color: '#1F1F1F99', mt: 0.25 }}>
                   Draft {draftSavedAt
-                    ? `saved at ${draftSavedAt.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}`
+                    ? `saved at ${formatIstTime(draftSavedAt)}`
                     : 'restored from your last visit'}
                 </Box>
               )}
@@ -758,7 +753,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
 
 // One step in the horizontal mini-timeline.
 function PillStep({ label, at, by, done }: { label: string; at: string | null | undefined; by?: string | null; done: boolean }) {
-  const tooltip = `${fmtIst(at)}${done && by ? ` · by ${by}` : ''}`
+  const tooltip = `${formatIstDateTime(at)}${done && by ? ` · by ${by}` : ''}`
   return (
     <Chip
       title={tooltip}
@@ -766,7 +761,7 @@ function PillStep({ label, at, by, done }: { label: string; at: string | null | 
       label={
         <Box sx={{ display: 'flex', flexDirection: 'column', lineHeight: 1.1 }}>
           <Box sx={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, opacity: done ? 1 : 0.6 }}>{label}</Box>
-          <Box sx={{ fontSize: 11, opacity: done ? 0.8 : 0.4 }}>{done ? fmtShort(at) : '—'}</Box>
+          <Box sx={{ fontSize: 11, opacity: done ? 0.8 : 0.4 }}>{done ? formatIstDateTime(at, '') : '—'}</Box>
           {done && by && (
             <Box sx={{ fontSize: 10, opacity: 0.7, fontStyle: 'italic' }}>by {by}</Box>
           )}

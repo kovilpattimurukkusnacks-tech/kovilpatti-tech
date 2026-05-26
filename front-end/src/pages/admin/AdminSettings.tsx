@@ -13,6 +13,7 @@ import PageHeader from '../../components/PageHeader'
 import { useSettings, useUpdateSetting } from '../../hooks/useSettings'
 import type { AppSettingDto } from '../../api/settings/types'
 import { ValidationError } from '../../api/errors'
+import { formatIstDateTime } from '../../utils/formatDate'
 
 // Parse our stored "HH:mm" value into a Dayjs instance the TimePicker can use.
 // Returns null for empty/malformed input so the picker shows a clean empty state.
@@ -69,9 +70,6 @@ function humanizeKey(key: string): string {
     .map(w => w.charAt(0).toUpperCase() + w.slice(1))
     .join(' ')
 }
-
-const fmtIst = (iso: string) =>
-  new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' })
 
 // "09:00" → "09:00 AM", "17:30" → "05:30 PM". Passes through unchanged if the
 // value isn't a well-formed 24h HH:MM. Used for the value chip on time-typed keys.
@@ -148,7 +146,7 @@ export default function AdminSettings() {
                       />
                     )}
                   </TableCell>
-                  <TableCell sx={{ fontSize: 12, color: '#1F1F1F99' }}>{fmtIst(s.updatedAt)}</TableCell>
+                  <TableCell sx={{ fontSize: 12, color: '#1F1F1F99' }}>{formatIstDateTime(s.updatedAt)}</TableCell>
                   <TableCell align="right">
                     <IconButton size="small" onClick={() => setEditing(s)} aria-label="Edit">
                       <Edit2 className="w-4 h-4" />

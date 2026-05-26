@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useCumulativePending } from '../../hooks/useStockRequests'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
 
 /**
@@ -68,7 +69,7 @@ export default function PrintCumulative() {
           <div className="print-meta">All Pending requests, grouped by category</div>
         </div>
         <div className="print-meta-right">
-          <div><span className="muted">Generated:</span> {new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
+          <div><span className="muted">Generated:</span> {formatIstDateTime(new Date())}</div>
           {totalRequests > 0 && (
             <div><span className="muted">Sourced from:</span> up to {totalRequests} request{totalRequests === 1 ? '' : 's'}</div>
           )}
@@ -173,7 +174,7 @@ export default function PrintCumulative() {
       )}
 
       <footer className="print-footer">
-        <div>Printed {new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
+        <div>Printed {formatIstDateTime(new Date())}</div>
         <div className="print-only">
           <button onClick={() => window.print()} className="print-trigger">Print</button>
         </div>

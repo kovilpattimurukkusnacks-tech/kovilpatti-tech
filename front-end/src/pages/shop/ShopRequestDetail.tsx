@@ -10,6 +10,7 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useReceiveStockRequest,
 } from '../../hooks/useStockRequests'
@@ -28,10 +29,6 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Received:   'success',
   Cancelled:  'default',
 }
-
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '—'
-
 
 export default function ShopRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -167,11 +164,11 @@ export default function ShopRequestDetail() {
       <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF' }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2 }}>
           {/* Approval step removed — Submitted → Dispatched → Received. */}
-          <TimelineItem label="Submitted"  value={fmtIst(request.submittedAt)}  by={request.submittedByName}  done />
-          <TimelineItem label="Dispatched" value={fmtIst(request.dispatchedAt)} by={request.dispatchedByName} done={!!request.dispatchedAt} />
+          <TimelineItem label="Submitted"  value={formatIstDateTime(request.submittedAt)}  by={request.submittedByName}  done />
+          <TimelineItem label="Dispatched" value={formatIstDateTime(request.dispatchedAt)} by={request.dispatchedByName} done={!!request.dispatchedAt} />
           <TimelineItem
             label={request.status === 'Cancelled' ? 'Cancelled' : request.status === 'Rejected' ? 'Rejected' : 'Received'}
-            value={fmtIst(
+            value={formatIstDateTime(
               request.status === 'Cancelled' ? request.cancelledAt :
               request.status === 'Rejected'  ? null :
               request.receivedAt

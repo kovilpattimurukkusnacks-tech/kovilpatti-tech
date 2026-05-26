@@ -7,6 +7,7 @@ import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
@@ -78,7 +79,9 @@ export default function AdminRequests() {
     },
     {
       field: 'submittedAt', headerName: 'Submitted Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
-      renderCell: ({ value }) => value ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—',
+      renderCell: ({ value }) => value
+        ? formatIstDateTime(value as string)
+        : <span className="text-[#1F1F1F]/40">—</span>,
     },
   ]
 
@@ -90,7 +93,7 @@ export default function AdminRequests() {
     cols.push({
       field: 'approvedAt', headerName: 'Approved Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
@@ -120,7 +123,7 @@ export default function AdminRequests() {
     cols.push({
       field: 'receivedAt', headerName: 'Received Time', flex: 1, minWidth: 170, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }

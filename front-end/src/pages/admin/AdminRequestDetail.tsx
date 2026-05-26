@@ -10,6 +10,7 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime } from '../../utils/formatDate'
 import { useStockRequest, useCancelStockRequest } from '../../hooks/useStockRequests'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
@@ -23,9 +24,6 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
 }
-
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '—'
 
 export default function AdminRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -117,11 +115,11 @@ export default function AdminRequestDetail() {
             Dispatched → Received. (Legacy approvedAt/approvedByName values on
             historical rows remain in the DTO but aren't surfaced anymore.) */}
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2 }}>
-          <TimelineItem label="Submitted"  value={fmtIst(request.submittedAt)}  by={request.submittedByName}  done />
-          <TimelineItem label="Dispatched" value={fmtIst(request.dispatchedAt)} by={request.dispatchedByName} done={!!request.dispatchedAt} />
+          <TimelineItem label="Submitted"  value={formatIstDateTime(request.submittedAt)}  by={request.submittedByName}  done />
+          <TimelineItem label="Dispatched" value={formatIstDateTime(request.dispatchedAt)} by={request.dispatchedByName} done={!!request.dispatchedAt} />
           <TimelineItem
             label={request.status === 'Cancelled' ? 'Cancelled' : request.status === 'Rejected' ? 'Rejected' : 'Received'}
-            value={fmtIst(
+            value={formatIstDateTime(
               request.status === 'Cancelled' ? request.cancelledAt :
               request.status === 'Rejected'  ? null :
               request.receivedAt

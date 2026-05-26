@@ -4,10 +4,8 @@ import { useStockRequest } from '../../hooks/useStockRequests'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
-
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata', dateStyle: 'medium', timeStyle: 'short' }) : '—'
 
 /**
  * Single-request picklist. Standalone route, no sidebar/header chrome,
@@ -74,9 +72,9 @@ export default function PrintRequestPicklist() {
           </div>
         </div>
         <div className="print-meta-right">
-          <div><span className="muted">Requested:</span> {fmtIst(request.submittedAt)}</div>
+          <div><span className="muted">Requested:</span> {formatIstDateTime(request.submittedAt)}</div>
           {request.dispatchedAt && (
-            <div><span className="muted">Dispatched:</span> {fmtIst(request.dispatchedAt)}</div>
+            <div><span className="muted">Dispatched:</span> {formatIstDateTime(request.dispatchedAt)}</div>
           )}
         </div>
       </header>
@@ -228,7 +226,7 @@ export default function PrintRequestPicklist() {
       )}
 
       <footer className="print-footer">
-        <div>Printed {new Date().toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' })}</div>
+        <div>Printed {formatIstDateTime(new Date())}</div>
         <div className="print-only">
           <button onClick={() => window.print()} className="print-trigger">Print</button>
         </div>

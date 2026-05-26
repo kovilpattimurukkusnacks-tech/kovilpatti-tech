@@ -10,11 +10,9 @@ import {
   useInventoryDispatchDrafts,
 } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
+import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
-
-const fmtIst = (iso: string | null | undefined) =>
-  iso ? new Date(iso).toLocaleString('en-IN', { timeZone: 'Asia/Kolkata' }) : '—'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
   // Inventory list excludes Draft server-side. Mapping kept for type-safety.
@@ -81,32 +79,20 @@ export default function InventoryRequests() {
   const total = list.data?.total ?? 0
 
   const columns = useMemo<GridColDef<StockRequestDto>[]>(() => {
-    // toLocaleString option presets — picked once per render to avoid
-    // re-allocating identical objects on every cell render. The chips that
-    // surface a lifecycle timestamp (Approved / In Transit / Delivered) all
-    // show date + time; the others stay date-only.
-    const DATE_FMT     = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric' } as const
-    const DATETIME_FMT = { timeZone: 'Asia/Kolkata', day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' } as const
-    const showDateTime =
-      activePreset === 'approved' ||
-      activePreset === 'dispatched' ||
-      activePreset === 'received'
-
+    // Every chip shows date + time so the user can correlate timestamps
+    // (requested at vs approved/dispatched/received at) at a glance.
     const codeCol: GridColDef<StockRequestDto> = {
       field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false,
     }
     const requestedDateCol: GridColDef<StockRequestDto> = {
-      // Most useful triage signal — date the request landed in the queue.
-      // Default is date-only to stay compact; on the Approved / In Transit /
-      // Delivered chips we show date + time (and widen the column) so the
-      // user can correlate "requested at" vs "approved/dispatched/received
-      // at" timestamps at a glance.
+      // Most useful triage signal — when the request landed in the queue.
+      // Date + time on every chip including Needs Action and All, so the
+      // godown user always sees how fresh the request is.
       field: 'submittedAt', headerName: 'Requested Date',
-      width: showDateTime ? 190 : 150,
+      width: 190,
       sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN',
-            showDateTime ? DATETIME_FMT : DATE_FMT)
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     }
 
@@ -122,7 +108,7 @@ export default function InventoryRequests() {
     cols.push({
       field: 'approvedAt', headerName: 'Approved Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
@@ -130,7 +116,7 @@ export default function InventoryRequests() {
     cols.push({
       field: 'dispatchedAt', headerName: 'Dispatched Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
@@ -138,7 +124,7 @@ export default function InventoryRequests() {
     cols.push({
       field: 'receivedAt', headerName: 'Received Date', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
-        ? new Date(value as string).toLocaleString('en-IN', DATETIME_FMT)
+        ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
     })
   }
@@ -261,7 +247,7 @@ export default function InventoryRequests() {
                   {d.shopCode} · {d.shopName}
                   · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
                   · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
-                  · Last saved {fmtIst(d.updatedAt)}
+                  · Last saved {formatIstDateTime(d.updatedAt)}
                 </Box>
               </Box>
               <Button
