@@ -32,6 +32,11 @@ public static class DependencyInjection
         services.AddHttpContextAccessor();
         services.AddScoped<ICurrentUser, CurrentUserService>();
 
+        // In-memory cache — backs the per-IP failed-login counter in AuthService.
+        // Single-instance only (no Redis); if we scale out, swap for a distributed
+        // cache and the AuthService logic stays the same.
+        services.AddMemoryCache();
+
         // Business services
         services.AddScoped<IAuthService, AuthService>();
         services.AddScoped<IProductService, ProductService>();
@@ -47,6 +52,12 @@ public static class DependencyInjection
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");
+
+        // HS256 requires the signing key to be at least 256 bits (32 bytes).
+        // Fail-fast on short keys instead of accepting a weak token signature.
+        if (Encoding.UTF8.GetByteCount(jwt.SigningKey) < 32)
+            throw new InvalidOperationException(
+                "Jwt:SigningKey must be at least 32 bytes (256 bits) for HS256.");
 
         services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             .AddJwtBearer(opts =>

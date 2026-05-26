@@ -9,6 +9,8 @@ namespace KovilpattiSnacks.API.Controllers;
 [Route("api/auth")]
 public class AuthController(IAuthService auth) : ControllerBase
 {
+    // Rate limiting lives in AuthService — it counts only failed attempts
+    // (not successes) so legit users never burn their own quota.
     [AllowAnonymous]
     [HttpPost("login")]
     public async Task<ActionResult<LoginResponse>> Login([FromBody] LoginRequest request, CancellationToken ct)

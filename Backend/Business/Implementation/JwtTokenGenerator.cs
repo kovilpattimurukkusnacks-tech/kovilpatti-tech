@@ -1,6 +1,7 @@
 using System.IdentityModel.Tokens.Jwt;
 using System.Security.Claims;
 using System.Text;
+using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.Interface;
 using KovilpattiSnacks.Business.Settings;
 using KovilpattiSnacks.Repository.Entities;
@@ -15,23 +16,28 @@ public class JwtTokenGenerator(IOptions<JwtSettings> options) : IJwtTokenGenerat
 
     public (string Token, DateTimeOffset ExpiresAt) Generate(User user)
     {
-        var expiresAt = DateTimeOffset.UtcNow.AddMinutes(_settings.ExpiryMinutes);
+        var issuedAt  = DateTimeOffset.UtcNow;
+        var expiresAt = issuedAt.AddMinutes(_settings.ExpiryMinutes);
 
         var claims = new List<Claim>
         {
             new(JwtRegisteredClaimNames.Sub, user.Id.ToString()),
             new(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString()),
+            // iat is required for any future "invalidate tokens older than X"
+            // policy (e.g., on password change). Without it, there's no anchor.
+            new(JwtRegisteredClaimNames.Iat, issuedAt.ToUnixTimeSeconds().ToString(),
+                ClaimValueTypes.Integer64),
             new(ClaimTypes.NameIdentifier, user.Id.ToString()),
             new(ClaimTypes.Name, user.Username),
             new(ClaimTypes.Role, user.Role.ToString()),
-            new("fullName", user.FullName),
+            new(CustomClaims.FullName, user.FullName),
         };
 
         if (user.ShopId.HasValue)
-            claims.Add(new Claim("shopId", user.ShopId.Value.ToString()));
+            claims.Add(new Claim(CustomClaims.ShopId, user.ShopId.Value.ToString()));
 
         if (user.InventoryId.HasValue)
-            claims.Add(new Claim("inventoryId", user.InventoryId.Value.ToString()));
+            claims.Add(new Claim(CustomClaims.InventoryId, user.InventoryId.Value.ToString()));
 
         var key = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(_settings.SigningKey));
         var creds = new SigningCredentials(key, SecurityAlgorithms.HmacSha256);

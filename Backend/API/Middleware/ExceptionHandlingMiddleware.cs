@@ -38,6 +38,11 @@ public class ExceptionHandlingMiddleware(RequestDelegate next, ILogger<Exception
             ctx.Response.StatusCode = (int)HttpStatusCode.Forbidden;
             await WriteJsonAsync(ctx, new { error = ex.Message });
         }
+        catch (TooManyRequestsException ex)
+        {
+            ctx.Response.StatusCode = (int)HttpStatusCode.TooManyRequests;
+            await WriteJsonAsync(ctx, new { error = ex.Message });
+        }
         catch (Exception ex)
         {
             logger.LogError(ex, "Unhandled exception");

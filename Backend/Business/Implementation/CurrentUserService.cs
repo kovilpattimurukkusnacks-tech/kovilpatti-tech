@@ -1,4 +1,5 @@
 using System.Security.Claims;
+using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Http;
 
@@ -6,12 +7,13 @@ namespace KovilpattiSnacks.Business.Implementation;
 
 public class CurrentUserService(IHttpContextAccessor accessor) : ICurrentUser
 {
+    // JWT bearer middleware auto-maps the "sub" claim to ClaimTypes.NameIdentifier
+    // (MapInboundClaims = true by default), so reading the mapped key is enough.
     public Guid? UserId
     {
         get
         {
-            var sub = accessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier)
-                   ?? accessor.HttpContext?.User.FindFirstValue("sub");
+            var sub = accessor.HttpContext?.User.FindFirstValue(ClaimTypes.NameIdentifier);
             return Guid.TryParse(sub, out var id) ? id : null;
         }
     }
@@ -24,7 +26,7 @@ public class CurrentUserService(IHttpContextAccessor accessor) : ICurrentUser
     {
         get
         {
-            var raw = accessor.HttpContext?.User.FindFirstValue("shopId");
+            var raw = accessor.HttpContext?.User.FindFirstValue(CustomClaims.ShopId);
             return Guid.TryParse(raw, out var id) ? id : null;
         }
     }
@@ -33,7 +35,7 @@ public class CurrentUserService(IHttpContextAccessor accessor) : ICurrentUser
     {
         get
         {
-            var raw = accessor.HttpContext?.User.FindFirstValue("inventoryId");
+            var raw = accessor.HttpContext?.User.FindFirstValue(CustomClaims.InventoryId);
             return Guid.TryParse(raw, out var id) ? id : null;
         }
     }
