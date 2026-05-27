@@ -119,6 +119,9 @@ export type StockRequestListFilters = {
   search?: string
   page?: number
   pageSize?: number
+  // IST calendar dates (YYYY-MM-DD). Filter on submitted_at. Inclusive of both ends.
+  fromDate?: string
+  toDate?: string
 }
 
 export type PagedResult<T> = {

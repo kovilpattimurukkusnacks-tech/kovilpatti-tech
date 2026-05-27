@@ -11,6 +11,8 @@ import {
 } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
+import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
+import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../components/FilterBar'
 import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
@@ -48,9 +50,20 @@ export default function InventoryRequests() {
   // Optional second-level drill-down — clicking a shop chip toggles it.
   const [shopId, setShopId] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState<string>('')
+  // Date range filter on submitted_at — defaults to today (both ends).
+  const [fromDate, setFromDate] = useState<string>(istToday())
+  const [toDate, setToDate]     = useState<string>(istToday())
+  // Filter controls collapsed by default; active filters shown as pills.
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
 
   const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
+
+  const handleDateChange = (from: string, to: string) => {
+    setFromDate(from)
+    setToDate(to)
+    setPaginationModel(m => ({ ...m, page: 0 }))
+  }
 
   const list = useIncomingStockRequests({
     status: currentStatus,
@@ -58,6 +71,8 @@ export default function InventoryRequests() {
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
     pageSize: paginationModel.pageSize,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
   })
 
   // Inventory user's own scope is enforced server-side, so no inventoryId
@@ -68,7 +83,11 @@ export default function InventoryRequests() {
 
   // Per-shop chips for the active status filter. BE forces the inventory
   // scope to this user's godown — so we only see shops served by it.
-  const shopCounts = useRequestCountByShop({ status: currentStatus })
+  const shopCounts = useRequestCountByShop({
+    status: currentStatus,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
+  })
 
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
@@ -191,6 +210,32 @@ export default function InventoryRequests() {
   return cols
   }, [activePreset])
 
+  // Active-filter pills shown when the panel is collapsed. Each ✕ clears that
+  // one filter (date → all dates; status → All; shop → none; search → empty).
+  const activePills: FilterPill[] = []
+  // Date pill has no ✕ — the date filter is always present (defaults to today)
+  // and is changed via the expanded panel, not cleared from the summary.
+  if (fromDate || toDate)
+    activePills.push({ key: 'date', label: dateRangeLabel(fromDate, toDate) })
+  if (currentStatus !== undefined)
+    activePills.push({
+      key: 'status',
+      label: PRESETS.find(p => p.key === activePreset)?.label ?? activePreset,
+      onRemove: () => { setActivePreset('all'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
+    })
+  if (shopId)
+    activePills.push({
+      key: 'shop',
+      label: shopCounts.data?.find(s => s.shopId === shopId)?.shopName ?? 'Shop',
+      onRemove: () => { setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
+    })
+  if (search.trim())
+    activePills.push({
+      key: 'search',
+      label: `“${search.trim()}”`,
+      onRemove: () => { setSearch(''); setPaginationModel(m => ({ ...m, page: 0 })) },
+    })
+
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
     : null
@@ -263,104 +308,108 @@ export default function InventoryRequests() {
         </Box>
       )}
 
-      {/* Quick-filter chips + search */}
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
-        {PRESETS.map(p => {
-          const active = activePreset === p.key
-          return (
-            <Button
-              key={p.key}
-              onClick={() => {
-                setActivePreset(p.key)
-                // Drop the shop drill-down when the status changes — a shop
-                // that has rows in one status may have none in the next.
-                setShopId(undefined)
-                setPaginationModel(m => ({ ...m, page: 0 }))
-              }}
-              disableElevation
-              variant={active ? 'contained' : 'outlined'}
+      <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
+      <FilterBar>
+        {/* Date row — search box sits at the right of this row. */}
+        <FilterRow
+          label="Date"
+          right={
+            <TextField
               size="small"
-              sx={{
-                textTransform: 'none',
-                fontWeight: 700,
-                borderRadius: 999,
-                px: 2,
-                py: 0.5,
-                minHeight: 32,
-                ...(active
-                  ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
-                  : {
-                      bgcolor: '#FFFFFF', color: '#1F1F1F',
-                      borderColor: 'rgba(31,31,31,0.25)',
-                      '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
-                    }),
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
+              placeholder="Search by code"
+              sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search className="w-4 h-4 text-[#1F1F1F]" />
+                    </InputAdornment>
+                  ),
+                },
               }}
-            >
-              {p.label}
-            </Button>
-          )
-        })}
+            />
+          }
+        >
+          <DateRangeFilter from={fromDate} to={toDate} onChange={handleDateChange} hideLabel />
+        </FilterRow>
 
-        <Box sx={{ flex: 1 }} />
-
-        <TextField
-          size="small"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
-          placeholder="Search by code"
-          sx={{
-            minWidth: 220,
-            '& .MuiOutlinedInput-root': { bgcolor: 'transparent' },
-          }}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search className="w-4 h-4 text-[#1F1F1F]" />
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-      </Box>
-
-      {/* Per-shop drill-down chips for the active status filter. Server
-          prunes zero-count shops; we hide the row entirely when nothing
-          matches. Click a chip to filter; click again to clear. */}
-      {(shopCounts.data?.length ?? 0) > 0 && (
-        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-          <Box sx={{ fontSize: 12, fontWeight: 600, color: '#1F1F1F99', mr: 0.5 }}>
-            By shop:
-          </Box>
-          {shopCounts.data!.map(s => {
-            const active = shopId === s.shopId
+        {/* Status chips */}
+        <FilterRow label="Status">
+          {PRESETS.map(p => {
+            const active = activePreset === p.key
             return (
-              <Chip
-                key={s.shopId}
+              <Button
+                key={p.key}
                 onClick={() => {
-                  setShopId(prev => prev === s.shopId ? undefined : s.shopId)
+                  setActivePreset(p.key)
+                  // Drop the shop drill-down when the status changes — a shop
+                  // that has rows in one status may have none in the next.
+                  setShopId(undefined)
                   setPaginationModel(m => ({ ...m, page: 0 }))
                 }}
-                label={`${s.shopName} (${s.requestCount})`}
+                disableElevation
+                variant={active ? 'contained' : 'outlined'}
                 size="small"
-                variant={active ? 'filled' : 'outlined'}
                 sx={{
-                  cursor: 'pointer',
+                  textTransform: 'none',
+                  fontWeight: 700,
                   borderRadius: 999,
-                  fontWeight: 600,
+                  px: 2,
+                  py: 0.5,
+                  minHeight: 32,
                   ...(active
                     ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
                     : {
                         bgcolor: '#FFFFFF', color: '#1F1F1F',
-                        borderColor: 'rgba(31,31,31,0.2)',
-                        '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
+                        borderColor: 'rgba(31,31,31,0.25)',
+                        '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                       }),
                 }}
-              />
+              >
+                {p.label}
+              </Button>
             )
           })}
-        </Box>
-      )}
+        </FilterRow>
+
+        {/* Per-shop drill-down chips for the active status filter. Server
+            prunes zero-count shops; row hidden when nothing matches. Click a
+            chip to filter; click again to clear. */}
+        {(shopCounts.data?.length ?? 0) > 0 && (
+          <FilterRow label="By shop">
+            {shopCounts.data!.map(s => {
+              const active = shopId === s.shopId
+              return (
+                <Chip
+                  key={s.shopId}
+                  onClick={() => {
+                    setShopId(prev => prev === s.shopId ? undefined : s.shopId)
+                    setPaginationModel(m => ({ ...m, page: 0 }))
+                  }}
+                  label={`${s.shopName} (${s.requestCount})`}
+                  size="small"
+                  variant={active ? 'filled' : 'outlined'}
+                  sx={{
+                    cursor: 'pointer',
+                    borderRadius: 999,
+                    fontWeight: 600,
+                    ...(active
+                      ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                      : {
+                          bgcolor: '#FFFFFF', color: '#1F1F1F',
+                          borderColor: 'rgba(31,31,31,0.2)',
+                          '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
+                        }),
+                  }}
+                />
+              )
+            })}
+          </FilterRow>
+        )}
+      </FilterBar>
+      </FilterPanel>
 
       <Paper className="products-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <DataGrid

@@ -7,7 +7,9 @@ public interface IStockRequestService
 {
     Task<PagedResult<StockRequestDto>> ListAsync(
         Guid? shopId, Guid? inventoryId, string? status, string? search,
-        int page, int pageSize, CancellationToken ct = default);
+        int page, int pageSize,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default);
 
     Task<StockRequestDto> GetAsync(Guid id, CancellationToken ct = default);
 
@@ -21,7 +23,9 @@ public interface IStockRequestService
     /// by the list page's shop quick-filter chips. Inventory role scoped to
     /// own inventory; admin may pass inventoryId or NULL; shop user blocked.
     Task<IReadOnlyList<ShopRequestCountDto>> GetCountByShopAsync(
-        string? status, Guid? inventoryId, CancellationToken ct = default);
+        string? status, Guid? inventoryId,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default);
 
     Task<StockRequestDto> CreateAsync(CreateStockRequestRequest request, CancellationToken ct = default);
     Task<StockRequestDto> UpdateAsync(Guid id, UpdateStockRequestRequest request, CancellationToken ct = default);

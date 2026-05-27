@@ -10,6 +10,8 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
+import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
+import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../components/FilterBar'
 import type { StockRequestDto, RequestStatus, StockRequestListFilters } from '../../api/stock-requests/types'
 
 // Quick-filter chip presets — same row of chips the admin / inventory pages
@@ -43,6 +45,11 @@ export default function ShopRequests() {
   // Default to All — shop user usually wants the full list of their requests.
   const [activePreset, setActivePreset] = useState<string>('all')
   const [search, setSearch] = useState<string>('')
+  // Date range filter on submitted_at — defaults to today (both ends).
+  const [fromDate, setFromDate] = useState<string>(istToday())
+  const [toDate, setToDate]     = useState<string>(istToday())
+  // Filter controls collapsed by default; active filters shown as pills.
+  const [filtersOpen, setFiltersOpen] = useState(false)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   // Only one row open at a time so the table stays scannable.
@@ -50,11 +57,19 @@ export default function ShopRequests() {
 
   const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
 
+  const handleDateChange = (from: string, to: string) => {
+    setFromDate(from)
+    setToDate(to)
+    setPage(0)
+  }
+
   const list = useMyStockRequests({
     status: currentStatus,
     search: search.trim() || undefined,
     page: page + 1,
     pageSize,
+    fromDate: fromDate || undefined,
+    toDate: toDate || undefined,
   } satisfies StockRequestListFilters)
 
   // Status-specific extra column — surfaces the most relevant per-status
@@ -80,6 +95,26 @@ export default function ShopRequests() {
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
+
+  // Active-filter pills shown when the panel is collapsed. Each ✕ clears that
+  // one filter (date → all dates; status → All; search → empty).
+  const activePills: FilterPill[] = []
+  // Date pill has no ✕ — the date filter is always present (defaults to today)
+  // and is changed via the expanded panel, not cleared from the summary.
+  if (fromDate || toDate)
+    activePills.push({ key: 'date', label: dateRangeLabel(fromDate, toDate) })
+  if (activePreset !== 'all')
+    activePills.push({
+      key: 'status',
+      label: PRESETS.find(p => p.key === activePreset)?.label ?? activePreset,
+      onRemove: () => { setActivePreset('all'); setPage(0) },
+    })
+  if (search.trim())
+    activePills.push({
+      key: 'search',
+      label: `“${search.trim()}”`,
+      onRemove: () => { setSearch(''); setPage(0) },
+    })
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
@@ -146,61 +181,67 @@ export default function ShopRequests() {
         </Paper>
       )}
 
-      {/* Quick-filter chips + search — mirrors the admin / inventory list
-          pages so the shop user sees the same affordance everywhere. */}
-      <Box sx={{ display: 'flex', gap: 1.5, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
-        {PRESETS.map(p => {
-          const active = activePreset === p.key
-          return (
-            <Button
-              key={p.key}
-              onClick={() => { setActivePreset(p.key); setPage(0) }}
-              disableElevation
-              variant={active ? 'contained' : 'outlined'}
+      <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
+      <FilterBar>
+        {/* Date row — search box sits at the right of this row. */}
+        <FilterRow
+          label="Date"
+          right={
+            <TextField
               size="small"
-              sx={{
-                textTransform: 'none',
-                fontWeight: 700,
-                borderRadius: 999,
-                px: 2,
-                py: 0.5,
-                minHeight: 32,
-                ...(active
-                  ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
-                  : {
-                      bgcolor: '#FFFFFF', color: '#1F1F1F',
-                      borderColor: 'rgba(31,31,31,0.25)',
-                      '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
-                    }),
+              value={search}
+              onChange={e => { setSearch(e.target.value); setPage(0) }}
+              placeholder="Search by code"
+              sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
+              slotProps={{
+                input: {
+                  startAdornment: (
+                    <InputAdornment position="start">
+                      <Search className="w-4 h-4 text-[#1F1F1F]" />
+                    </InputAdornment>
+                  ),
+                },
               }}
-            >
-              {p.label}
-            </Button>
-          )
-        })}
+            />
+          }
+        >
+          <DateRangeFilter from={fromDate} to={toDate} onChange={handleDateChange} hideLabel />
+        </FilterRow>
 
-        <Box sx={{ flex: 1 }} />
-
-        <TextField
-          size="small"
-          value={search}
-          onChange={e => { setSearch(e.target.value); setPage(0) }}
-          placeholder="Search by code"
-          sx={{
-            minWidth: 220,
-            '& .MuiOutlinedInput-root': { bgcolor: 'transparent' },
-          }}
-          slotProps={{
-            input: {
-              startAdornment: (
-                <InputAdornment position="start">
-                  <Search className="w-4 h-4 text-[#1F1F1F]" />
-                </InputAdornment>
-              ),
-            },
-          }}
-        />
-      </Box>
+        {/* Status chips */}
+        <FilterRow label="Status">
+          {PRESETS.map(p => {
+            const active = activePreset === p.key
+            return (
+              <Button
+                key={p.key}
+                onClick={() => { setActivePreset(p.key); setPage(0) }}
+                disableElevation
+                variant={active ? 'contained' : 'outlined'}
+                size="small"
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  borderRadius: 999,
+                  px: 2,
+                  py: 0.5,
+                  minHeight: 32,
+                  ...(active
+                    ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                    : {
+                        bgcolor: '#FFFFFF', color: '#1F1F1F',
+                        borderColor: 'rgba(31,31,31,0.25)',
+                        '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
+                      }),
+                }}
+              >
+                {p.label}
+              </Button>
+            )
+          })}
+        </FilterRow>
+      </FilterBar>
+      </FilterPanel>
 
       <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
         <TableContainer>

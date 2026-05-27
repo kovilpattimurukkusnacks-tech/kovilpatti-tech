@@ -10,12 +10,14 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
 {
     public async Task<(List<StockRequest> Rows, long Total)> ListPagedAsync(
         Guid? shopId, Guid? inventoryId, string? status, string? search,
-        int page, int pageSize, CancellationToken ct = default)
+        int page, int pageSize,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
-        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size)";
-        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search)";
+        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size, @p_from_date, @p_to_date)";
+        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_from_date, @p_to_date)";
 
         var args = new
         {
@@ -25,11 +27,13 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             p_search       = search,
             p_page         = page,
             p_page_size    = pageSize,
+            p_from_date    = fromDate,
+            p_to_date      = toDate,
         };
 
         var rows = (await conn.QueryAsync<StockRequest>(new CommandDefinition(sqlList, args, cancellationToken: ct))).ToList();
 
-        var countArgs = new { p_shop_id = shopId, p_inventory_id = inventoryId, p_status = status, p_search = search };
+        var countArgs = new { p_shop_id = shopId, p_inventory_id = inventoryId, p_status = status, p_search = search, p_from_date = fromDate, p_to_date = toDate };
         var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, countArgs, cancellationToken: ct));
 
         return (rows, total);
@@ -54,14 +58,16 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     }
 
     public async Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
-        string? status, Guid? inventoryId, CancellationToken ct = default)
+        string? status, Guid? inventoryId,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         // p_status is text in the SP; the SP itself casts to request_status enum
         // so callers don't have to know the custom PG type name.
-        const string sql = "SELECT * FROM fn_request_count_by_shop(@p_status, @p_inventory_id)";
+        const string sql = "SELECT * FROM fn_request_count_by_shop(@p_status, @p_inventory_id, @p_from_date, @p_to_date)";
         var rows = await conn.QueryAsync<ShopRequestCount>(new CommandDefinition(
-            sql, new { p_status = status, p_inventory_id = inventoryId }, cancellationToken: ct));
+            sql, new { p_status = status, p_inventory_id = inventoryId, p_from_date = fromDate, p_to_date = toDate }, cancellationToken: ct));
         return rows.ToList();
     }
 

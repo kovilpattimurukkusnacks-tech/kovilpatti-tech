@@ -15,25 +15,29 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [HttpGet]
     [Authorize(Roles = "Admin")]
     public async Task<ActionResult<PagedResult<StockRequestDto>>> List(
-        [FromQuery] Guid?   shopId,
-        [FromQuery] Guid?   inventoryId,
-        [FromQuery] string? status,
-        [FromQuery] string? search,
-        [FromQuery] int     page     = 1,
-        [FromQuery] int     pageSize = 10,
+        [FromQuery] Guid?     shopId,
+        [FromQuery] Guid?     inventoryId,
+        [FromQuery] string?   status,
+        [FromQuery] string?   search,
+        [FromQuery] int       page     = 1,
+        [FromQuery] int       pageSize = 10,
+        [FromQuery] DateOnly? fromDate = null,
+        [FromQuery] DateOnly? toDate   = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, ct));
+        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, fromDate, toDate, ct));
 
     // ─── Shop user: own shop's requests ──────────────────────
     [HttpGet("mine")]
     [Authorize(Roles = "ShopUser")]
     public async Task<ActionResult<PagedResult<StockRequestDto>>> ListMine(
-        [FromQuery] string? status,
-        [FromQuery] string? search,
-        [FromQuery] int     page     = 1,
-        [FromQuery] int     pageSize = 10,
+        [FromQuery] string?   status,
+        [FromQuery] string?   search,
+        [FromQuery] int       page     = 1,
+        [FromQuery] int       pageSize = 10,
+        [FromQuery] DateOnly? fromDate = null,
+        [FromQuery] DateOnly? toDate   = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, ct));
+        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, fromDate, toDate, ct));
 
     // ─── Inventory user: requests for their godown ───────────
     // shopId is an optional drill-down filter from the per-shop chip row;
@@ -41,13 +45,15 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [HttpGet("incoming")]
     [Authorize(Roles = "Inventory")]
     public async Task<ActionResult<PagedResult<StockRequestDto>>> ListIncoming(
-        [FromQuery] Guid?   shopId,
-        [FromQuery] string? status,
-        [FromQuery] string? search,
-        [FromQuery] int     page     = 1,
-        [FromQuery] int     pageSize = 10,
+        [FromQuery] Guid?     shopId,
+        [FromQuery] string?   status,
+        [FromQuery] string?   search,
+        [FromQuery] int       page     = 1,
+        [FromQuery] int       pageSize = 10,
+        [FromQuery] DateOnly? fromDate = null,
+        [FromQuery] DateOnly? toDate   = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, ct));
+        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, fromDate, toDate, ct));
 
     // ─── Cumulative pending workload (Inventory + Admin) ─────
     // Aggregate of every Pending request's items, grouped by SKU. Inventory
@@ -67,10 +73,12 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [HttpGet("count-by-shop")]
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<IReadOnlyList<ShopRequestCountDto>>> CountByShop(
-        [FromQuery] string? status,
-        [FromQuery] Guid?   inventoryId,
-        CancellationToken ct)
-        => Ok(await requests.GetCountByShopAsync(status, inventoryId, ct));
+        [FromQuery] string?   status,
+        [FromQuery] Guid?     inventoryId,
+        [FromQuery] DateOnly? fromDate = null,
+        [FromQuery] DateOnly? toDate   = null,
+        CancellationToken ct = default)
+        => Ok(await requests.GetCountByShopAsync(status, inventoryId, fromDate, toDate, ct));
 
     // ─── Detail (any role — service enforces ownership) ──────
     [HttpGet("{id:guid}")]

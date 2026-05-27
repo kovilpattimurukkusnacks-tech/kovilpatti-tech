@@ -14,6 +14,8 @@ function toQuery(filters?: StockRequestListFilters): string {
   if (filters.search)        p.set('search', filters.search)
   if (filters.page != null)     p.set('page', String(filters.page))
   if (filters.pageSize != null) p.set('pageSize', String(filters.pageSize))
+  if (filters.fromDate)         p.set('fromDate', filters.fromDate)
+  if (filters.toDate)           p.set('toDate', filters.toDate)
   const qs = p.toString()
   return qs ? `?${qs}` : ''
 }
@@ -36,10 +38,12 @@ export const stockRequestsApi = {
 
   // Per-shop request count for the active status filter (Inventory + Admin).
   // Drives the shop quick-filter chips below the status presets.
-  countByShop: (args?: { status?: RequestStatus; inventoryId?: string }) => {
+  countByShop: (args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string }) => {
     const p = new URLSearchParams()
     if (args?.status)      p.set('status', args.status)
     if (args?.inventoryId) p.set('inventoryId', args.inventoryId)
+    if (args?.fromDate)    p.set('fromDate', args.fromDate)
+    if (args?.toDate)      p.set('toDate', args.toDate)
     const qs = p.toString()
     return apiClient.get<ShopRequestCount[]>(`/api/stock-requests/count-by-shop${qs ? `?${qs}` : ''}`)
   },

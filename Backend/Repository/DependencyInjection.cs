@@ -26,6 +26,11 @@ public static class DependencyInjection
         // Dapper: snake_case columns → PascalCase properties
         DefaultTypeMap.MatchNamesWithUnderscores = true;
 
+        // Dapper can't bind System.DateOnly out of the box (this version) — teach
+        // it to send DateOnly params as PostgreSQL `date`. Used by the stock
+        // request date-range filter (p_from_date / p_to_date).
+        SqlMapper.AddTypeHandler(new DateOnlyTypeHandler());
+
         services.AddScoped<IUserRepository, UserRepository>();
         services.AddScoped<IProductRepository, ProductRepository>();
         services.AddScoped<ICategoryRepository, CategoryRepository>();

@@ -63,9 +63,11 @@ export function useCumulativePending(inventoryId?: string) {
  *  quick-filter chips on the admin/inventory list pages. Refetches when the
  *  status changes; keeps the prior result visible during the refetch so the
  *  chip row doesn't blink to empty. */
-export function useRequestCountByShop(args?: { status?: RequestStatus; inventoryId?: string }) {
+export function useRequestCountByShop(args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string }) {
   return useQuery({
-    queryKey: ['stock-requests', 'count-by-shop', args?.status ?? 'all', args?.inventoryId ?? 'all'] as const,
+    queryKey: ['stock-requests', 'count-by-shop',
+      args?.status ?? 'all', args?.inventoryId ?? 'all',
+      args?.fromDate ?? '', args?.toDate ?? ''] as const,
     queryFn: () => stockRequestsApi.countByShop(args),
     placeholderData: keepPreviousData,
   })

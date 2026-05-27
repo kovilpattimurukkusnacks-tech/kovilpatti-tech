@@ -6,7 +6,9 @@ public interface IStockRequestRepository
 {
     Task<(List<StockRequest> Rows, long Total)> ListPagedAsync(
         Guid? shopId, Guid? inventoryId, string? status, string? search,
-        int page, int pageSize, CancellationToken ct = default);
+        int page, int pageSize,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default);
 
     Task<StockRequest?> GetAsync(Guid id, CancellationToken ct = default);
 
@@ -14,7 +16,9 @@ public interface IStockRequestRepository
         Guid? inventoryId, CancellationToken ct = default);
 
     Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
-        string? status, Guid? inventoryId, CancellationToken ct = default);
+        string? status, Guid? inventoryId,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default);
 
     Task<string> NextCodeAsync(CancellationToken ct = default);
 

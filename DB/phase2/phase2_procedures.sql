@@ -95,13 +95,22 @@ $$;
 -- Each schema change → must DROP before redefining.
 DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int);
 
+-- Signature changed (added p_from_date / p_to_date) — drop the old 6-param
+-- overload first so re-running on an environment that already has the old
+-- version doesn't leave an ambiguous overload behind.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int);
+
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
   p_inventory_id uuid           DEFAULT NULL,
   p_status       request_status DEFAULT NULL,
   p_search       varchar        DEFAULT NULL,
   p_page         int            DEFAULT 1,
-  p_page_size    int            DEFAULT 10
+  p_page_size    int            DEFAULT 10,
+  -- Date range filters on submitted_at, interpreted as IST calendar days.
+  -- NULL = no bound. p_to_date is inclusive (we add 1 day and use < below).
+  p_from_date    date           DEFAULT NULL,
+  p_to_date      date           DEFAULT NULL
 )
 RETURNS TABLE (
   id                    uuid,
@@ -178,17 +187,28 @@ LANGUAGE sql STABLE AS $$
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
+    -- IST day boundaries: p_from_date's midnight (IST) → UTC instant; upper
+    -- bound is p_to_date + 1 day midnight (IST), exclusive, so the whole
+    -- p_to_date day is included.
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'))
   ORDER BY r.submitted_at DESC
   LIMIT  GREATEST(p_page_size, 1)
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
 $$;
 
 
+-- Signature changed (added p_from_date / p_to_date) — drop the old 4-param
+-- overload first to avoid an ambiguous overload on re-run.
+DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar);
+
 CREATE OR REPLACE FUNCTION fn_request_count(
   p_shop_id      uuid           DEFAULT NULL,
   p_inventory_id uuid           DEFAULT NULL,
   p_status       request_status DEFAULT NULL,
-  p_search       varchar        DEFAULT NULL
+  p_search       varchar        DEFAULT NULL,
+  p_from_date    date           DEFAULT NULL,
+  p_to_date      date           DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
@@ -199,7 +219,10 @@ LANGUAGE sql STABLE AS $$
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
-    AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%');
+    AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
+    -- Same IST day-boundary filter as fn_request_list_paged so count matches list.
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'));
 $$;
 
 
@@ -344,9 +367,15 @@ $$;
 -- p_status        NULL → all statuses (mirrors the "All" chip on the UI).
 -- p_inventory_id  NULL → tenant-wide (admin only); otherwise scoped to one
 --                        inventory's queue (forced for the Inventory role).
+-- Signature changed (added p_from_date / p_to_date) — drop the old 2-param
+-- overload first to avoid an ambiguous overload on re-run.
+DROP FUNCTION IF EXISTS fn_request_count_by_shop(text, uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_count_by_shop(
   p_status       text DEFAULT NULL,
-  p_inventory_id uuid DEFAULT NULL
+  p_inventory_id uuid DEFAULT NULL,
+  p_from_date    date DEFAULT NULL,
+  p_to_date      date DEFAULT NULL
 )
 RETURNS TABLE (
   shop_id       uuid,
@@ -367,6 +396,9 @@ LANGUAGE sql STABLE AS $$
     AND r.status     <> 'Draft'   -- drafts never contribute to the per-shop chip counts
     AND (p_status       IS NULL OR r.status       = p_status::request_status)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    -- Same IST day-boundary filter so chip counts match the date-filtered grid.
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'))
   GROUP BY s.id, s.code, s.name
   ORDER BY s.code;
 $$;

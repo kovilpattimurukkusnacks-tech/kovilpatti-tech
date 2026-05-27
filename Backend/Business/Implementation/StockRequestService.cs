@@ -40,12 +40,15 @@ public class StockRequestService(
 
     public async Task<PagedResult<StockRequestDto>> ListAsync(
         Guid? shopId, Guid? inventoryId, string? status, string? search,
-        int page, int pageSize, CancellationToken ct = default)
+        int page, int pageSize,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default)
     {
         var safePage     = page     < 1 ? 1  : page;
         var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
 
-        var (rows, total) = await requests.ListPagedAsync(shopId, inventoryId, status, search, safePage, safePageSize, ct);
+        var (rows, total) = await requests.ListPagedAsync(
+            shopId, inventoryId, status, search, safePage, safePageSize, fromDate, toDate, ct);
         var items = rows.Select(MapHeaderToDto).ToList();
         return new PagedResult<StockRequestDto>(items, total, safePage, safePageSize);
     }
@@ -82,7 +85,9 @@ public class StockRequestService(
     }
 
     public async Task<IReadOnlyList<ShopRequestCountDto>> GetCountByShopAsync(
-        string? status, Guid? inventoryId, CancellationToken ct = default)
+        string? status, Guid? inventoryId,
+        DateOnly? fromDate = null, DateOnly? toDate = null,
+        CancellationToken ct = default)
     {
         // Same role gating as GetPendingCumulativeAsync:
         //   • ShopUser  → never (this is a cross-shop summary; not useful to them).
@@ -94,7 +99,7 @@ public class StockRequestService(
 
         Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
-        var rows = await requests.GetCountByShopAsync(status, scope, ct);
+        var rows = await requests.GetCountByShopAsync(status, scope, fromDate, toDate, ct);
         return rows.Select(r => new ShopRequestCountDto(
             r.Shop_Id, r.Shop_Code, r.Shop_Name, r.Request_Count)).ToList();
     }
