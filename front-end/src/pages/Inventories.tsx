@@ -258,8 +258,7 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {isEdit && inventory && (
-            <Box sx={{ display: 'flex', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>ID:</b> {inventory.id}</span>
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
               <span><b>Code:</b> {inventory.code}</span>
             </Box>
           )}

@@ -332,8 +332,7 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {isEdit && user && (
-            <Box sx={{ display: 'flex', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>ID:</b> {user.id}</span>
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
               <span><b>Username:</b> {user.username}</span>
             </Box>
           )}

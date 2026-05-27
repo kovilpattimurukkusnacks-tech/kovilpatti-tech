@@ -430,8 +430,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {isEdit && product && (
-            <Box sx={{ display: 'flex', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>ID:</b> {product.id}</span>
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
               <span><b>Code:</b> {product.code}</span>
             </Box>
           )}

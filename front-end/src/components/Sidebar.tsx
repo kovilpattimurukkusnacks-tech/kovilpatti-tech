@@ -11,7 +11,7 @@ const navItems = [
   // { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/products', label: 'Products', icon: Package },
   { to: '/admin/requests', label: 'Stock Requests', icon: ClipboardList },
-  { to: '/admin/settings', label: 'Settings', icon: Settings },
+  // Settings moved to the gear icon beside the Admin name at the bottom.
 ]
 
 const createAccountItems = [
@@ -119,6 +119,23 @@ export default function Sidebar({ onNavigate }: Props) {
             <div className="font-bold truncate text-[#1F1F1F] uppercase tracking-wide">{currentUser?.fullName ?? 'Admin'}</div>
             <div className="text-xs text-[#1F1F1F]/65 font-medium">Admin</div>
           </div>
+          {/* Settings — moved here from the nav list. Sits at the right corner
+              of the Admin name row. Highlights when on the settings page. */}
+          <NavLink
+            to="/admin/settings"
+            onClick={() => onNavigate?.()}
+            title="Settings"
+            aria-label="Settings"
+            className={({ isActive }) =>
+              `flex-shrink-0 p-2 rounded-lg transition ${
+                isActive
+                  ? 'bg-[#1F1F1F] text-[#FCD835]'
+                  : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
+              }`
+            }
+          >
+            <Settings className="w-4 h-4" />
+          </NavLink>
         </div>
         <button
           onClick={handleLogout}
