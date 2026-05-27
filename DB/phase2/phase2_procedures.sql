@@ -17,12 +17,45 @@
 BEGIN;
 
 -- ============================================================
+-- 0. PREREQUISITE: seq_request_code
+-- ============================================================
+--   fn_request_next_code below is a LANGUAGE sql function — Postgres
+--   validates its body at CREATE time, so seq_request_code MUST already
+--   exist or this entire file errors with "relation seq_request_code does
+--   not exist".
+--
+--   The sequence is also created in phase2_init.sql, but we ensure it here
+--   too so phase2_procedures.sql is robust to run order (e.g. on an older
+--   dev DB whose phase2_init predates the sequence). Idempotent.
+--
+--   Seeding is safe here because every other function in this file already
+--   references the Phase 2 tables — so if this file runs at all, the
+--   stock_requests table exists.
+-- ============================================================
+CREATE SEQUENCE IF NOT EXISTS seq_request_code START 1;
+
+DO $$
+DECLARE
+  v_max bigint;
+BEGIN
+  SELECT MAX(CAST(substring(code FROM 4) AS bigint)) INTO v_max
+  FROM stock_requests
+  WHERE code ~ '^REQ[0-9]+$';
+
+  IF v_max IS NULL THEN
+    PERFORM setval('seq_request_code', 1, false);   -- empty table → next = 1
+  ELSE
+    PERFORM setval('seq_request_code', v_max, true); -- has data → next = max+1
+  END IF;
+END $$;
+
+-- ============================================================
 -- 1. CODE GENERATION
 -- ============================================================
---   Uses seq_request_code (defined in phase2_init.sql) so concurrent
---   fn_request_create calls never collide on the same code — the
---   previous SELECT MAX+1 pattern had a race that the UNIQUE(code)
---   constraint papered over with a confusing error.
+--   Uses seq_request_code (ensured above) so concurrent fn_request_create
+--   calls never collide on the same code — the previous SELECT MAX+1
+--   pattern had a race that the UNIQUE(code) constraint papered over with
+--   a confusing error.
 -- ============================================================
 
 CREATE OR REPLACE FUNCTION fn_request_next_code()
