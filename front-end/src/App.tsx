@@ -9,8 +9,6 @@ import Layout from './components/Layout'
 import ShopLayout from './components/ShopLayout'
 import InventoryLayout from './components/InventoryLayout'
 import Landing from './pages/Landing'
-// Dashboard hidden for now — uncomment to re-enable along with the index route below and the Sidebar entry.
-// import Dashboard from './pages/Dashboard'
 import Products from './pages/Products'
 import Categories from './pages/Categories'
 import Inventories from './pages/Inventories'
@@ -58,9 +56,8 @@ const router = createBrowserRouter(
       <Route path="/admin/login" element={<Navigate to="/" replace />} />
 
       <Route path="/admin" element={<RoleGate allow="Admin"><Layout /></RoleGate>}>
-        {/* Default landing inside /admin redirects to Products. Restore Dashboard by uncommenting. */}
+        {/* Default landing inside /admin redirects to Products. */}
         <Route index element={<Navigate to="products" replace />} />
-        {/* <Route index element={<Dashboard />} /> */}
         <Route path="products" element={<Products />} />
         <Route path="categories" element={<Categories />} />
         <Route path="create-account/inventory" element={<Inventories />} />

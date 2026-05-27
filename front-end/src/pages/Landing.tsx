@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
+import { ApiError } from '../api/errors'
 import './Landing.css'
 
 export default function Landing() {
@@ -23,11 +24,16 @@ export default function Landing() {
     setSubmitting(true)
     try {
       const user = await login(username, password)
-      if (!user) {
-        setError('Invalid credentials')
-        return
-      }
       navigate(roleHomePath(user.role))
+    } catch (err) {
+      // Distinguish the failure modes so the user gets an honest message:
+      //   401 → wrong credentials   429 → rate-limited (BE message)
+      //   other ApiError → BE message   non-ApiError → network/unreachable
+      if (err instanceof ApiError) {
+        setError(err.status === 401 ? 'Invalid username or password.' : err.message)
+      } else {
+        setError('Could not reach the server. Check your connection and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
