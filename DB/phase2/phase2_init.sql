@@ -126,19 +126,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_requests_one_draft_per_shop
 
 -- Seed seq_request_code past any existing REQ-NNNN codes so re-runs of
 -- this script on an environment with data don't collide with codes
--- already in use. setval(seq, n, true) makes the next nextval() return
--- n+1. COALESCE(..., 0) handles the empty-table fresh-deploy case
--- (sequence is left ready to return 1 on first nextval).
-SELECT setval(
-  'seq_request_code',
-  COALESCE(
-    (SELECT MAX(CAST(substring(code FROM 4) AS bigint))
-     FROM stock_requests
-     WHERE code ~ '^REQ[0-9]+$'),
-    0
-  ),
-  true
-);
+-- already in use.
+--   • Empty table → setval(seq, 1, false) → next nextval() returns 1.
+--   • Has data    → setval(seq, max, true) → next nextval() returns max+1.
+-- (Can't use COALESCE(..., 0) + true: setval to 0 is out of bounds — the
+--  sequence minimum is 1. This bites only when the table is empty.)
+DO $$
+DECLARE
+  v_max bigint;
+BEGIN
+  SELECT MAX(CAST(substring(code FROM 4) AS bigint)) INTO v_max
+  FROM stock_requests
+  WHERE code ~ '^REQ[0-9]+$';
+
+  IF v_max IS NULL THEN
+    PERFORM setval('seq_request_code', 1, false);
+  ELSE
+    PERFORM setval('seq_request_code', v_max, true);
+  END IF;
+END $$;
 
 -- ------------------------------------------------------------
 -- 3. stock_request_items  — line items (one row per product per request)

@@ -1,6 +1,7 @@
 using System.Text.Json;
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.StockRequests;
 using KovilpattiSnacks.Business.Exceptions;
@@ -69,10 +70,10 @@ public class StockRequestService(
         //   • Inventory → forced to their own inventory; ignore any explicit
         //                 inventoryId param to prevent cross-godown peeking.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide total.
-        if (IsRole(RoleShop))
+        if (IsRole(RoleNames.ShopUser))
             throw new ForbiddenException("Shop users cannot view the cumulative report.");
 
-        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
+        Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.GetPendingCumulativeAsync(scope, ct);
         return rows.Select(r => new CumulativePendingLineDto(
@@ -88,10 +89,10 @@ public class StockRequestService(
         //   • Inventory → forced to their own inventory; ignore any caller-supplied
         //                 inventoryId to prevent peeking into other godowns.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide totals.
-        if (IsRole(RoleShop))
+        if (IsRole(RoleNames.ShopUser))
             throw new ForbiddenException("Shop users cannot view the per-shop summary.");
 
-        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
+        Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.GetCountByShopAsync(status, scope, ct);
         return rows.Select(r => new ShopRequestCountDto(
@@ -143,9 +144,9 @@ public class StockRequestService(
 
         // Shop user can only edit own Pending requests within the time window.
         // Admin can edit any Pending or Approved request, ignoring time window.
-        var isAdmin = IsRole(RoleAdmin);
+        var isAdmin = IsRole(RoleNames.Admin);
 
-        if (IsRole(RoleShop))
+        if (IsRole(RoleNames.ShopUser))
         {
             EnsureShopScope(existing);
 
@@ -306,7 +307,7 @@ public class StockRequestService(
             ?? throw new NotFoundException($"Stock request '{id}' not found.");
 
         // Shop user: own only + within edit window. Admin: any.
-        if (IsRole(RoleShop))
+        if (IsRole(RoleNames.ShopUser))
         {
             EnsureShopScope(existing);
 
@@ -322,7 +323,7 @@ public class StockRequestService(
                     });
             }
         }
-        else if (!IsRole(RoleAdmin))
+        else if (!IsRole(RoleNames.Admin))
         {
             throw new ForbiddenException("Only the shop's user or an admin can cancel a request.");
         }
@@ -387,10 +388,10 @@ public class StockRequestService(
         //   • ShopUser  → never (no concept of inventory drafts for them).
         //   • Inventory → forced to their own godown; ignore caller param.
         //   • Admin     → may pass any inventoryId or NULL for tenant-wide.
-        if (IsRole(RoleShop))
+        if (IsRole(RoleNames.ShopUser))
             throw new ForbiddenException("Shop users cannot view inventory drafts.");
 
-        Guid? scope = IsRole(RoleInventory) ? currentUser.InventoryId : inventoryId;
+        Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
         var rows = await requests.ListInventoryDispatchDraftsAsync(scope, ct);
         return rows.Select(MapHeaderToDto).ToList();
@@ -449,11 +450,6 @@ public class StockRequestService(
 
     // ───────── Helpers ─────────
 
-    // Role checks via constants — keeps the magic strings out of the call sites.
-    private const string RoleShop      = "ShopUser";
-    private const string RoleInventory = "Inventory";
-    private const string RoleAdmin     = "Admin";
-
     private bool IsRole(string role)
         => string.Equals(currentUser.Role, role, StringComparison.OrdinalIgnoreCase);
 
@@ -461,7 +457,7 @@ public class StockRequestService(
     // No-op for Inventory/Admin roles (their own scope check below handles them).
     private void EnsureShopScope(StockRequest existing)
     {
-        if (IsRole(RoleShop) && currentUser.ShopId != existing.Shop_Id)
+        if (IsRole(RoleNames.ShopUser) && currentUser.ShopId != existing.Shop_Id)
             throw new ForbiddenException("This request does not belong to your shop.");
     }
 
@@ -469,7 +465,7 @@ public class StockRequestService(
     // No-op for ShopUser/Admin roles.
     private void EnsureInventoryScope(StockRequest existing)
     {
-        if (IsRole(RoleInventory) && currentUser.InventoryId != existing.Inventory_Id)
+        if (IsRole(RoleNames.Inventory) && currentUser.InventoryId != existing.Inventory_Id)
             throw new ForbiddenException("This request is for a different inventory.");
     }
 

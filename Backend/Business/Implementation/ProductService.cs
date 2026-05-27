@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Products;
 using KovilpattiSnacks.Business.Exceptions;
@@ -63,9 +64,10 @@ public class ProductService(
         var name        = request.Name.Trim();
         var type        = request.Type.Trim();
         var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
-        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
 
-        if (await VariantExistsAsync(newKey, excludeId: null, ct))
+        if (await products.VariantExistsAsync(name, request.CategoryId, type,
+                                               request.WeightValue, weightUnit,
+                                               excludeId: null, ct))
             throw new ValidationException(new[] {
                 new ValidationFailure(nameof(request.Name),
                     "Another product with the same name, type, weight and category already exists.")
@@ -107,9 +109,10 @@ public class ProductService(
         var name        = request.Name.Trim();
         var type        = request.Type.Trim();
         var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
-        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
 
-        if (await VariantExistsAsync(newKey, excludeId: id, ct))
+        if (await products.VariantExistsAsync(name, request.CategoryId, type,
+                                               request.WeightValue, weightUnit,
+                                               excludeId: id, ct))
             throw new ValidationException(new[] {
                 new ValidationFailure(nameof(request.Name),
                     "Another product with the same name, type, weight and category already exists.")
@@ -151,11 +154,15 @@ public class ProductService(
     }
 
     // Bulk import — strict validation; if any row has a hard error, nothing is
-    // inserted. Rows whose (name + type + weight + category) already exists are
-    // silently skipped (returned in the result, not treated as errors). Rows
-    // within the same file that collide on the variant key are also skipped
-    // after the first one wins. For unknown categories we surface a "did you
-    // mean" hint based on Levenshtein distance — never auto-mapped.
+    // inserted. Rows whose (name + type + weight + category) already exist in
+    // the DB are silently skipped (returned in the result, not treated as
+    // errors). Rows within the same file that collide on the variant key are
+    // also skipped after the first one wins. For unknown categories we surface
+    // a "did you mean" hint based on Levenshtein distance — never auto-mapped.
+    //
+    // Atomicity: validated rows are inserted via fn_product_create_bulk in a
+    // SINGLE SP call. The SP runs in one transaction — any insert failure
+    // rolls back the whole batch (no partial commits).
     public async Task<ImportProductsResult> ImportAsync(Stream fileStream, string fileName, CancellationToken ct = default)
     {
         var userId = currentUser.UserId
@@ -173,9 +180,11 @@ public class ProductService(
 
         var allCategories  = await categories.ListAsync(ct);
         var categoryByName = allCategories.ToDictionary(c => c.Name.Trim(), c => c, StringComparer.OrdinalIgnoreCase);
-        var existingKeys = (await products.ListAsync(null, null, ct))
-            .Select(p => VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g"))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Track variant keys seen within THIS file so two rows with the same
+        // variant can't both insert (one wins, the rest are skipped). The DB-side
+        // unique index + per-row VariantExistsAsync check handles cross-DB dedup.
+        var seenInFile = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
         var errors = new List<ImportProductError>();
         var skipped = new List<ImportProductSkipped>();
@@ -228,23 +237,33 @@ public class ProductService(
                 continue;
             }
 
-            // Hard errors check passed — now soft-skip duplicates by composite key.
-            // Add the new key to the set so a duplicate row later in the same
-            // file also gets reported as a skip (instead of double-inserting).
             var rowName = row.Name!.Trim();
             var rowType = row.Type!.Trim();
-            var rowKey  = VariantKey(rowName, category!.Id, rowType, weightValue, weightUnit);
-            if (!existingKeys.Add(rowKey))
+
+            // Skip if the same variant already exists in the DB. One round-trip
+            // per row, hitting the uq_products_variant_active index → fast.
+            if (await products.VariantExistsAsync(rowName, category!.Id, rowType,
+                                                   weightValue, weightUnit,
+                                                   excludeId: null, ct))
             {
                 skipped.Add(new ImportProductSkipped(row.RowNumber, rowName,
                     "same name, type, weight & category already exists"));
                 continue;
             }
 
+            // Same-file dedup — first row with this key wins, rest are skipped.
+            var rowKey = VariantKey(rowName, category.Id, rowType, weightValue, weightUnit);
+            if (!seenInFile.Add(rowKey))
+            {
+                skipped.Add(new ImportProductSkipped(row.RowNumber, rowName,
+                    "duplicate of an earlier row in this file"));
+                continue;
+            }
+
             validated.Add(new Product
             {
                 Name           = rowName,
-                CategoryId     = category!.Id,
+                CategoryId     = category.Id,
                 Type           = rowType,
                 WeightValue    = weightValue,
                 WeightUnit     = weightUnit,
@@ -258,15 +277,11 @@ public class ProductService(
         if (errors.Count > 0)
             return new ImportProductsResult(rawRows.Count, 0, [], errors);
 
-        var imported = 0;
-        foreach (var p in validated)
-        {
-            p.Code = await products.NextCodeAsync(ct);
-            await products.CreateAsync(p, userId, ct);
-            imported++;
-        }
+        // Single SP call inserts every validated row atomically, generating
+        // codes server-side. Replaces N × NextCode + N × Create round-trips.
+        var inserted = await products.CreateBulkAsync(validated, userId, ct);
 
-        return new ImportProductsResult(rawRows.Count, imported, skipped, []);
+        return new ImportProductsResult(rawRows.Count, inserted.Count, skipped, []);
     }
 
     // Variant key = case-insensitive (name, category, type, weight). Two products
@@ -287,19 +302,6 @@ public class ProductService(
         return $"{n}|{categoryId}|{t}|{w}|{u}";
     }
 
-    private async Task<bool> VariantExistsAsync(string key, Guid? excludeId, CancellationToken ct)
-    {
-        var all = await products.ListAsync(null, null, ct);
-        foreach (var p in all)
-        {
-            if (excludeId.HasValue && p.Id == excludeId.Value) continue;
-            var existingKey = VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g");
-            if (string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
-    }
-
     private static bool TryParseDecimal(string? raw, out decimal value)
     {
         value = 0;
@@ -317,12 +319,18 @@ public class ProductService(
 
     private static string? SuggestCategory(string typo, IReadOnlyList<Category> all)
     {
-        // Suggest only if the closest existing category is reasonably near (<= 3 edits).
+        // Scale the threshold with category-name length — distance 3 is a fair
+        // tolerance for "Beverages" but absurd for "Tea". Cap at 3 either way
+        // so we never offer wildly wrong suggestions.
+        var normalized = typo.Trim().ToLowerInvariant();
         var best = all
-            .Select(c => (c.Name, Distance: Levenshtein(typo.Trim().ToLowerInvariant(), c.Name.Trim().ToLowerInvariant())))
+            .Select(c => (c.Name, Distance: Levenshtein(normalized, c.Name.Trim().ToLowerInvariant())))
             .OrderBy(x => x.Distance)
             .FirstOrDefault();
-        return best.Distance <= 3 ? best.Name : null;
+        if (best.Name is null) return null;
+
+        var threshold = Math.Min(3, Math.Max(1, best.Name.Length / 2));
+        return best.Distance <= threshold ? best.Name : null;
     }
 
     private static int Levenshtein(string a, string b)
@@ -347,7 +355,7 @@ public class ProductService(
 
     private ProductDto MapToDto(Product p)
     {
-        var hidePurchase = string.Equals(currentUser.Role, "ShopUser", StringComparison.OrdinalIgnoreCase);
+        var hidePurchase = string.Equals(currentUser.Role, RoleNames.ShopUser, StringComparison.OrdinalIgnoreCase);
         return new ProductDto(
             Id:            p.Id,
             Code:          p.Code,

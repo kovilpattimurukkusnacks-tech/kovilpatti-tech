@@ -3,11 +3,13 @@ using KovilpattiSnacks.Business.DTOs.Products;
 
 namespace KovilpattiSnacks.Business.Validators.Products;
 
-public class CreateProductRequestValidator : AbstractValidator<CreateProductRequest>
+// Common rules for both Create + Update payloads. Subclasses below add any
+// payload-specific rules (Create has Code; Update doesn't).
+public abstract class ProductPayloadValidator<T> : AbstractValidator<T>
+    where T : IProductPayload
 {
-    public CreateProductRequestValidator()
+    protected ProductPayloadValidator()
     {
-        RuleFor(x => x.Code).MaximumLength(20);
         RuleFor(x => x.Name).NotEmpty().MaximumLength(120);
         RuleFor(x => x.CategoryId).GreaterThan(0);
         RuleFor(x => x.Type).NotEmpty().MaximumLength(20);
@@ -18,5 +20,14 @@ public class CreateProductRequestValidator : AbstractValidator<CreateProductRequ
         RuleFor(x => x.Mrp).GreaterThanOrEqualTo(0);
         RuleFor(x => x.PurchasePrice).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Gst).InclusiveBetween(0m, 100m).When(x => x.Gst.HasValue);
+    }
+}
+
+public class CreateProductRequestValidator : ProductPayloadValidator<CreateProductRequest>
+{
+    public CreateProductRequestValidator()
+    {
+        // Only payload-specific rule. The 7 shared rules come from the base.
+        RuleFor(x => x.Code).MaximumLength(20);
     }
 }

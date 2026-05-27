@@ -11,4 +11,4 @@ public record UpdateProductRequest(
     // Optional. Hidden in the FE form for now — left as-is if omitted.
     decimal? Gst,
     bool Active
-);
+) : IProductPayload;
