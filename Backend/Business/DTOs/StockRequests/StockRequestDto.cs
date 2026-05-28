@@ -17,13 +17,18 @@ public record StockRequestDto(
     string? DispatchedByName,
     /// Shop user who confirmed receipt. Null until the request is Received.
     string? ReceivedByName,
+    /// Inventory user who accepted a Return. Null for Orders / unaccepted Returns.
+    string? AcceptedByName,
     string Status,
+    /// "Order" (shop → godown) or "Return" (goods back to godown).
+    string RequestType,
     int    TotalItems,
     int    TotalQty,
     // Sum of dispatched_qty across items — null until inventory dispatches.
+    // On a Return this is the godown-accepted qty.
     int?   TotalDispatchedQty,
     decimal TotalAmount,
-    // Sum of (dispatched_qty × unit_price) — null until dispatch.
+    // Sum of (dispatched_qty × unit_price) — null until dispatch / accept.
     decimal? TotalDispatchedAmount,
     string? Notes,
     string? RejectionReason,
@@ -37,8 +42,15 @@ public record StockRequestDto(
     DateTimeOffset? DispatchedAt,
     Guid?           DispatchedBy,
     DateTimeOffset? ReceivedAt,
+    /// Return terminal — when the godown accepted the return. Null on Orders.
+    DateTimeOffset? AcceptedAt,
+    Guid?           AcceptedBy,
     DateTimeOffset? CancelledAt,
     Guid?           CancelledBy,
+    /// Return-only: the Order this Return reverses. Null for Orders / free-form Returns.
+    Guid?   SourceRequestId,
+    /// The linked Order's code (e.g. "REQ0042"). Null when SourceRequestId is null.
+    string? SourceRequestCode,
     /// Only populated by GET /{id}. Null on list endpoints.
     IReadOnlyList<StockRequestItemDto>? Items
 );

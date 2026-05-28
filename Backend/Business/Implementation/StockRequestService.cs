@@ -21,7 +21,10 @@ public class StockRequestService(
     IValidator<CreateStockRequestRequest> createValidator,
     IValidator<UpdateStockRequestRequest> updateValidator,
     IValidator<RejectRequest> rejectValidator,
-    IValidator<DispatchRequest> dispatchValidator
+    IValidator<DispatchRequest> dispatchValidator,
+    IValidator<CreateReturnRequest> createReturnValidator,
+    IValidator<AcceptReturnRequest> acceptReturnValidator,
+    IValidator<EditDispatchedQtyRequest> editDispatchedQtyValidator
 ) : IStockRequestService
 {
     // IST is a fixed offset (UTC+5:30) — India doesn't observe DST.
@@ -42,13 +45,14 @@ public class StockRequestService(
         Guid? shopId, Guid? inventoryId, string? status, string? search,
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default)
     {
         var safePage     = page     < 1 ? 1  : page;
         var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
 
         var (rows, total) = await requests.ListPagedAsync(
-            shopId, inventoryId, status, search, safePage, safePageSize, fromDate, toDate, ct);
+            shopId, inventoryId, status, search, safePage, safePageSize, fromDate, toDate, requestType, ct);
         var items = rows.Select(MapHeaderToDto).ToList();
         return new PagedResult<StockRequestDto>(items, total, safePage, safePageSize);
     }
@@ -87,6 +91,7 @@ public class StockRequestService(
     public async Task<IReadOnlyList<ShopRequestCountDto>> GetCountByShopAsync(
         string? status, Guid? inventoryId,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default)
     {
         // Same role gating as GetPendingCumulativeAsync:
@@ -99,7 +104,7 @@ public class StockRequestService(
 
         Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
-        var rows = await requests.GetCountByShopAsync(status, scope, fromDate, toDate, ct);
+        var rows = await requests.GetCountByShopAsync(status, scope, fromDate, toDate, requestType, ct);
         return rows.Select(r => new ShopRequestCountDto(
             r.Shop_Id, r.Shop_Code, r.Shop_Name, r.Request_Count)).ToList();
     }
@@ -453,6 +458,147 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    // ───────── Return Stock ─────────
+
+    public async Task<StockRequestDto> CreateReturnAsync(CreateReturnRequest request, CancellationToken ct = default)
+    {
+        var validation = await createReturnValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        // ShopUser only — Returns originate from the shop side, mirroring how
+        // Orders are created. Inventory/Admin should not create Returns on a
+        // shop's behalf (would obscure the audit trail).
+        var shopId = currentUser.ShopId
+            ?? throw new ForbiddenException("Only shop users can create returns.");
+
+        var shop = await shops.GetAsync(shopId, ct)
+            ?? throw new NotFoundException("Your shop record was not found.");
+
+        // Validate the linked Order (if any): exists, belongs to this shop,
+        // is an Order (not another Return), and is Received (terminal — only
+        // received goods can be physically returned).
+        Guid inventoryIdForReturn = shop.InventoryId;
+        if (request.SourceRequestId is Guid sourceId)
+        {
+            var source = await requests.GetAsync(sourceId, ct)
+                ?? throw new NotFoundException($"Source request '{sourceId}' not found.");
+
+            if (source.Shop_Id != shopId)
+                throw new ForbiddenException("Source request does not belong to your shop.");
+            if (!string.Equals(source.Request_Type, "Order", StringComparison.OrdinalIgnoreCase))
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure(nameof(request.SourceRequestId),
+                        "Source must be an Order, not another Return.")
+                });
+            if (!string.Equals(source.Status, "Received", StringComparison.OrdinalIgnoreCase))
+                throw new ValidationException(new[]
+                {
+                    new ValidationFailure(nameof(request.SourceRequestId),
+                        $"Source order must be Received. Current state: '{source.Status}'.")
+                });
+
+            // Route the Return to the SAME godown that fulfilled the source
+            // Order — physical movement matches.
+            inventoryIdForReturn = source.Inventory_Id;
+        }
+
+        // Build items JSON (same shape as Orders: product_id, requested_qty,
+        // unit_price snapshot). Phase 3 reads unit_price to reverse the
+        // ledger entry at the exact price the goods were sold for.
+        var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
+
+        var code = await requests.NextCodeAsync(ct);
+        var newId = await requests.CreateReturnAsync(
+            code, shop.Id, inventoryIdForReturn,
+            request.SourceRequestId, request.Notes,
+            itemsJson, userId, ct);
+
+        return await GetAsync(newId, ct);
+    }
+
+    public async Task<StockRequestDto> AcceptReturnAsync(Guid id, AcceptReturnRequest request, CancellationToken ct = default)
+    {
+        var validation = await acceptReturnValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Inventory user can only accept Returns routed to their own godown.
+        EnsureInventoryScope(existing);
+
+        // Defensive: the SP also guards by request_type, but surface a clearer
+        // BE-side error if someone calls Accept on a non-Return.
+        if (!string.Equals(existing.Request_Type, "Return", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure("requestType",
+                    "Accept is only valid for Returns. This request is an Order.")
+            });
+
+        // AcceptedQty maps to dispatched_qty in the SP (column reuse).
+        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
+        {
+            id              = i.Id,
+            dispatched_qty  = i.AcceptedQty,
+        }), JsonOpts);
+
+        var ok = await requests.AcceptReturnAsync(id, userId, itemsJson, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot accept — return is in '{existing.Status}' state (must be Pending).")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> EditDispatchedQtyAsync(
+        Guid requestId, Guid itemId, EditDispatchedQtyRequest request, CancellationToken ct = default)
+    {
+        // Admin-only — the controller already attributes [Authorize(Roles=...)],
+        // but we guard service-side too so this can't be reused from a less
+        // restrictive endpoint by mistake.
+        if (!IsRole(RoleNames.Admin))
+            throw new ForbiddenException("Only admins can edit dispatched quantity after completion.");
+
+        var validation = await editDispatchedQtyValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(requestId, ct)
+            ?? throw new NotFoundException($"Stock request '{requestId}' not found.");
+
+        // Status guard surfaced BE-side so the FE can show a clean message;
+        // the SP enforces the same rule defensively.
+        if (existing.Status != "Received" && existing.Status != "Accepted")
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure("status",
+                    $"Cannot edit dispatched qty — request is in '{existing.Status}' state " +
+                    "(must be Received or Accepted).")
+            });
+
+        // We don't BE-validate that itemId belongs to requestId — the SP
+        // resolves request_id from the item itself, so the audit row always
+        // lands on the correct parent regardless of what URL was used.
+        var ok = await requests.EditDispatchedQtyAsync(itemId, request.NewQty, request.Reason, userId, ct);
+        if (!ok) throw new ValidationException(new[]
+        {
+            new ValidationFailure("newQty",
+                "Could not save — qty is out of range, or the request is no longer editable.")
+        });
+
+        return await GetAsync(requestId, ct);
+    }
+
     // ───────── Helpers ─────────
 
     private bool IsRole(string role)
@@ -553,12 +699,17 @@ public class StockRequestService(
             r.Shop_Id, r.Shop_Code, r.Shop_Name,
             r.Inventory_Id, r.Inventory_Code, r.Inventory_Name,
             r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
-            r.Status, r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
+            r.Accepted_By_Name,
+            r.Status, r.Request_Type,
+            r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
             r.Notes, r.Rejection_Reason,
             r.Editable_Until, r.Submitted_At, r.Updated_At,
             r.Approved_At, r.Approved_By,
             r.Dispatched_At, r.Dispatched_By,
-            r.Received_At, r.Cancelled_At, r.Cancelled_By,
+            r.Received_At,
+            r.Accepted_At, r.Accepted_By,
+            r.Cancelled_At, r.Cancelled_By,
+            r.Source_Request_Id, r.Source_Request_Code,
             Items: null);
 
     // Composes MapHeaderToDto with the deserialised items list. Single source

@@ -28,14 +28,4 @@ public interface IProductRepository
 
     Task<bool> UpdateAsync(Product product, Guid userId, CancellationToken ct = default);
     Task<bool> SoftDeleteAsync(Guid id, Guid userId, CancellationToken ct = default);
-
-    /// <summary>
-    /// Does an active product with this (name, category, type, weight, unit)
-    /// tuple already exist? Optionally excludes a row id (used when updating
-    /// a row so it doesn't match itself).
-    /// </summary>
-    Task<bool> VariantExistsAsync(
-        string name, int categoryId, string type,
-        decimal? weightValue, string? weightUnit, Guid? excludeId,
-        CancellationToken ct = default);
 }

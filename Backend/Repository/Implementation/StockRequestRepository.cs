@@ -12,12 +12,15 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         Guid? shopId, Guid? inventoryId, string? status, string? search,
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
-        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size, @p_from_date, @p_to_date)";
-        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_from_date, @p_to_date)";
+        // p_request_type is the request_type enum — cast at call site so callers
+        // pass a plain string ('Order'/'Return') without knowing the PG type name.
+        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size, @p_from_date, @p_to_date, @p_request_type::request_type)";
+        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_from_date, @p_to_date, @p_request_type::request_type)";
 
         var args = new
         {
@@ -29,11 +32,12 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             p_page_size    = pageSize,
             p_from_date    = fromDate,
             p_to_date      = toDate,
+            p_request_type = requestType,
         };
 
         var rows = (await conn.QueryAsync<StockRequest>(new CommandDefinition(sqlList, args, cancellationToken: ct))).ToList();
 
-        var countArgs = new { p_shop_id = shopId, p_inventory_id = inventoryId, p_status = status, p_search = search, p_from_date = fromDate, p_to_date = toDate };
+        var countArgs = new { p_shop_id = shopId, p_inventory_id = inventoryId, p_status = status, p_search = search, p_from_date = fromDate, p_to_date = toDate, p_request_type = requestType };
         var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, countArgs, cancellationToken: ct));
 
         return (rows, total);
@@ -60,14 +64,16 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     public async Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
         string? status, Guid? inventoryId,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         // p_status is text in the SP; the SP itself casts to request_status enum
-        // so callers don't have to know the custom PG type name.
-        const string sql = "SELECT * FROM fn_request_count_by_shop(@p_status, @p_inventory_id, @p_from_date, @p_to_date)";
+        // so callers don't have to know the custom PG type name. Same for
+        // p_request_type — text in C#, cast to request_type enum at call site.
+        const string sql = "SELECT * FROM fn_request_count_by_shop(@p_status, @p_inventory_id, @p_from_date, @p_to_date, @p_request_type::request_type)";
         var rows = await conn.QueryAsync<ShopRequestCount>(new CommandDefinition(
-            sql, new { p_status = status, p_inventory_id = inventoryId, p_from_date = fromDate, p_to_date = toDate }, cancellationToken: ct));
+            sql, new { p_status = status, p_inventory_id = inventoryId, p_from_date = fromDate, p_to_date = toDate, p_request_type = requestType }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -205,6 +211,61 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         const string sql = "SELECT fn_request_delete_shop_draft(@p_shop_id)";
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
             sql, new { p_shop_id = shopId }, cancellationToken: ct));
+    }
+
+    // ── Return Stock ──────────────────────────────────────────────
+
+    public async Task<Guid> CreateReturnAsync(
+        string code, Guid shopId, Guid inventoryId,
+        Guid? sourceRequestId, string? notes,
+        string itemsJson, Guid userId,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = @"
+            SELECT fn_request_create_return(
+                @p_code, @p_shop_id, @p_inventory_id,
+                @p_source_request_id, @p_notes,
+                @p_items::jsonb, @p_user_id)";
+
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+        {
+            p_code              = code,
+            p_shop_id           = shopId,
+            p_inventory_id      = inventoryId,
+            p_source_request_id = sourceRequestId,
+            p_notes             = notes,
+            p_items             = itemsJson,
+            p_user_id           = userId,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<bool> AcceptReturnAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_accept_return(@p_id, @p_user_id, @p_items::jsonb)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
+        {
+            p_id      = id,
+            p_user_id = userId,
+            p_items   = itemsJson,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<bool> EditDispatchedQtyAsync(
+        Guid itemId, int? newQty, string? reason, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        // SP guards status IN ('Received','Accepted') + bounds + no-op; the
+        // BE service layer enforces the Admin role check before getting here.
+        const string sql = "SELECT fn_request_item_edit_dispatched_qty(@p_item_id, @p_new_qty, @p_reason, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
+        {
+            p_item_id = itemId,
+            p_new_qty = newQty,
+            p_reason  = reason,
+            p_user_id = userId,
+        }, cancellationToken: ct));
     }
 
     // ── Inventory dispatch draft ──────────────────────────────────

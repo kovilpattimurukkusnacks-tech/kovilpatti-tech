@@ -127,28 +127,6 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             new CommandDefinition(sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
 
-    public async Task<bool> VariantExistsAsync(
-        string name, int categoryId, string type,
-        decimal? weightValue, string? weightUnit, Guid? excludeId,
-        CancellationToken ct = default)
-    {
-        using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = @"
-            SELECT fn_product_variant_exists(
-                @p_name, @p_category_id, @p_type,
-                @p_weight_value, @p_weight_unit, @p_exclude_id)";
-
-        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
-        {
-            p_name         = name,
-            p_category_id  = categoryId,
-            p_type         = type,
-            p_weight_value = weightValue,
-            p_weight_unit  = weightUnit,
-            p_exclude_id   = excludeId,
-        }, cancellationToken: ct));
-    }
-
     public async Task<List<(Guid Id, string Code)>> CreateBulkAsync(
         IReadOnlyList<Product> products, Guid userId, CancellationToken ct = default)
     {

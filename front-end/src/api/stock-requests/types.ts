@@ -8,6 +8,9 @@ export type RequestStatus =
   | 'Dispatched'
   | 'Received'
   | 'Cancelled'
+  // Terminal state for Returns — set by fn_request_accept_return when the
+  // inventory user accepts the goods back. Never appears on Orders.
+  | 'Accepted'
 
 export type StockRequestItemDto = {
   id: string
@@ -31,6 +34,10 @@ export type StockRequestItemDto = {
   subtotal: number
 }
 
+// 'Order' = shop → godown (forward); 'Return' = goods back to godown.
+// Same DTO shape carries both — flip behaviour by the requestType field.
+export type RequestType = 'Order' | 'Return'
+
 export type StockRequestDto = {
   id: string
   code: string
@@ -48,13 +55,18 @@ export type StockRequestDto = {
   dispatchedByName: string | null
   // Shop user who confirmed receipt; null until Received.
   receivedByName: string | null
+  // Inventory user who accepted a Return; null for Orders / unaccepted Returns.
+  acceptedByName: string | null
   status: RequestStatus
+  // 'Order' on the legacy flow; 'Return' on the new return-stock flow.
+  requestType: RequestType
   totalItems: number
   totalQty: number
   // Sum of dispatched_qty across items. Null until inventory dispatches.
+  // On a Return this is the godown-accepted qty.
   totalDispatchedQty: number | null
   totalAmount: number
-  // Sum of (dispatched_qty × unit_price). Null until dispatch.
+  // Sum of (dispatched_qty × unit_price). Null until dispatch / accept.
   totalDispatchedAmount: number | null
   notes: string | null
   rejectionReason: string | null
@@ -68,8 +80,15 @@ export type StockRequestDto = {
   dispatchedAt: string | null
   dispatchedBy: string | null
   receivedAt: string | null
+  // Return terminal — when the godown accepted the return. Null on Orders.
+  acceptedAt: string | null
+  acceptedBy: string | null
   cancelledAt: string | null
   cancelledBy: string | null
+  // Return-only: the Order this Return reverses. Null for Orders / free-form Returns.
+  sourceRequestId: string | null
+  // The linked Order's code (e.g. "REQ0042"). Null when sourceRequestId is null.
+  sourceRequestCode: string | null
   items: StockRequestItemDto[] | null  // only on GET /{id}
 }
 
@@ -89,6 +108,32 @@ export type RejectRequest = { reason: string }
 
 export type DispatchItem = { id: string; dispatchedQty: number }
 export type DispatchRequest = { items: DispatchItem[] }
+
+// Shop user creating a Return — items going BACK to the godown. SourceRequestId
+// is optional: when provided, links the Return to the past Order being reversed
+// so Phase 3 accounts can post a precise reverse entry. Item shape is the same
+// as CreateStockRequestRequest (BE reuses BuildItemsJsonAsync).
+export type CreateReturnRequest = {
+  sourceRequestId?: string | null
+  notes?: string
+  items: CreateStockRequestItem[]
+}
+
+// Inventory user accepting a Pending Return. Partial accepts allowed (acceptedQty
+// may be less than what the shop claimed they were returning). Internally maps
+// to the dispatched_qty column — same data path as DispatchRequest, different
+// semantic.
+export type AcceptReturnItem = { id: string; acceptedQty: number }
+export type AcceptReturnRequest = { items: AcceptReturnItem[] }
+
+// Admin's post-completion qty correction (client #9). Valid only on Received
+// Orders + Accepted Returns. `newQty=null` clears the value back to NULL;
+// otherwise must be >= 0. `reason` is optional free-text up to 500 chars —
+// Phase 3 accounts shows it verbatim on its reconciliation entries.
+export type EditDispatchedQtyRequest = {
+  newQty: number | null
+  reason?: string
+}
 
 /** One row in the cumulative-pending workload report (kitchen batch plan). */
 export type CumulativePendingLine = {
@@ -122,6 +167,9 @@ export type StockRequestListFilters = {
   // IST calendar dates (YYYY-MM-DD). Filter on submitted_at. Inclusive of both ends.
   fromDate?: string
   toDate?: string
+  // 'Order' / 'Return' — when set, restricts to that request_type. Drives the
+  // "Return" preset chip on ShopRequests + InventoryRequests.
+  requestType?: RequestType
 }
 
 export type PagedResult<T> = {

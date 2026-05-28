@@ -16,15 +16,20 @@ export function useCategories() {
   })
 }
 
+// Server returns rows in tree order (path-sorted root-first, depth-grouped).
+// Local mutations preserve that order by sorting on the breadcrumb path —
+// same comparator the SP uses, so a created row lands in the right slot
+// without a refetch.
+const byPath = (a: CategoryDto, b: CategoryDto) =>
+  (a.path ?? a.name).localeCompare(b.path ?? b.name)
+
 export function useCreateCategory() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: CreateCategoryRequest) => categoriesApi.create(req),
-    // Append + re-sort alphabetically so dropdowns reflect the new entry
-    // without a refetch round-trip.
     onSuccess: (created) => {
       qc.setQueryData<CategoryDto[]>(categoriesKeys.all, (old) =>
-        old ? [...old, created].sort((a, b) => a.name.localeCompare(b.name)) : [created])
+        old ? [...old, created].sort(byPath) : [created])
     },
   })
 }
@@ -35,10 +40,14 @@ export function useUpdateCategory() {
     mutationFn: ({ id, req }: { id: number; req: UpdateCategoryRequest }) =>
       categoriesApi.update(id, req),
     onSuccess: (updated) => {
+      // A parent-id change (move under a different node) shifts the path —
+      // resort handles that. Descendant paths can drift too, but we don't
+      // have them here; refetch is the safest fallback for that edge case.
       qc.setQueryData<CategoryDto[]>(categoriesKeys.all, (old) =>
-        old ? old.map(c => c.id === updated.id ? updated : c)
-                 .sort((a, b) => a.name.localeCompare(b.name))
-            : old)
+        old ? old.map(c => c.id === updated.id ? updated : c).sort(byPath) : old)
+      // Refetch when a parent_id change ripples down to descendants whose
+      // path also needs updating.
+      qc.invalidateQueries({ queryKey: categoriesKeys.all })
     },
   })
 }

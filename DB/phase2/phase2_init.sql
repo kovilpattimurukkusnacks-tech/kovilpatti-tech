@@ -26,8 +26,20 @@ BEGIN;
 -- ------------------------------------------------------------
 DO $$ BEGIN
   CREATE TYPE request_status AS ENUM (
-    'Draft', 'Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled'
+    'Draft', 'Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled',
+    -- 'Accepted' = terminal state for a Return (Order-equivalent of 'Received'
+    -- but on the godown side, since the return moves goods INTO the godown).
+    'Accepted'
   );
+EXCEPTION
+  WHEN duplicate_object THEN NULL;
+END $$;
+
+-- request_type distinguishes Orders (shop → godown) from Returns (shop → godown
+-- in reverse, items going back). Both share the stock_requests table; the type
+-- flips which lifecycle states are valid and which audit timestamps populate.
+DO $$ BEGIN
+  CREATE TYPE request_type AS ENUM ('Order', 'Return');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
@@ -74,6 +86,12 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   inventory_id      uuid           NOT NULL REFERENCES inventories(id) ON DELETE RESTRICT,
   status            request_status NOT NULL DEFAULT 'Pending',
 
+  -- 'Order' = forward flow (shop → godown). 'Return' = reverse (goods back to
+  -- godown). Same table, different lifecycle: Returns go Pending → Accepted
+  -- (no Approve / Dispatch / Receive). Defaults to Order so existing-style
+  -- callers (Orders) need no change.
+  request_type      request_type   NOT NULL DEFAULT 'Order',
+
   -- Cached aggregates (kept in sync by the stored procs that mutate items).
   total_items       int            NOT NULL DEFAULT 0,
   total_qty         int            NOT NULL DEFAULT 0,
@@ -84,6 +102,7 @@ CREATE TABLE IF NOT EXISTS stock_requests (
 
   -- Editability window: shop can edit/cancel only while NOW() <= editable_until.
   -- Computed in BE at submit time from app_settings.request_lock_cutoff (IST).
+  -- Returns set this far-future at create time (no cutoff applies to returns).
   editable_until    timestamptz    NOT NULL,
 
   submitted_at      timestamptz    NOT NULL DEFAULT now(),
@@ -96,6 +115,15 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   cancelled_at      timestamptz,
   cancelled_by      uuid           REFERENCES users(id) ON DELETE SET NULL,
 
+  -- Return-specific: when/who the godown closed the return.
+  accepted_at       timestamptz,
+  accepted_by       uuid           REFERENCES users(id) ON DELETE SET NULL,
+
+  -- A Return optionally references the Order it reverses. Free-form returns
+  -- (no source) are allowed; accounts uses current MRP as fallback. Always
+  -- NULL on Orders (enforced by chk_source_only_for_returns below).
+  source_request_id uuid           REFERENCES stock_requests(id) ON DELETE SET NULL,
+
   is_deleted        boolean        NOT NULL DEFAULT false,
   created_at        timestamptz    NOT NULL DEFAULT now(),
   created_by        uuid           REFERENCES users(id) ON DELETE SET NULL,
@@ -103,7 +131,11 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   updated_by        uuid           REFERENCES users(id) ON DELETE SET NULL,
 
   CONSTRAINT chk_rejection_reason_when_rejected
-    CHECK (status <> 'Rejected' OR rejection_reason IS NOT NULL)
+    CHECK (status <> 'Rejected' OR rejection_reason IS NOT NULL),
+
+  -- Only Returns may set source_request_id. Orders never reference another row.
+  CONSTRAINT chk_source_only_for_returns
+    CHECK (source_request_id IS NULL OR request_type = 'Return')
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_requests_shop_status
@@ -114,6 +146,12 @@ CREATE INDEX IF NOT EXISTS idx_stock_requests_inventory_status
 
 CREATE INDEX IF NOT EXISTS idx_stock_requests_status_submitted
   ON stock_requests(status, submitted_at DESC) WHERE is_deleted = false;
+
+-- Reverse-lookup: "all Returns that reference this Order". Partial index since
+-- the vast majority of rows (all Orders + free-form Returns) have NULL here.
+CREATE INDEX IF NOT EXISTS idx_stock_requests_source_request
+  ON stock_requests(source_request_id)
+  WHERE source_request_id IS NOT NULL;
 
 -- One live draft per shop. Partial unique index — only enforces uniqueness
 -- on the Draft status (Pending/Dispatched/etc. rows are unaffected). Lets
@@ -194,6 +232,34 @@ CREATE INDEX IF NOT EXISTS idx_stock_request_items_product ON stock_request_item
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_active_draft
   ON stock_request_items(request_id)
   WHERE draft_dispatched_qty IS NOT NULL;
+
+-- ------------------------------------------------------------
+-- 3a. stock_request_qty_audits  — audit trail for admin's post-completion
+--     dispatched_qty edits (added 28-May-2026, client #9). Phase 3 accounts
+--     consumes this to post reconciliation entries when delivered qty is
+--     adjusted after a request is Received/Accepted. Append-only — one row
+--     per edit, never updated/deleted. old_qty/new_qty can be NULL to cover
+--     the (rare) case of an item that was never dispatched being given a
+--     value, or vice versa.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS stock_request_qty_audits (
+  id              uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
+  request_item_id uuid          NOT NULL REFERENCES stock_request_items(id) ON DELETE CASCADE,
+  -- Denormalised request_id so Phase 3 accounts can find every audit for a
+  -- request without joining through items. Also used by the FE history view.
+  request_id      uuid          NOT NULL REFERENCES stock_requests(id)      ON DELETE CASCADE,
+  old_qty         int,
+  new_qty         int,
+  -- Optional admin-supplied justification. Free-text up to 500 chars.
+  reason          varchar(500),
+  edited_by       uuid          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
+  edited_at       timestamptz   NOT NULL DEFAULT now(),
+
+  CONSTRAINT chk_qty_audit_change CHECK (old_qty IS DISTINCT FROM new_qty)
+);
+
+CREATE INDEX IF NOT EXISTS idx_qty_audits_request      ON stock_request_qty_audits(request_id, edited_at DESC);
+CREATE INDEX IF NOT EXISTS idx_qty_audits_request_item ON stock_request_qty_audits(request_item_id, edited_at DESC);
 
 -- ------------------------------------------------------------
 -- 4. updated_at triggers (reuse Phase 1's set_updated_at function)

@@ -283,6 +283,95 @@
 .small  { font-size: 11px; color: #1F1F1F99; margin-top: 2px; }
 .strong { font-weight: 700; }
 
+/* ─────────────────────────────────────────────────────────────────────────
+   Cumulative print — dense two-column flow.
+   Client demo, 26-May-2026: the original card-per-category layout was 9-10
+   sheets. This collapses it to ~3-4 by:
+     • CSS multi-column container so categories flow down two side-by-side
+       columns (mimics the client's spreadsheet style).
+     • Slim banner per section (no card border, no big yellow header strip).
+     • Tighter rows (11px font, 3-4px padding, no zebra).
+     • Dropped the 'From Requests' per-row column — surfaced in the page
+       summary instead.
+   ───────────────────────────────────────────────────────────────────────── */
+.print-dense-grid {
+  column-count: 2;
+  column-gap: 18px;
+  column-fill: balance;
+  margin-top: 4px;
+}
+
+.print-dense-section {
+  /* Keep an entire category section together — don't split a category across
+     a column or page boundary unless it's genuinely too tall for one page. */
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 12px;
+  display: inline-block;
+  width: 100%;
+}
+
+.print-dense-banner {
+  background: #FFF8DC;
+  border-left: 4px solid #FCD835;
+  border-bottom: 1px solid #1F1F1F;
+  padding: 5px 8px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-dense-banner .muted {
+  color: rgba(31, 31, 31, 0.55);
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.print-dense-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.print-dense-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.1);
+  vertical-align: top;
+}
+
+/* Weight subheading inside a category — slim eyebrow, no background. */
+.print-dense-table tr.print-weight-row-dense td {
+  padding: 5px 6px 2px 12px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.08);
+  color: rgba(31, 31, 31, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+/* Grand totals strip — same compact font as the cumulative tables. */
+.print-dense-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-top: 2px solid #1F1F1F;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.print-dense-summary .muted {
+  font-weight: 500;
+  color: rgba(31, 31, 31, 0.6);
+}
+
 /* Browser-print rules. Hide UI affordances; tighten margins for paper. */
 @media print {
   body {

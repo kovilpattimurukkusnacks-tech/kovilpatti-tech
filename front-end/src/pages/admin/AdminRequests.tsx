@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useCallback, useMemo, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Printer } from 'lucide-react'
 import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
@@ -10,7 +10,7 @@ import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
 import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../components/FilterBar'
-import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
+import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
@@ -23,10 +23,19 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Dispatched: 'primary',
   Received:   'success',
   Cancelled:  'default',
+  // Returns' terminal state — green-success once goods are back at godown.
+  Accepted:   'success',
 }
 
 // Quick-filter chip presets. `undefined` = show all statuses (default).
-type Preset = { key: string; label: string; status: RequestStatus | undefined }
+// Last preset "Return" (added 28 May 2026) filters by request_type and cuts
+// across statuses so admin can see every Return in one place.
+type Preset = {
+  key: string
+  label: string
+  status?: RequestStatus
+  requestType?: RequestType
+}
 const PRESETS: Preset[] = [
   { key: 'all',        label: 'All',        status: undefined    },
   { key: 'pending',    label: 'Pending',    status: 'Pending'    },
@@ -35,32 +44,68 @@ const PRESETS: Preset[] = [
   { key: 'received',   label: 'Received',   status: 'Received'   },
   { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
   { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
+  { key: 'return',     label: 'Return',     requestType: 'Return' },
 ]
 
 export default function AdminRequests() {
   const navigate = useNavigate()
-  // Default to All — admin usually wants the full picture, not a single bucket.
-  const [activePreset, setActivePreset] = useState<string>('all')
-  // Optional second-level filter — clicking a shop chip toggles it.
-  const [shopId, setShopId] = useState<string | undefined>(undefined)
-  const [search, setSearch] = useState<string>('')
-  // Date range filter on submitted_at — defaults to today (both ends).
-  const [fromDate, setFromDate] = useState<string>(istToday())
-  const [toDate, setToDate]     = useState<string>(istToday())
-  // Filter controls collapsed by default; active filters shown as pills.
-  const [filtersOpen, setFiltersOpen] = useState(false)
-  const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+  // Filter state lives in the URL so a round-trip to a detail page and back
+  // restores exactly what the admin had set — defaults to today's date +
+  // "All" preset on a fresh load. Keys are short so the URL stays readable
+  // when shared (?preset=pending&q=REQ0042&from=...&to=...).
+  const [params, setParams] = useSearchParams()
 
-  const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
+  const activePreset = params.get('preset')  ?? 'all'
+  const shopId       = params.get('shopId')  ?? undefined
+  const search       = params.get('q')       ?? ''
+  const fromDate     = params.get('from')    ?? istToday()
+  const toDate       = params.get('to')      ?? istToday()
+  const page         = Number(params.get('page'))     || 0
+  const pageSize     = Number(params.get('pageSize')) || 10
+
+  // Filter controls collapsed by default; UI-only, doesn't belong in the URL.
+  const [filtersOpen, setFiltersOpen] = useState(false)
+
+  // Patch helper — merges a partial set of URL params on top of the current
+  // ones. Pass undefined / '' to delete a key. `replace: true` means filter
+  // changes don't pile up in browser history (Back still takes you off the
+  // page, not back through every filter tweak).
+  const patchParams = useCallback((patch: Record<string, string | undefined | null>) => {
+    setParams(prev => {
+      const next = new URLSearchParams(prev)
+      for (const [k, v] of Object.entries(patch)) {
+        if (v == null || v === '') next.delete(k)
+        else next.set(k, v)
+      }
+      return next
+    }, { replace: true })
+  }, [setParams])
+
+  const setActivePreset    = (key: string) => patchParams({ preset: key === 'all' ? undefined : key, shopId: undefined, page: undefined })
+  const setShopId          = (id: string | undefined) => patchParams({ shopId: id ?? undefined, page: undefined })
+  const setSearch          = (q: string)   => patchParams({ q, page: undefined })
+  const paginationModel    = { page, pageSize }
+  const setPaginationModel = (m: { page: number; pageSize: number }) =>
+    patchParams({ page: m.page ? String(m.page) : undefined, pageSize: m.pageSize === 10 ? undefined : String(m.pageSize) })
+
+  const currentPreset      = PRESETS.find(p => p.key === activePreset)
+  const currentStatus      = currentPreset?.status
+  const currentRequestType = currentPreset?.requestType
 
   const handleDateChange = (from: string, to: string) => {
-    setFromDate(from)
-    setToDate(to)
-    setPaginationModel(m => ({ ...m, page: 0 }))
+    // Keep today's defaults out of the URL — only persist when admin picks
+    // a non-today date, so the URL stays clean on the common case.
+    const today = istToday()
+    patchParams({
+      from: from === today ? undefined : from,
+      to:   to   === today ? undefined : to,
+      page: undefined,
+    })
   }
 
   const list = useAllStockRequests({
     status: currentStatus,
+    requestType: currentRequestType,
     shopId,
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
@@ -69,11 +114,12 @@ export default function AdminRequests() {
     toDate: toDate || undefined,
   })
 
-  // Per-shop badge counts for the active status filter. Refetches whenever
-  // the status preset OR date range changes; shops with 0 matches are pruned
-  // server-side, so counts always match the date-filtered grid.
+  // Per-shop badge counts for the active preset. Refetches whenever the
+  // preset OR date range changes; shops with 0 matches are pruned server-side,
+  // so counts always match the date-filtered grid.
   const shopCounts = useRequestCountByShop({
     status: currentStatus,
+    requestType: currentRequestType,
     fromDate: fromDate || undefined,
     toDate: toDate || undefined,
   })
@@ -88,7 +134,29 @@ export default function AdminRequests() {
 
   const columns = useMemo<GridColDef<StockRequestDto>[]>(() => {
     const cols: GridColDef<StockRequestDto>[] = [
-    { field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false },
+    {
+      field: 'code', headerName: 'Code', width: 180, sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>{row.code}</span>
+          {row.requestType === 'Return' && (
+            <Chip
+              label="Return"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C62828',
+                color: '#C62828',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+          )}
+        </Box>
+      ),
+    },
     {
       field: 'submittedByName', headerName: 'User', flex: 1, minWidth: 140, sortable: false, filterable: false,
       renderCell: ({ row }) =>
@@ -180,7 +248,7 @@ export default function AdminRequests() {
           label={value}
           size="small"
           color={STATUS_COLOR[value as RequestStatus]}
-          variant={row.status === 'Received' ? 'filled' : 'outlined'}
+          variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
         />
       ),
     },
@@ -199,19 +267,20 @@ export default function AdminRequests() {
     activePills.push({
       key: 'status',
       label: PRESETS.find(p => p.key === activePreset)?.label ?? activePreset,
-      onRemove: () => { setActivePreset('all'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
+      // setActivePreset already drops shopId + resets page — no extra calls needed.
+      onRemove: () => setActivePreset('all'),
     })
   if (shopId)
     activePills.push({
       key: 'shop',
       label: shopCounts.data?.find(s => s.shopId === shopId)?.shopName ?? 'Shop',
-      onRemove: () => { setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
+      onRemove: () => setShopId(undefined),
     })
   if (search.trim())
     activePills.push({
       key: 'search',
       label: `“${search.trim()}”`,
-      onRemove: () => { setSearch(''); setPaginationModel(m => ({ ...m, page: 0 })) },
+      onRemove: () => setSearch(''),
     })
 
   const errorMessage = list.isError
@@ -231,7 +300,7 @@ export default function AdminRequests() {
             // print dialog never blocks interaction on this tab.
             onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
             disabled={!hasPending}
-            title={hasPending ? undefined : 'No pending requests to print'}
+            title={hasPending ? undefined : 'No in-progress requests to print'}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
             Print Cumulative
@@ -250,7 +319,7 @@ export default function AdminRequests() {
             <TextField
               size="small"
               value={search}
-              onChange={e => { setSearch(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
+              onChange={e => setSearch(e.target.value)}
               placeholder="Search by code"
               sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
               slotProps={{
@@ -268,21 +337,18 @@ export default function AdminRequests() {
           <DateRangeFilter from={fromDate} to={toDate} onChange={handleDateChange} hideLabel />
         </FilterRow>
 
-        {/* Status chips */}
+        {/* Status chips — last chip "Return" filters by request_type and is
+            themed red to match the inline Return pill on rows + detail. */}
         <FilterRow label="Status">
           {PRESETS.map(p => {
-            const active = activePreset === p.key
+            const active   = activePreset === p.key
+            const isReturn = p.key === 'return'
             return (
               <Button
                 key={p.key}
-                onClick={() => {
-                  setActivePreset(p.key)
-                  // Drop the shop drill-down when the status changes, otherwise
-                  // the user can land on a (status, shop) combo where that shop
-                  // has zero rows and the page looks broken.
-                  setShopId(undefined)
-                  setPaginationModel(m => ({ ...m, page: 0 }))
-                }}
+                // setActivePreset drops the shop drill-down + resets page itself,
+                // so we don't have to repeat that here.
+                onClick={() => setActivePreset(p.key)}
                 disableElevation
                 variant={active ? 'contained' : 'outlined'}
                 size="small"
@@ -294,7 +360,15 @@ export default function AdminRequests() {
                   py: 0.5,
                   minHeight: 32,
                   ...(active
-                    ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                    ? isReturn
+                      ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
+                      : { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                    : isReturn
+                    ? {
+                        bgcolor: '#FFFFFF', color: '#C62828',
+                        borderColor: 'rgba(198,40,40,0.45)',
+                        '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
+                      }
                     : {
                         bgcolor: '#FFFFFF', color: '#1F1F1F',
                         borderColor: 'rgba(31,31,31,0.25)',
@@ -318,10 +392,8 @@ export default function AdminRequests() {
               return (
                 <Chip
                   key={s.shopId}
-                  onClick={() => {
-                    setShopId(prev => prev === s.shopId ? undefined : s.shopId)
-                    setPaginationModel(m => ({ ...m, page: 0 }))
-                  }}
+                  // Click toggles — clicking the active shop clears the filter.
+                  onClick={() => setShopId(active ? undefined : s.shopId)}
                   label={`${s.shopName} (${s.requestCount})`}
                   size="small"
                   variant={active ? 'filled' : 'outlined'}

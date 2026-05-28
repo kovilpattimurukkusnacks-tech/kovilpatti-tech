@@ -8,6 +8,7 @@ public interface IStockRequestRepository
         Guid? shopId, Guid? inventoryId, string? status, string? search,
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default);
 
     Task<StockRequest?> GetAsync(Guid id, CancellationToken ct = default);
@@ -18,6 +19,7 @@ public interface IStockRequestRepository
     Task<IReadOnlyList<ShopRequestCount>> GetCountByShopAsync(
         string? status, Guid? inventoryId,
         DateOnly? fromDate = null, DateOnly? toDate = null,
+        string? requestType = null,
         CancellationToken ct = default);
 
     Task<string> NextCodeAsync(CancellationToken ct = default);
@@ -41,6 +43,30 @@ public interface IStockRequestRepository
     Task<Guid> SaveShopDraftAsync(Guid shopId, Guid inventoryId, string? notes, string itemsJson, Guid userId, CancellationToken ct = default);
     Task<StockRequest?> GetShopDraftAsync(Guid shopId, CancellationToken ct = default);
     Task<bool> DeleteShopDraftAsync(Guid shopId, CancellationToken ct = default);
+
+    // ── Return Stock (request_type = 'Return') ──
+    /// Create a Return — shop user sends items BACK to the godown. Optional
+    /// source_request_id links the Return to the Order it reverses (Phase 3
+    /// accounts uses this to find the original posting to reverse).
+    Task<Guid> CreateReturnAsync(
+        string code, Guid shopId, Guid inventoryId,
+        Guid? sourceRequestId, string? notes,
+        string itemsJson, Guid userId,
+        CancellationToken ct = default);
+
+    /// Inventory accepts a Pending Return — sets status='Accepted' + audit
+    /// timestamps. Items JSON shape: [{ id, dispatched_qty }] (the same
+    /// column is reused; the BE/FE label it "accepted_qty" on a Return).
+    Task<bool> AcceptReturnAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default);
+
+    // ── Admin post-completion qty edit (client #9, 28-May-2026) ──
+    /// Amend an item's dispatched_qty after the request is Received (Orders)
+    /// or Accepted (Returns). Writes a row to stock_request_qty_audits so
+    /// Phase 3 accounts can reconcile. `newQty` = null clears the value;
+    /// otherwise must be >= 0. Returns false when the SP-side guards
+    /// (status, bounds, missing item) reject the call.
+    Task<bool> EditDispatchedQtyAsync(
+        Guid itemId, int? newQty, string? reason, Guid userId, CancellationToken ct = default);
 
     // ── Inventory dispatch draft (WIP dispatch_qtys saved to draft_dispatched_qty) ──
     Task<bool> SaveDispatchDraftAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default);

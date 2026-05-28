@@ -133,6 +133,15 @@ DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varcha
 -- version doesn't leave an ambiguous overload behind.
 DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int);
 
+-- RETURNS TABLE shape grew (added request_type, source_request_*, accepted_*
+-- for the Return Stock feature, 27-May-2026). CREATE OR REPLACE can't change
+-- return shape, so the previous 8-arg signature must be dropped before we
+-- redefine.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date);
+-- Second drop — a follow-up (28-May-2026) added p_request_type for the
+-- "Return" chip filter, bumping the signature to 9 args.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type);
+
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
   p_inventory_id uuid           DEFAULT NULL,
@@ -143,7 +152,10 @@ CREATE OR REPLACE FUNCTION fn_request_list_paged(
   -- Date range filters on submitted_at, interpreted as IST calendar days.
   -- NULL = no bound. p_to_date is inclusive (we add 1 day and use < below).
   p_from_date    date           DEFAULT NULL,
-  p_to_date      date           DEFAULT NULL
+  p_to_date      date           DEFAULT NULL,
+  -- Filter by request_type: NULL = both Orders + Returns mixed (current chip
+  -- behaviour); 'Return' = the new Return chip; 'Order' = explicit Orders.
+  p_request_type request_type   DEFAULT NULL
 )
 RETURNS TABLE (
   id                    uuid,
@@ -158,7 +170,9 @@ RETURNS TABLE (
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
+  accepted_by_name        varchar,
   status                  varchar,
+  request_type            varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
@@ -174,8 +188,12 @@ RETURNS TABLE (
   dispatched_at           timestamptz,
   dispatched_by           uuid,
   received_at             timestamptz,
+  accepted_at             timestamptz,
+  accepted_by             uuid,
   cancelled_at            timestamptz,
-  cancelled_by            uuid
+  cancelled_by            uuid,
+  source_request_id       uuid,
+  source_request_code     varchar
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -187,10 +205,12 @@ LANGUAGE sql STABLE AS $$
          ua.full_name   AS approved_by_name,
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
+         uac.full_name  AS accepted_by_name,
          -- Cast the enum to varchar so Npgsql 8+ (which is stricter about
          -- unmapped custom enum types) can deserialize without needing the
          -- BE to MapEnum<>() the request_status type at the data source.
-         r.status::varchar AS status,
+         r.status::varchar       AS status,
+         r.request_type::varchar AS request_type,
          r.total_items, r.total_qty,
          -- NULL until any item on this request has been dispatched.
          -- Explicit casts pin the column type so Npgsql doesn't see a NULL
@@ -206,7 +226,11 @@ LANGUAGE sql STABLE AS $$
          r.submitted_at, r.updated_at,
          r.approved_at, r.approved_by,
          r.dispatched_at, r.dispatched_by, r.received_at,
-         r.cancelled_at, r.cancelled_by
+         r.accepted_at, r.accepted_by,
+         r.cancelled_at, r.cancelled_by,
+         -- Return → linked Order traceability. NULL for Orders and free-form Returns.
+         r.source_request_id,
+         src.code AS source_request_code
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -214,12 +238,17 @@ LANGUAGE sql STABLE AS $$
   LEFT  JOIN users       ua   ON ua.id   = r.approved_by
   LEFT  JOIN users       ud   ON ud.id   = r.dispatched_by
   LEFT  JOIN users       urcv ON urcv.id = r.received_by
+  LEFT  JOIN users       uac  ON uac.id  = r.accepted_by
+  -- Self-join for the linked Order's code (Returns only). Partial index
+  -- idx_stock_requests_source_request keeps this lookup cheap.
+  LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.is_deleted = false
     AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
+    AND (p_request_type IS NULL OR r.request_type = p_request_type)
     -- IST day boundaries: p_from_date's midnight (IST) → UTC instant; upper
     -- bound is p_to_date + 1 day midnight (IST), exclusive, so the whole
     -- p_to_date day is included.
@@ -234,6 +263,9 @@ $$;
 -- Signature changed (added p_from_date / p_to_date) — drop the old 4-param
 -- overload first to avoid an ambiguous overload on re-run.
 DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar);
+-- Second drop — follow-up (28-May-2026) added p_request_type for the
+-- "Return" chip filter.
+DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar, date, date);
 
 CREATE OR REPLACE FUNCTION fn_request_count(
   p_shop_id      uuid           DEFAULT NULL,
@@ -241,7 +273,8 @@ CREATE OR REPLACE FUNCTION fn_request_count(
   p_status       request_status DEFAULT NULL,
   p_search       varchar        DEFAULT NULL,
   p_from_date    date           DEFAULT NULL,
-  p_to_date      date           DEFAULT NULL
+  p_to_date      date           DEFAULT NULL,
+  p_request_type request_type   DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
@@ -253,15 +286,23 @@ LANGUAGE sql STABLE AS $$
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
+    AND (p_request_type IS NULL OR r.request_type = p_request_type)
     -- Same IST day-boundary filter as fn_request_list_paged so count matches list.
     AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
     AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'));
 $$;
 
 
--- Cumulative pending workload by SKU (product × weight). Used by the godown's
+-- Cumulative IN-PROGRESS workload by SKU (product × weight). Used by the godown's
 -- "print cumulative" report so the kitchen can prepare one consolidated batch
--- across all open requests.
+-- across all requests the godown has approved (= "In-Progress" in the UI).
+--
+-- Why Approved and not Pending: once a request is Approved, the shop can no
+-- longer edit it, so the totals here are stable while the kitchen packs. With
+-- Pending we'd show a moving target — a shop adjusting their order would shift
+-- the cumulative report mid-pack. Client requested this change after the
+-- 26-May-2026 demo. Function name kept for compatibility with existing BE
+-- callers; semantic shift documented here.
 --
 -- Groups by (product_id, weight_value, weight_unit) so a 100g packet and a
 -- 50g packet of the same product line stay on separate lines — they are
@@ -298,9 +339,9 @@ LANGUAGE sql STABLE AS $$
   INNER JOIN products            p  ON p.id  = it.product_id
   INNER JOIN categories          c  ON c.id  = p.category_id
   WHERE r.is_deleted = false
-    -- Pending only; Draft is already excluded by this filter, but the
-    -- explicit clause documents intent for future maintainers.
-    AND r.status = 'Pending'
+    -- Approved (= "In-Progress") only. See function header for why we don't
+    -- source from Pending.
+    AND r.status = 'Approved'
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   GROUP BY p.id, p.code, p.name, c.name, p.type, it.weight_value, it.weight_unit
   ORDER BY p.code;
@@ -315,8 +356,17 @@ $$;
 -- p_inventory_id NULL → tenant-wide (admin only); otherwise scoped to a
 --                       single inventory's queue (forced for Inventory role).
 --
--- Return shape mirrors the list/header columns so the BE can reuse the
--- existing StockRequest entity + MapHeaderToDto mapper.
+-- Return shape mirrors fn_request_list_paged so the BE can reuse the StockRequest
+-- entity + MapHeaderToDto mapper. Shape grew with the Return Stock columns
+-- (27-May-2026); drop the 1-arg signature first since CREATE OR REPLACE
+-- can't change RETURNS TABLE.
+--
+-- Naturally Order-only: the EXISTS filter on draft_dispatched_qty matches
+-- only items on Orders (Returns don't carry a dispatch draft). The new
+-- request_type / source_* / accepted_* columns are surfaced anyway for
+-- entity-shape compatibility — they'll be 'Order' / NULL on every row here.
+DROP FUNCTION IF EXISTS fn_request_list_inventory_dispatch_drafts(uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_list_inventory_dispatch_drafts(
   p_inventory_id uuid DEFAULT NULL
 )
@@ -333,7 +383,9 @@ RETURNS TABLE (
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
+  accepted_by_name        varchar,
   status                  varchar,
+  request_type            varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
@@ -349,8 +401,12 @@ RETURNS TABLE (
   dispatched_at           timestamptz,
   dispatched_by           uuid,
   received_at             timestamptz,
+  accepted_at             timestamptz,
+  accepted_by             uuid,
   cancelled_at            timestamptz,
-  cancelled_by            uuid
+  cancelled_by            uuid,
+  source_request_id       uuid,
+  source_request_code     varchar
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -360,7 +416,9 @@ LANGUAGE sql STABLE AS $$
          ua.full_name   AS approved_by_name,
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
-         r.status::varchar AS status,
+         uac.full_name  AS accepted_by_name,
+         r.status::varchar       AS status,
+         r.request_type::varchar AS request_type,
          r.total_items, r.total_qty,
          (SELECT SUM(it.dispatched_qty)::int
           FROM stock_request_items it
@@ -373,7 +431,10 @@ LANGUAGE sql STABLE AS $$
          r.submitted_at, r.updated_at,
          r.approved_at, r.approved_by,
          r.dispatched_at, r.dispatched_by, r.received_at,
-         r.cancelled_at, r.cancelled_by
+         r.accepted_at, r.accepted_by,
+         r.cancelled_at, r.cancelled_by,
+         r.source_request_id,
+         src.code AS source_request_code
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -381,6 +442,8 @@ LANGUAGE sql STABLE AS $$
   LEFT  JOIN users       ua   ON ua.id   = r.approved_by
   LEFT  JOIN users       ud   ON ud.id   = r.dispatched_by
   LEFT  JOIN users       urcv ON urcv.id = r.received_by
+  LEFT  JOIN users       uac  ON uac.id  = r.accepted_by
+  LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.is_deleted = false
     AND r.status IN ('Pending', 'Approved')
     AND EXISTS (
@@ -403,12 +466,16 @@ $$;
 -- Signature changed (added p_from_date / p_to_date) — drop the old 2-param
 -- overload first to avoid an ambiguous overload on re-run.
 DROP FUNCTION IF EXISTS fn_request_count_by_shop(text, uuid);
+-- Second drop — follow-up (28-May-2026) added p_request_type for the
+-- "Return" chip filter.
+DROP FUNCTION IF EXISTS fn_request_count_by_shop(text, uuid, date, date);
 
 CREATE OR REPLACE FUNCTION fn_request_count_by_shop(
   p_status       text DEFAULT NULL,
   p_inventory_id uuid DEFAULT NULL,
   p_from_date    date DEFAULT NULL,
-  p_to_date      date DEFAULT NULL
+  p_to_date      date DEFAULT NULL,
+  p_request_type request_type DEFAULT NULL
 )
 RETURNS TABLE (
   shop_id       uuid,
@@ -429,6 +496,7 @@ LANGUAGE sql STABLE AS $$
     AND r.status     <> 'Draft'   -- drafts never contribute to the per-shop chip counts
     AND (p_status       IS NULL OR r.status       = p_status::request_status)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    AND (p_request_type IS NULL OR r.request_type = p_request_type)
     -- Same IST day-boundary filter so chip counts match the date-filtered grid.
     AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
     AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'))
@@ -439,7 +507,9 @@ $$;
 
 -- Single request with all items aggregated as a JSON array (single round-trip).
 -- BE deserializes `items` as `List<StockRequestItemDto>`.
--- Return shape gained `total_dispatched_qty` → must DROP before redefining.
+-- Return shape gained `total_dispatched_qty` once; then again for Returns
+-- (request_type, source_request_*, accepted_*). Drop before redefining since
+-- CREATE OR REPLACE can't change return shape.
 DROP FUNCTION IF EXISTS fn_request_get(uuid);
 
 CREATE OR REPLACE FUNCTION fn_request_get(p_id uuid)
@@ -456,7 +526,9 @@ RETURNS TABLE (
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
+  accepted_by_name        varchar,
   status                  varchar,
+  request_type            varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
@@ -472,8 +544,12 @@ RETURNS TABLE (
   dispatched_at           timestamptz,
   dispatched_by           uuid,
   received_at             timestamptz,
+  accepted_at             timestamptz,
+  accepted_by             uuid,
   cancelled_at            timestamptz,
   cancelled_by            uuid,
+  source_request_id       uuid,
+  source_request_code     varchar,
   items                   jsonb
 )
 LANGUAGE sql STABLE AS $$
@@ -484,10 +560,12 @@ LANGUAGE sql STABLE AS $$
          ua.full_name   AS approved_by_name,
          ud.full_name   AS dispatched_by_name,
          urcv.full_name AS received_by_name,
+         uac.full_name  AS accepted_by_name,
          -- Cast the enum to varchar — Npgsql 8+ rejects unmapped custom
          -- enum types; keeping the cast makes this SP portable across
          -- Npgsql versions without BE registration changes.
-         r.status::varchar AS status,
+         r.status::varchar       AS status,
+         r.request_type::varchar AS request_type,
          r.total_items, r.total_qty,
          -- Explicit ::int / ::numeric casts to keep the column types pinned
          -- even when SUM returns NULL (no dispatched items). Without these,
@@ -503,7 +581,11 @@ LANGUAGE sql STABLE AS $$
          r.submitted_at, r.updated_at,
          r.approved_at, r.approved_by,
          r.dispatched_at, r.dispatched_by, r.received_at,
+         r.accepted_at, r.accepted_by,
          r.cancelled_at, r.cancelled_by,
+         -- Return → linked Order traceability. NULL for Orders and free-form Returns.
+         r.source_request_id,
+         src.code AS source_request_code,
          COALESCE((
            SELECT jsonb_agg(
              jsonb_build_object(
@@ -542,6 +624,10 @@ LANGUAGE sql STABLE AS $$
   LEFT  JOIN users       ua   ON ua.id   = r.approved_by
   LEFT  JOIN users       ud   ON ud.id   = r.dispatched_by
   LEFT  JOIN users       urcv ON urcv.id = r.received_by
+  LEFT  JOIN users       uac  ON uac.id  = r.accepted_by
+  -- Self-join for the linked Order's code (Returns only). Partial index
+  -- idx_stock_requests_source_request keeps this lookup cheap.
+  LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.id = p_id AND r.is_deleted = false;
 $$;
 
@@ -1122,6 +1208,233 @@ BEGIN
     AND status IN ('Pending', 'Approved')
     AND is_deleted = false;
   RETURN FOUND;
+END
+$$;
+
+
+-- ============================================================
+-- 8. RETURN STOCK (Phase 2 feature, 27-May-2026)
+-- ============================================================
+--   Returns are stock_requests rows with request_type = 'Return'. They
+--   share the same table + items table + most lifecycle SPs as Orders.
+--   Lifecycle: Pending → Accepted (terminal) + Rejected, Cancelled.
+--   No Approve / Dispatch / Receive states — only one physical movement.
+--
+--   Accounts (Phase 3) reads source_request_id + each item's unit_price
+--   snapshot to post a reverse ledger entry against the linked Order.
+-- ============================================================
+
+-- Create a Return — shop user is sending goods back to the godown. Optional
+-- p_source_request_id links the Return to the Order it reverses; if NULL the
+-- Return is "free-form" (rare; accounts uses current MRP as fallback).
+--
+-- Mirrors fn_request_create's shape (item array, code, totals roll-up), but:
+--   • Forces request_type = 'Return'.
+--   • Sets editable_until to far-future (Returns aren't subject to the daily
+--     cutoff; the shop can edit/cancel as long as status = 'Pending').
+--   • Persists the optional source_request_id (chk_source_only_for_returns
+--     guarantees it's NULL on Orders).
+CREATE OR REPLACE FUNCTION fn_request_create_return(
+  p_code               varchar,
+  p_shop_id            uuid,
+  p_inventory_id       uuid,
+  p_source_request_id  uuid,    -- NULL = free-form return
+  p_notes              varchar,
+  p_items              jsonb,
+  p_user_id            uuid
+)
+RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_id           uuid;
+  v_total_items  int := 0;
+  v_total_qty    int := 0;
+  v_total_amount numeric(12,2) := 0;
+  v_item         jsonb;
+  v_qty          int;
+  v_price        numeric(10,2);
+BEGIN
+  IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+    RAISE EXCEPTION 'Return must include at least one item';
+  END IF;
+
+  -- editable_until: 100-year horizon. Returns don't have a daily cutoff —
+  -- the same column is reused so we don't need a NULL-allowed schema change.
+  INSERT INTO stock_requests (
+    code, shop_id, inventory_id, status, request_type,
+    source_request_id, editable_until, notes,
+    created_by, updated_by
+  ) VALUES (
+    p_code, p_shop_id, p_inventory_id, 'Pending', 'Return',
+    p_source_request_id, now() + interval '100 years', p_notes,
+    p_user_id, p_user_id
+  ) RETURNING id INTO v_id;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_qty   := (v_item->>'requested_qty')::int;
+    v_price := (v_item->>'unit_price')::numeric(10,2);
+
+    -- Same item shape as Orders: requested_qty = "what shop says it's
+    -- returning". Snapshot weight from the current product master so the
+    -- Return's audit row doesn't drift if the product is later repacked.
+    INSERT INTO stock_request_items (
+      request_id, product_id, requested_qty, unit_price,
+      weight_value, weight_unit
+    )
+    SELECT v_id,
+           p.id,
+           v_qty,
+           v_price,
+           p.weight_value,
+           p.weight_unit
+    FROM   products p
+    WHERE  p.id = (v_item->>'product_id')::uuid;
+
+    v_total_items  := v_total_items + 1;
+    v_total_qty    := v_total_qty   + v_qty;
+    v_total_amount := v_total_amount + (v_qty * v_price);
+  END LOOP;
+
+  UPDATE stock_requests
+  SET total_items  = v_total_items,
+      total_qty    = v_total_qty,
+      total_amount = v_total_amount
+  WHERE id = v_id;
+
+  RETURN v_id;
+END
+$$;
+
+
+-- Accept a Pending Return — inventory closes it out. Items JSON is the same
+-- shape as fn_request_dispatch's payload: { id, dispatched_qty } per item,
+-- where dispatched_qty is overloaded to mean "qty the godown actually accepted"
+-- on a Return (partial accept allowed — godown may receive less than the shop
+-- claimed they were returning).
+--
+-- Status flips Pending → Accepted, accepted_at / accepted_by are set. The SP
+-- guards on status = 'Pending' AND request_type = 'Return' so this cannot be
+-- accidentally called on an Order.
+CREATE OR REPLACE FUNCTION fn_request_accept_return(
+  p_id      uuid,
+  p_user_id uuid,
+  p_items   jsonb     -- array of { id, dispatched_qty }
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_item jsonb;
+BEGIN
+  -- Guard: only Pending Returns are accept-able.
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id
+      AND request_type = 'Return'
+      AND status       = 'Pending'
+      AND is_deleted   = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  -- Per-item accepted qty (reuses dispatched_qty column).
+  IF p_items IS NOT NULL THEN
+    FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+      UPDATE stock_request_items
+      SET dispatched_qty = (v_item->>'dispatched_qty')::int
+      WHERE id = (v_item->>'id')::uuid
+        AND request_id = p_id;
+    END LOOP;
+  END IF;
+
+  -- Flip status + audit. updated_at trigger refreshes itself.
+  UPDATE stock_requests
+  SET status      = 'Accepted',
+      accepted_at = now(),
+      accepted_by = p_user_id,
+      updated_by  = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- ============================================================
+-- Admin post-completion dispatched_qty edit (client #9, 28-May-2026)
+-- ------------------------------------------------------------
+-- Admin can amend an item's delivered qty after the request is Received
+-- (Orders) or Accepted (Returns) — e.g. correcting a counting error a few
+-- days after the fact. Phase 3 accounts uses the audit trail to post a
+-- reconciliation entry whenever the qty drifts.
+--
+-- Guards:
+--   • Request status must be in ('Received','Accepted') and not soft-deleted.
+--   • new_qty must be >= 0 OR NULL (NULL means "clear the dispatched value").
+--     No upper cap — matches the existing dispatch flow which already lets
+--     inventory deliver more than requested.
+--   • Insert a NEW audit row regardless of whether old/new differ on the
+--     surface — the table CHECK guards against no-op rows so callers don't
+--     pollute the trail. Returns false when guards fail.
+-- ============================================================
+CREATE OR REPLACE FUNCTION fn_request_item_edit_dispatched_qty(
+  p_item_id   uuid,
+  p_new_qty   int,
+  p_reason    varchar,
+  p_user_id   uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_request_id   uuid;
+  v_status       request_status;
+  v_old_qty      int;
+BEGIN
+  -- Bound check first — accept NULL (clear) or non-negative ints.
+  IF p_new_qty IS NOT NULL AND p_new_qty < 0 THEN
+    RETURN false;
+  END IF;
+
+  -- Resolve the parent request + current qty in one shot so we can validate
+  -- status and capture the "before" value for the audit row.
+  SELECT i.request_id, r.status, i.dispatched_qty
+    INTO v_request_id, v_status, v_old_qty
+  FROM stock_request_items i
+  JOIN stock_requests      r ON r.id = i.request_id
+  WHERE i.id = p_item_id
+    AND r.is_deleted = false;
+
+  IF v_request_id IS NULL THEN
+    RETURN false;  -- item not found, or its parent request is soft-deleted
+  END IF;
+
+  IF v_status NOT IN ('Received', 'Accepted') THEN
+    RETURN false;  -- only post-completion edits allowed
+  END IF;
+
+  -- No-op guard — don't write an audit row when nothing changed. The table
+  -- CHECK would reject it anyway, but failing silently here is friendlier.
+  IF v_old_qty IS NOT DISTINCT FROM p_new_qty THEN
+    RETURN true;
+  END IF;
+
+  UPDATE stock_request_items
+  SET dispatched_qty = p_new_qty
+  WHERE id = p_item_id;
+
+  INSERT INTO stock_request_qty_audits
+    (request_item_id, request_id, old_qty, new_qty, reason, edited_by)
+  VALUES
+    (p_item_id, v_request_id, v_old_qty, p_new_qty,
+     NULLIF(btrim(COALESCE(p_reason, '')), ''),
+     p_user_id);
+
+  -- Bump the parent so the FE detail page picks up the change via the
+  -- existing updated_at-driven cache invalidation.
+  UPDATE stock_requests
+  SET updated_by = p_user_id
+  WHERE id = v_request_id;
+
+  RETURN true;
 END
 $$;
 

@@ -2,7 +2,8 @@ import { apiClient } from '../client'
 import type {
   StockRequestDto, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, StockRequestListFilters, PagedResult,
-  CumulativePendingLine, ShopRequestCount, RequestStatus,
+  CumulativePendingLine, ShopRequestCount, RequestStatus, RequestType,
+  CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -16,6 +17,7 @@ function toQuery(filters?: StockRequestListFilters): string {
   if (filters.pageSize != null) p.set('pageSize', String(filters.pageSize))
   if (filters.fromDate)         p.set('fromDate', filters.fromDate)
   if (filters.toDate)           p.set('toDate', filters.toDate)
+  if (filters.requestType)      p.set('requestType', filters.requestType)
   const qs = p.toString()
   return qs ? `?${qs}` : ''
 }
@@ -38,12 +40,13 @@ export const stockRequestsApi = {
 
   // Per-shop request count for the active status filter (Inventory + Admin).
   // Drives the shop quick-filter chips below the status presets.
-  countByShop: (args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string }) => {
+  countByShop: (args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string; requestType?: RequestType }) => {
     const p = new URLSearchParams()
     if (args?.status)      p.set('status', args.status)
     if (args?.inventoryId) p.set('inventoryId', args.inventoryId)
     if (args?.fromDate)    p.set('fromDate', args.fromDate)
     if (args?.toDate)      p.set('toDate', args.toDate)
+    if (args?.requestType) p.set('requestType', args.requestType)
     const qs = p.toString()
     return apiClient.get<ShopRequestCount[]>(`/api/stock-requests/count-by-shop${qs ? `?${qs}` : ''}`)
   },
@@ -81,5 +84,24 @@ export const stockRequestsApi = {
   dispatchDrafts: (inventoryId?: string) =>
     apiClient.get<StockRequestDto[]>(
       `/api/stock-requests/dispatch-drafts${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
+    ),
+
+  // ── Return Stock ─────────────────────────────────────────────
+  // Shop user creates a Return (items back to godown). sourceRequestId is
+  // optional; when provided, BE validates it's a Received Order belonging
+  // to the same shop.
+  createReturn: (req: CreateReturnRequest) =>
+    apiClient.post<StockRequestDto>('/api/stock-requests/return', req),
+
+  // Inventory/Admin accepts a Pending Return — terminal "Accepted".
+  acceptReturn: (id: string, req: AcceptReturnRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/accept`, req),
+
+  // Admin amends an item's dispatched_qty after the request is Received
+  // (Orders) or Accepted (Returns). Every call appends an audit row.
+  editDispatchedQty: (requestId: string, itemId: string, req: EditDispatchedQtyRequest) =>
+    apiClient.patch<StockRequestDto>(
+      `/api/stock-requests/${requestId}/items/${itemId}/dispatched-qty`,
+      req,
     ),
 }

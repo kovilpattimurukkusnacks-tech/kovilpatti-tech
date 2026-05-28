@@ -13,6 +13,7 @@ import { useCategories } from '../../hooks/useCategories'
 import {
   useCreateStockRequest, useUpdateStockRequest, useStockRequest,
   useShopDraft, useSaveShopDraft, useDeleteShopDraft,
+  useCreateReturn,
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
@@ -42,10 +43,15 @@ export default function ShopRequestNew() {
     ? (isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
     : (isAdmin ? '/admin/requests' : '/shop/requests')
 
-  const createMutation = useCreateStockRequest()
-  const updateMutation = useUpdateStockRequest()
-  const existingQuery  = useStockRequest(editId)
-  const existing       = existingQuery.data
+  const createMutation       = useCreateStockRequest()
+  const updateMutation       = useUpdateStockRequest()
+  // Return Stock — second submit option in the review dialog. The user
+  // browses + carts the same way they would for an Order; only at the very
+  // end do they decide "Submit" (Order) vs "Submit as Return". Keeps the
+  // primary flow identical for semi-skilled users.
+  const createReturnMutation = useCreateReturn()
+  const existingQuery        = useStockRequest(editId)
+  const existing             = existingQuery.data
 
   // Drafts only apply to the shop user's new-request flow. Disabled for:
   //   • edit mode (we're already working on a real request)
@@ -76,24 +82,55 @@ export default function ShopRequestNew() {
 
   const categoriesQuery = useCategories()
 
-  // Auto-select the alphabetically-first category as the default filter on
-  // initial mount (covers both new-request and edit modes). Sorting explicitly
-  // here — useCategories doesn't guarantee server-side ordering.
-  //
-  // The auto-seeded category counts as "visited" — the user loaded the page
-  // and saw it immediately, no click required.
+  // ── Nested-category awareness ───────────────────────────────
+  // Shop user only sees ROOT categories in the dropdown — sub-cats and deeper
+  // levels are an admin concern. Picking a root quietly broadens the product
+  // filter to include every descendant, and the listing groups by sub-cat
+  // (the heading-bars below the table render).
+  const allCats  = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
+  const rootCats = useMemo(() => allCats.filter(c => c.parentId == null), [allCats])
+
+  // children-by-parent index — used to walk descendants of the selected root.
+  const childrenByParent = useMemo(() => {
+    const m = new Map<number, number[]>()
+    for (const c of allCats) {
+      if (c.parentId == null) continue
+      const arr = m.get(c.parentId) ?? []
+      arr.push(c.id)
+      m.set(c.parentId, arr)
+    }
+    return m
+  }, [allCats])
+
+  // All category ids in the selected root's subtree (root id + every descendant).
+  // null when nothing selected → BE returns all products.
+  const filterCategoryIds = useMemo(() => {
+    if (selectedCategoryId == null) return undefined
+    const out: number[] = [selectedCategoryId]
+    const stack: number[] = [selectedCategoryId]
+    while (stack.length > 0) {
+      const id = stack.pop()!
+      for (const k of childrenByParent.get(id) ?? []) {
+        out.push(k); stack.push(k)
+      }
+    }
+    return out
+  }, [selectedCategoryId, childrenByParent])
+
+  // Auto-select the alphabetically-first ROOT category as the default filter
+  // on initial mount (covers both new-request and edit modes). Auto-seeded
+  // category counts as "visited" — user loaded the page and saw it.
   useEffect(() => {
     if (categoryAutoSeeded) return
-    const cats = categoriesQuery.data
-    if (!cats || cats.length === 0) return
-    const first = [...cats].sort((a, b) => a.name.localeCompare(b.name))[0]
+    if (rootCats.length === 0) return
+    const first = [...rootCats].sort((a, b) => a.name.localeCompare(b.name))[0]
     setSelectedCategoryId(first.id)
     setVisitedCategoryIds(prev => prev.has(first.id) ? prev : new Set(prev).add(first.id))
     setCategoryAutoSeeded(true)
-  }, [categoriesQuery.data, categoryAutoSeeded])
+  }, [rootCats, categoryAutoSeeded])
   const productsQuery = useProducts({
-    // useProducts accepts an array — wrap the single selection.
-    categoryIds: selectedCategoryId != null ? [selectedCategoryId] : undefined,
+    // Broadened to the selected root's full subtree (root + descendants).
+    categoryIds: filterCategoryIds,
     types:       selectedTypes.length ? selectedTypes : undefined,
     search:      debouncedSearch.trim() || undefined,
     page:        1,
@@ -168,14 +205,17 @@ export default function ShopRequestNew() {
     return new Date() < new Date(existing.editableUntil)
   })()
 
-  const categories = categoriesQuery.data ?? []
-  const products   = productsQuery.data?.items ?? []
+  // Use `allCats` / `rootCats` directly — the legacy `categories` alias is
+  // gone since every call site has been migrated to the right source.
+  const products = productsQuery.data?.items ?? []
 
   // Memoized Autocomplete value — stable reference unless the selection
   // changes, otherwise MUI's option-equality scan reruns every render.
+  // Dropdown lists only roots, but the selected value can still resolve from
+  // allCats so a deep-link / edit-mode pre-fill still finds its row.
   const selectedCategoryValue = useMemo(
-    () => categories.find(c => c.id === selectedCategoryId) ?? null,
-    [categories, selectedCategoryId],
+    () => allCats.find(c => c.id === selectedCategoryId) ?? null,
+    [allCats, selectedCategoryId],
   )
 
   // The product list re-renders into ~200 rows when filters change. That work
@@ -185,28 +225,41 @@ export default function ShopRequestNew() {
   // low priority, keeping the UI snappy.
   const deferredProducts = useDeferredValue(products)
 
-  // Group by pack weight, then split the GROUPS across the two columns so
-  // each weight section stays intact (left column = "100 g" group whole,
-  // right column = "200 g" group whole). Fills left until it has ≥ half the
-  // products by count, then sends the rest right — keeps the columns
-  // visually balanced even when group sizes are uneven.
-  const [leftGroups, rightGroups] = useMemo(() => {
-    const all = groupProductsByWeight(deferredProducts)
-    const total = deferredProducts.length
-    const half  = Math.ceil(total / 2)
-    const left:  ReturnType<typeof groupProductsByWeight> = []
-    const right: ReturnType<typeof groupProductsByWeight> = []
+  // Group by sub-category first (each root + its descendants become their own
+  // section), then by weight within each sub-cat. The selected root is the
+  // implicit context; sub-cat heading shows the path relative to that root
+  // (e.g. "Spicy" or "Spicy > Kara Sev" when the user picked "Snacks").
+  // When no root is selected, full path is shown so headings stay unambiguous.
+  const catGroups = useMemo(
+    () => groupProductsByCategoryThenWeight(
+      deferredProducts,
+      allCats,
+      selectedCategoryId,
+    ),
+    [deferredProducts, allCats, selectedCategoryId],
+  )
+
+  // Split CAT GROUPS (not weight groups) across the two side-by-side columns
+  // so each sub-cat heading + its weight sections stay intact. Fill the left
+  // column until it has ≥ half the products by count, then spill to the right
+  // — keeps the two columns visually balanced even when sub-cats are uneven.
+  const [leftCatGroups, rightCatGroups] = useMemo(() => {
+    const total    = deferredProducts.length
+    const half     = Math.ceil(total / 2)
+    const left:  CategoryGroup[] = []
+    const right: CategoryGroup[] = []
     let leftCount = 0
-    for (const g of all) {
+    for (const cg of catGroups) {
+      const cgCount = cg.weightGroups.reduce((n, g) => n + g.items.length, 0)
       if (leftCount < half) {
-        left.push(g)
-        leftCount += g.items.length
+        left.push(cg)
+        leftCount += cgCount
       } else {
-        right.push(g)
+        right.push(cg)
       }
     }
     return [left, right] as const
-  }, [deferredProducts])
+  }, [catGroups, deferredProducts.length])
 
   // Cart aggregates
   const { cartCount, cartTotal } = useMemo(() => {
@@ -282,13 +335,15 @@ export default function ShopRequestNew() {
   // re-browse categories. If categories list is empty (or still loading),
   // the gate is open (nothing to visit).
   //
-  // visitedCount counts only CURRENT categories that are in the visited set —
+  // visitedCount counts only CURRENT roots that are in the visited set —
   // protects against a stale entry (e.g. a category that existed earlier in
   // the session but has since been deleted) artificially passing the gate.
-  const totalCategories = categories.length
+  // The shop user only sees roots in the dropdown, so the gate is "visit
+  // every root"; visiting a root implicitly covers its whole subtree.
+  const totalCategories = rootCats.length
   const visitedCount = useMemo(
-    () => categories.filter(c => visitedCategoryIds.has(c.id)).length,
-    [categories, visitedCategoryIds],
+    () => rootCats.filter(c => visitedCategoryIds.has(c.id)).length,
+    [rootCats, visitedCategoryIds],
   )
   const allCategoriesVisited = totalCategories === 0 || visitedCount >= totalCategories
   const reviewGate           = !isEditMode && !isAdmin && !allCategoriesVisited
@@ -371,6 +426,38 @@ export default function ShopRequestNew() {
   }
 
   /**
+   * Second submit path on the Review & Submit dialog — converts the same cart
+   * into a Return (items going back to the godown). Same cart items, same
+   * notes; only the endpoint and the BE-side `request_type` differ. We don't
+   * pass sourceRequestId in this minimal v1 — all Returns are "free-form".
+   * When Phase 3 accounts goes live we'll add an optional source picker.
+   *
+   * Only shown in the new-request flow for shop users (hidden for edit mode
+   * and admin — both work on existing rows, not new Returns).
+   */
+  const handleSubmitAsReturn = async () => {
+    setLocalErr(null)
+    if (cart.size === 0) {
+      setLocalErr('Add at least one product to return.')
+      return
+    }
+    const items = Array.from(cart.values()).map(l => ({
+      productId: l.product.id,
+      requestedQty: l.qty,
+    }))
+    try {
+      const res = await createReturnMutation.mutateAsync({
+        notes: notes.trim() || undefined,
+        items,
+      })
+      submittingRef.current = true
+      navigate(`/shop/requests/${res.id}`)
+    } catch {
+      // shown via apiErrorMessage below
+    }
+  }
+
+  /**
    * Save the current cart as the shop's draft (or replace the existing one).
    * BE enforces at-most-one-draft-per-shop via partial unique index; the
    * upsert SP handles the create-vs-update branch atomically.
@@ -421,14 +508,21 @@ export default function ShopRequestNew() {
   }
 
   // Surface whichever mutation last errored to the user. Submit/Update take
-  // precedence in edit mode; in new mode draft mutations also count.
+  // precedence in edit mode; otherwise draft mutations and the two submit
+  // paths (create / createReturn) all count.
   const activeMutation = isEditMode
     ? updateMutation
-    : (saveDraftMutation.error
-        ? saveDraftMutation
-        : deleteDraftMutation.error
-          ? deleteDraftMutation
-          : createMutation)
+    : createReturnMutation.error
+      ? createReturnMutation
+      : (saveDraftMutation.error
+          ? saveDraftMutation
+          : deleteDraftMutation.error
+            ? deleteDraftMutation
+            : createMutation)
+
+  // Return Stock button visible only on the shop user's new-request flow —
+  // edit mode and admin views don't get a Return path here.
+  const showReturnButton = !isEditMode && !isAdmin
 
   const apiErrorMessage = (() => {
     const err = activeMutation.error
@@ -498,7 +592,10 @@ export default function ShopRequestNew() {
 
         <Autocomplete
           size="small"
-          options={categories}
+          // Shop user picks from ROOT categories only — sub-cats are an admin
+          // concern. Picking a root broadens the product list to the whole
+          // subtree (see filterCategoryIds).
+          options={rootCats}
           getOptionLabel={(opt) => opt.name}
           isOptionEqualToValue={(a, b) => a.id === b.id}
           value={selectedCategoryValue}
@@ -580,9 +677,9 @@ export default function ShopRequestNew() {
             alignItems: 'flex-start',
           }}
         >
-          <ProductsTable groups={leftGroups} cart={cart} onSetQty={setQty} />
-          {rightGroups.length > 0 && (
-            <ProductsTable groups={rightGroups} cart={cart} onSetQty={setQty} />
+          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} />
+          {rightCatGroups.length > 0 && (
+            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} />
           )}
         </Box>
       )}
@@ -841,7 +938,7 @@ export default function ShopRequestNew() {
             </>
           )}
         </DialogContent>
-        <DialogActions sx={{ p: 2 }}>
+        <DialogActions sx={{ p: 2, flexWrap: 'wrap', gap: 1 }}>
           <Button
             onClick={() => setReviewOpen(false)}
             variant="outlined"
@@ -851,6 +948,27 @@ export default function ShopRequestNew() {
           >
             Keep browsing
           </Button>
+
+          {/* Return Stock — second submit path. Same cart, different endpoint
+              (sends items BACK to the godown instead of forward). Red so it
+              reads as a destructive / reverse action vs the green-ish primary
+              Submit. Hidden in edit mode and for admin (they're not creating
+              new returns from this screen). */}
+          {showReturnButton && (
+            <Button
+              onClick={handleSubmitAsReturn}
+              variant="outlined"
+              disabled={cart.size === 0 || activeMutation.isPending}
+              sx={{
+                textTransform: 'none', fontWeight: 700,
+                borderColor: '#C62828', color: '#C62828', bgcolor: '#FFFFFF',
+                '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.08)' },
+              }}
+            >
+              {createReturnMutation.isPending ? 'Returning…' : 'Return Stock'}
+            </Button>
+          )}
+
           <Button
             onClick={handleSubmit}
             variant="contained"
@@ -859,10 +977,7 @@ export default function ShopRequestNew() {
           >
             {activeMutation.isPending
               ? (isEditMode ? 'Updating…' : 'Submitting…')
-              : isEditMode ? 'Update' : 'Submit'
-              /* Amount-suffixed labels hidden for now — restore by swapping back:
-                 isEditMode ? `Update (${formatINR(cartTotal)})` : `Submit (${formatINR(cartTotal)})`
-              */}
+              : isEditMode ? 'Update' : 'Submit'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -906,6 +1021,9 @@ export default function ShopRequestNew() {
 // bucket rendered last. Sort:
 //   1. unit alphabetically (so 'g' before 'kg' before 'l' before 'ml'),
 //   2. then numeric value ascending within the same unit.
+// Pack-weight grouping helper. Returns weight-keyed sections, sorted (g
+// before kg, then by ascending magnitude). NULL-weight items land in their
+// own "No weight specified" bucket at the end.
 function groupProductsByWeight(products: ProductDto[]): { label: string; items: ProductDto[] }[] {
   const NONE = '__none__'
   const groups = new Map<string, ProductDto[]>()
@@ -932,15 +1050,72 @@ function groupProductsByWeight(products: ProductDto[]): { label: string; items: 
   })
 }
 
+// Group products by their (sub-)category, then by weight within each
+// sub-cat. The sub-cat label shows the breadcrumb path RELATIVE to the
+// selected root when one is selected (e.g. "Spicy > Kara Sev" when root
+// is "Snacks"), otherwise the full path. Order matches the category tree
+// (root-first, path-sorted) by leaning on each category's `path` field.
+type CategoryGroup = {
+  catId:        number
+  catLabel:     string          // heading shown above the weight groups
+  weightGroups: { label: string; items: ProductDto[] }[]
+}
+function groupProductsByCategoryThenWeight(
+  products:        ProductDto[],
+  allCats:         { id: number; name: string; path: string | null; parentId: number | null }[],
+  selectedRootId:  number | null,
+): CategoryGroup[] {
+  // catId → ProductDto[]
+  const byCat = new Map<number, ProductDto[]>()
+  for (const p of products) {
+    const arr = byCat.get(p.categoryId)
+    if (arr) arr.push(p)
+    else byCat.set(p.categoryId, [p])
+  }
+  // Resolve display label + sort key from the categories list. Categories
+  // list arrives in root-first path-sorted order so we use the cat's index
+  // in that list as a natural sort key.
+  const catIndex = new Map(allCats.map((c, i) => [c.id, i]))
+  const selectedRootName = selectedRootId != null
+    ? (allCats.find(c => c.id === selectedRootId)?.name ?? null)
+    : null
+
+  const result: CategoryGroup[] = []
+  for (const [catId, items] of byCat.entries()) {
+    const cat = allCats.find(c => c.id === catId)
+    let label = cat?.path ?? cat?.name ?? `Category ${catId}`
+    // Strip the selected root's prefix from the path so headings read
+    // "Spicy > Kara Sev" instead of "Snacks > Spicy > Kara Sev" when the
+    // user already knows they're inside Snacks.
+    if (selectedRootName) {
+      const prefix = `${selectedRootName} > `
+      if (label.startsWith(prefix)) label = label.slice(prefix.length)
+      else if (label === selectedRootName) label = selectedRootName  // root itself — keep
+    }
+    result.push({
+      catId,
+      catLabel:     label,
+      weightGroups: groupProductsByWeight(items),
+    })
+  }
+  result.sort((a, b) => (catIndex.get(a.catId) ?? 0) - (catIndex.get(b.catId) ?? 0))
+  return result
+}
+
 function ProductsTable({
-  groups,
+  catGroups,
   cart,
   onSetQty,
 }: {
-  groups: { label: string; items: ProductDto[] }[]
+  catGroups: CategoryGroup[]
   cart: Map<string, CartLine>
   onSetQty: (product: ProductDto, qty: number) => void
 }) {
+  // Always render sub-cat headings — when the parent screen splits cat-groups
+  // across two columns, a "hide when only one" rule on a per-column basis
+  // would make the left and right tables look inconsistent (one with headings,
+  // one without). Always-on is cheaper to reason about.
+  const showCatHeadings = true
   return (
     <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
       <TableContainer>
@@ -953,39 +1128,71 @@ function ProductsTable({
             </TableRow>
           </TableHead>
           <TableBody>
-            {groups.map(group => (
-              <Fragment key={group.label}>
-                <TableRow>
-                  <TableCell
-                    colSpan={3}
-                    align="center"
-                    sx={{
-                      bgcolor: '#FFF8DC',
-                      borderTop: '2px solid #1F1F1F',
-                      borderLeft: '4px solid #FCD835',
-                      fontWeight: 700,
-                      textTransform: 'uppercase',
-                      letterSpacing: 0.6,
-                      fontSize: 12,
-                      py: 1,
-                    }}
-                  >
-                    {group.label}
-                    <Box component="span" sx={{ ml: 1, color: '#1F1F1F99', fontWeight: 600 }}>
-                      · {group.items.length} {group.items.length === 1 ? 'product' : 'products'}
-                    </Box>
-                  </TableCell>
-                </TableRow>
-                {group.items.map(p => (
-                  <ProductRow
-                    key={p.id}
-                    product={p}
-                    qty={cart.get(p.id)?.qty ?? 0}
-                    onSetQty={onSetQty}
-                  />
-                ))}
-              </Fragment>
-            ))}
+            {catGroups.map(cg => {
+              const itemCount = cg.weightGroups.reduce((n, g) => n + g.items.length, 0)
+              return (
+                <Fragment key={cg.catId}>
+                  {showCatHeadings && (
+                    <TableRow>
+                      <TableCell
+                        colSpan={3}
+                        sx={{
+                          // Stronger styling than the weight bar so the sub-cat
+                          // grouping reads as the OUTER layer at a glance.
+                          bgcolor: '#1F1F1F',
+                          color: '#FCD835',
+                          fontWeight: 800,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.8,
+                          fontSize: 13,
+                          py: 1.25,
+                          pl: 2,
+                          borderTop: '2px solid #1F1F1F',
+                        }}
+                      >
+                        {cg.catLabel}
+                        <Box component="span" sx={{ ml: 1.5, color: '#FCD835AA', fontWeight: 600, fontSize: 11 }}>
+                          · {itemCount} {itemCount === 1 ? 'product' : 'products'}
+                        </Box>
+                      </TableCell>
+                    </TableRow>
+                  )}
+                  {cg.weightGroups.map(group => (
+                    <Fragment key={`${cg.catId}__${group.label}`}>
+                      <TableRow>
+                        <TableCell
+                          colSpan={3}
+                          align="center"
+                          sx={{
+                            bgcolor: '#FFF8DC',
+                            borderTop: '2px solid #1F1F1F',
+                            borderLeft: '4px solid #FCD835',
+                            fontWeight: 700,
+                            textTransform: 'uppercase',
+                            letterSpacing: 0.6,
+                            fontSize: 12,
+                            py: 1,
+                          }}
+                        >
+                          {group.label}
+                          <Box component="span" sx={{ ml: 1, color: '#1F1F1F99', fontWeight: 600 }}>
+                            · {group.items.length} {group.items.length === 1 ? 'product' : 'products'}
+                          </Box>
+                        </TableCell>
+                      </TableRow>
+                      {group.items.map(p => (
+                        <ProductRow
+                          key={p.id}
+                          product={p}
+                          qty={cart.get(p.id)?.qty ?? 0}
+                          onSetQty={onSetQty}
+                        />
+                      ))}
+                    </Fragment>
+                  ))}
+                </Fragment>
+              )
+            })}
           </TableBody>
         </Table>
       </TableContainer>

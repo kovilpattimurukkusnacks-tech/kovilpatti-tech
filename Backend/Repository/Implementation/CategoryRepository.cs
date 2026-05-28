@@ -31,28 +31,30 @@ public class CategoryRepository(IDbConnectionFactory factory) : ICategoryReposit
             new CommandDefinition(sql, new { p_id = id }, cancellationToken: ct));
     }
 
-    public async Task<bool> ExistsByNameAsync(string name, int? excludeId, CancellationToken ct = default)
+    public async Task<bool> ExistsByNameAsync(string name, int? parentId, int? excludeId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT fn_category_exists_by_name(@p_name, @p_exclude_id)";
+        // p_parent_id IS NULL means "check among root categories" — matches
+        // the SP's IS NOT DISTINCT FROM semantics so NULL is a real value.
+        const string sql = "SELECT fn_category_exists_by_name(@p_name, @p_parent_id, @p_exclude_id)";
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-            sql, new { p_name = name, p_exclude_id = excludeId }, cancellationToken: ct));
+            sql, new { p_name = name, p_parent_id = parentId, p_exclude_id = excludeId }, cancellationToken: ct));
     }
 
-    public async Task<int> CreateAsync(string name, bool active, Guid userId, CancellationToken ct = default)
+    public async Task<int> CreateAsync(string name, int? parentId, bool active, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT fn_category_create(@p_name, @p_active, @p_user_id)";
+        const string sql = "SELECT fn_category_create(@p_name, @p_parent_id, @p_active, @p_user_id)";
         return await conn.ExecuteScalarAsync<int>(new CommandDefinition(
-            sql, new { p_name = name, p_active = active, p_user_id = userId }, cancellationToken: ct));
+            sql, new { p_name = name, p_parent_id = parentId, p_active = active, p_user_id = userId }, cancellationToken: ct));
     }
 
-    public async Task<bool> UpdateAsync(int id, string name, bool active, Guid userId, CancellationToken ct = default)
+    public async Task<bool> UpdateAsync(int id, string name, int? parentId, bool active, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT fn_category_update(@p_id, @p_name, @p_active, @p_user_id)";
+        const string sql = "SELECT fn_category_update(@p_id, @p_name, @p_parent_id, @p_active, @p_user_id)";
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-            sql, new { p_id = id, p_name = name, p_active = active, p_user_id = userId }, cancellationToken: ct));
+            sql, new { p_id = id, p_name = name, p_parent_id = parentId, p_active = active, p_user_id = userId }, cancellationToken: ct));
     }
 
     public async Task<bool> SoftDeleteAsync(int id, Guid userId, CancellationToken ct = default)

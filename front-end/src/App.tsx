@@ -23,6 +23,7 @@ import AdminRequests from './pages/admin/AdminRequests'
 import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
+import PrintRequestThermal from './pages/print/PrintRequestThermal'
 import PrintCumulative from './pages/print/PrintCumulative'
 
 // Role gate — bounces unauthenticated users to login, and any authenticated
@@ -85,7 +86,9 @@ const router = createBrowserRouter(
 
       {/* Print routes — standalone (no role layout) so they're paper-clean.
           Service still enforces role-scoped data access on the BE. */}
-      <Route path="/print/request/:id" element={<PrintGate><PrintRequestPicklist /></PrintGate>} />
+      <Route path="/print/request/:id"         element={<PrintGate><PrintRequestPicklist /></PrintGate>} />
+      {/* Shop-user thermal (80mm) variant — same data, receipt layout. */}
+      <Route path="/print/request/:id/thermal" element={<PrintGate><PrintRequestThermal  /></PrintGate>} />
       <Route path="/print/cumulative"  element={<PrintGate><PrintCumulative /></PrintGate>} />
     </>
   )

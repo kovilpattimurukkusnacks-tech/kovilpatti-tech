@@ -436,9 +436,16 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
           )}
           <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            {/* Categories are nested (client #1). Server returns rows in tree
+                order (root-first, depth-grouped); we indent each MenuItem by
+                its depth and show only the leaf name so the visual hierarchy
+                reads cleanly. Same-named leaves under different parents stay
+                disambiguated by their indentation context. */}
             <TextField select label="Category" value={categoryId} onChange={e => setCategoryId(Number(e.target.value))} size="small" required disabled={submitting}>
               {categories.map(c => (
-                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
+                  {c.name}
+                </MenuItem>
               ))}
             </TextField>
             <TextField select label="Type" value={type} onChange={e => setType(e.target.value)} required size="small" disabled={submitting}>
@@ -762,7 +769,9 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
           >
             <MenuItem value="">All categories</MenuItem>
             {categories.map(c => (
-              <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+              <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
+                {c.name}
+              </MenuItem>
             ))}
           </TextField>
         </DialogContent>

@@ -16,6 +16,7 @@ import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
   useSaveDispatchDraft, useClearDispatchDraft,
+  useAcceptReturn,
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
@@ -29,18 +30,24 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
+  // Returns' terminal state — green-success once goods are back at godown.
+  Accepted: 'success',
 }
 
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
   const { data: request, isLoading, error } = useStockRequest(id)
-  const dispatchMutation = useDispatchStockRequest()
-  const approveMutation  = useApproveStockRequest()
-  const rejectMutation   = useRejectStockRequest()
-  const revokeMutation   = useRevokeStockRequest()
-  const saveDraftMutation  = useSaveDispatchDraft()
-  const clearDraftMutation = useClearDispatchDraft()
+  const dispatchMutation     = useDispatchStockRequest()
+  const approveMutation      = useApproveStockRequest()
+  const rejectMutation       = useRejectStockRequest()
+  const revokeMutation       = useRevokeStockRequest()
+  const saveDraftMutation    = useSaveDispatchDraft()
+  const clearDraftMutation   = useClearDispatchDraft()
+  // Accept Return — Pending Return → Accepted (terminal). Same per-item qty
+  // payload as Dispatch but writes acceptedQty (BE maps to dispatched_qty
+  // column; partial accept allowed if godown counts less).
+  const acceptReturnMutation = useAcceptReturn()
 
   // Per-item "to dispatch" quantities. Starts at requested_qty; inventory can
   // ship less if they're out of stock (clamped to ≤ requested_qty).
@@ -105,7 +112,14 @@ export default function InventoryRequestDetail() {
   const items = request?.items ?? []
   // Approval step removed: a freshly submitted Pending request is dispatchable.
   // Approved kept as fallback for legacy rows from before the workflow change.
-  const canDispatch = request?.status === 'Pending' || request?.status === 'Approved'
+  // Lifecycle flags split by request type. Orders go through Approve →
+  // Dispatch → Received; Returns go Pending → Accepted in one step. Reject is
+  // valid for either type while still Pending.
+  const isReturn   = request?.requestType === 'Return'
+  const canDispatch = !isReturn && (request?.status === 'Pending' || request?.status === 'Approved')
+  const canAccept   =  isReturn && request?.status === 'Pending'
+  // The qty-input table is editable in either pre-finalisation mode.
+  const canEditQty  = canDispatch || canAccept
   const stats = useMemo(() => {
     let dispatchTotal = 0
     let shortLines = 0
@@ -148,7 +162,9 @@ export default function InventoryRequestDetail() {
   // follows is the intended outcome of the user's click.
   const submittingRef = useRef(false)
   const guard = useUnsavedChangesGuard(
-    () => !submittingRef.current && canDispatch && isDraftDirty,
+    // Guard active for both Order dispatch and Return accept — either flow has
+    // editable qtys that get lost if the user navigates away mid-entry.
+    () => !submittingRef.current && (canDispatch || canAccept) && isDraftDirty,
   )
 
   // Auto-save change counter — see ShopRequestNew for the rationale. Used
@@ -240,6 +256,20 @@ export default function InventoryRequestDetail() {
     }
   }
 
+  // Accept Return — same payload mechanics as Dispatch but the API DTO uses
+  // `acceptedQty` (BE maps to dispatched_qty column underneath).
+  const handleAccept = async () => {
+    const itemsPayload = items.map(it => ({
+      id: it.id,
+      acceptedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
+    }))
+    try {
+      await acceptReturnMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
+    } finally {
+      setConfirmOpen(false)
+    }
+  }
+
   /**
    * Save what's been entered so far without finalising. Lines that the user
    * hasn't typed in yet are sent as their requested_qty so the BE's
@@ -306,19 +336,19 @@ export default function InventoryRequestDetail() {
     finally { setRevokeConfirm(false) }
   }
 
-  // Approve/Reject buttons appear only when the request is still Pending.
-  // Revoke appears only when the request is Approved or Rejected — once
-  // it's Dispatched there's no going back.
-  // Once status moves out of Pending, the shop's edit window is implicitly
-  // closed (shop UI keys off status === 'Pending').
-  const canApproveOrReject = request.status === 'Pending'
-  const canRevoke          = request.status === 'Approved' || request.status === 'Rejected'
+  // Approve / Reject / Revoke gates. Returns don't have an Approve step —
+  // they go Pending → Accepted directly — but Reject IS valid for either
+  // type. Revoke is Order-only (Returns have no Approved intermediate state).
+  const canApprove = !isReturn && request.status === 'Pending'
+  const canReject  = request.status === 'Pending'
+  const canRevoke  = !isReturn && (request.status === 'Approved' || request.status === 'Rejected')
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
     : e instanceof Error ? e.message
     : null
   const dispatchError   = flatErr(dispatchMutation.error)
+  const acceptError     = flatErr(acceptReturnMutation.error)
   const approveError    = flatErr(approveMutation.error)
   const rejectError     = flatErr(rejectMutation.error)
   const revokeError     = flatErr(revokeMutation.error)
@@ -334,38 +364,41 @@ export default function InventoryRequestDetail() {
   //    to keep React's hooks order stable across loading / loaded renders. ──
 
   return (
-    <Box sx={{ pb: canDispatch ? 12 : 4 }}>
+    <Box sx={{ pb: canEditQty ? 12 : 4 }}>
       <PageHeader
         title={request.code}
-        subtitle={`${request.shopCode} ${request.shopName} — pack & dispatch`}
+        subtitle={`${request.shopCode} ${request.shopName} — ${isReturn ? 'review & accept return' : 'pack & dispatch'}`}
         action={
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            {canApproveOrReject && (
-              <>
-                <Button
-                  variant="outlined"
-                  startIcon={<X className="w-4 h-4" />}
-                  onClick={() => setRejectOpen(true)}
-                  disabled={rejectMutation.isPending}
-                  sx={{
-                    textTransform: 'none', fontWeight: 600,
-                    borderColor: '#C62828', color: '#C62828',
-                    '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-                  }}
-                >
-                  Reject
-                </Button>
-                <Button
-                  variant="contained"
-                  color="success"
-                  startIcon={<Check className="w-4 h-4" />}
-                  onClick={() => setApproveConfirm(true)}
-                  disabled={approveMutation.isPending}
-                  sx={{ textTransform: 'none', fontWeight: 700 }}
-                >
-                  Approve
-                </Button>
-              </>
+            {/* Reject — valid for both Orders and Returns while Pending. */}
+            {canReject && (
+              <Button
+                variant="outlined"
+                startIcon={<X className="w-4 h-4" />}
+                onClick={() => setRejectOpen(true)}
+                disabled={rejectMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#C62828', color: '#C62828',
+                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+                }}
+              >
+                Reject
+              </Button>
+            )}
+            {/* Approve — Orders only. Returns don't have an Approve step;
+                they go straight from Pending to Accepted. */}
+            {canApprove && (
+              <Button
+                variant="contained"
+                color="success"
+                startIcon={<Check className="w-4 h-4" />}
+                onClick={() => setApproveConfirm(true)}
+                disabled={approveMutation.isPending}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
+              >
+                Approve
+              </Button>
             )}
             {canRevoke && (
               <Button
@@ -404,22 +437,46 @@ export default function InventoryRequestDetail() {
         <Chip
           label={request.status}
           color={STATUS_COLOR[request.status]}
-          variant={request.status === 'Received' ? 'filled' : 'outlined'}
+          variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
           sx={{ fontWeight: 700 }}
         />
+        {/* Return-type pill — matches the red Return styling on the lists. */}
+        {isReturn && (
+          <Chip
+            label="Return"
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: '#C62828',
+              color: '#C62828',
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          />
+        )}
         {canDispatch && (
           <Chip label="Ready to dispatch" color="primary" variant="outlined" size="small" />
+        )}
+        {canAccept && (
+          <Chip label="Ready to accept" color="primary" variant="outlined" size="small" />
         )}
 
         <Box sx={{ flex: 1 }} />
 
-        {/* Approval step removed — Submitted → Dispatched → Received. */}
+        {/* Timeline pills — Orders go Submitted → Dispatched → Received; Returns
+            go Submitted → Accepted in one step (no approve/dispatch/receive). */}
         <PillStep label="Submitted"  at={request.submittedAt}  by={request.submittedByName}  done />
         <PillSep />
-        <PillStep label="Dispatched" at={request.dispatchedAt} by={request.dispatchedByName} done={!!request.dispatchedAt} />
-        <PillSep />
-        <PillStep label="Received"   at={request.receivedAt}   by={request.receivedByName}  done={!!request.receivedAt} />
+        {isReturn ? (
+          <PillStep label="Accepted" at={request.acceptedAt} by={request.acceptedByName} done={!!request.acceptedAt} />
+        ) : (
+          <>
+            <PillStep label="Dispatched" at={request.dispatchedAt} by={request.dispatchedByName} done={!!request.dispatchedAt} />
+            <PillSep />
+            <PillStep label="Received"   at={request.receivedAt}   by={request.receivedByName}  done={!!request.receivedAt} />
+          </>
+        )}
       </Box>
 
       {/* Items — one bordered card per category. Yellow header strip with the
@@ -474,7 +531,7 @@ export default function InventoryRequestDetail() {
                     {wg.items.map(item => {
                       const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
                       const lineTotal = currentDispatch * item.unitPrice
-                      const isShort = canDispatch && currentDispatch < item.requestedQty
+                      const isShort = canEditQty && currentDispatch < item.requestedQty
                       return (
                         <TableRow key={item.id} hover>
                           <TableCell sx={{ pl: 3, py: 1 }}>
@@ -482,7 +539,7 @@ export default function InventoryRequestDetail() {
                           </TableCell>
                           <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
                           <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
-                            {canDispatch ? (
+                            {canEditQty ? (
                               <TextField
                                 type="number"
                                 size="small"
@@ -535,8 +592,12 @@ export default function InventoryRequestDetail() {
       {saveDraftError  && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{saveDraftError}</Alert>}
       {clearDraftError && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{clearDraftError}</Alert>}
 
-      {/* Sticky bottom dispatch bar — only when this request is dispatchable. */}
-      {canDispatch && (
+      {acceptError && <Alert severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{acceptError}</Alert>}
+
+      {/* Sticky bottom bar — shown when the request is awaiting either a
+          Dispatch (Order) or an Accept (Return). Same qty-entry mechanic; the
+          finalise button + text labels switch by request type. */}
+      {canEditQty && (
         <Paper
           elevation={6}
           sx={{
@@ -569,10 +630,11 @@ export default function InventoryRequestDetail() {
                     ? `${stats.shortLines} line${stats.shortLines === 1 ? '' : 's'} short of requested`
                     : 'All lines at requested qty'}
               </Box>
-              <Box sx={{ fontSize: 18, fontWeight: 700, color: '#1F1F1F' }}>Dispatch total {formatINR(stats.dispatchTotal)}</Box>
-              {/* Quiet draft state hint — shown when the page opens with a
-                  previously-saved draft, or right after a fresh save. */}
-              {(draftSavedAt || hasInitialDraft) && (
+              <Box sx={{ fontSize: 18, fontWeight: 700, color: '#1F1F1F' }}>
+                {isReturn ? 'Return total' : 'Dispatch total'} {formatINR(stats.dispatchTotal)}
+              </Box>
+              {/* Quiet draft state hint — Order-only (Returns have no draft). */}
+              {canDispatch && (draftSavedAt || hasInitialDraft) && (
                 <Box sx={{ fontSize: 11, color: '#1F1F1F99', mt: 0.25 }}>
                   Draft {draftSavedAt
                     ? `saved at ${formatIstTime(draftSavedAt)}`
@@ -582,10 +644,9 @@ export default function InventoryRequestDetail() {
             </Box>
           </Box>
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Discard Draft — only shown when there's actually a saved
-                draft on the BE. Clears draft_dispatched_qty on every item
-                and lets the seed effect re-apply the defaults. */}
-            {hasInitialDraft && (
+            {/* Draft Save / Discard — Order-only. Returns are one-shot;
+                the godown either Accepts the return or Rejects it, no WIP. */}
+            {canDispatch && hasInitialDraft && (
               <Button
                 variant="outlined"
                 onClick={handleDiscardDraft}
@@ -599,56 +660,65 @@ export default function InventoryRequestDetail() {
                 {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
               </Button>
             )}
-            {/* Save as Draft — no "all lines filled" gate so the user can
-                step away mid-dispatch and come back. Disabled when nothing
-                is pending to save: save already in flight, no quantities
-                entered, or no changes since the last save. The label
-                reflects state so the user knows whether the click did
-                anything. */}
-            <Button
-              variant="outlined"
-              onClick={handleSaveDraft}
-              disabled={saveDraftMutation.isPending || dispatchQtys.size === 0 || !isDraftDirty}
-              title={
-                dispatchQtys.size === 0
-                  ? 'Enter at least one quantity before saving'
-                  : !isDraftDirty
-                    ? 'Already saved — make a change to save again'
-                    : undefined
-              }
-              sx={{
-                textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
-                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-              }}
-            >
-              {saveDraftMutation.isPending
-                ? 'Saving…'
-                : !isDraftDirty && dispatchQtys.size > 0
-                  ? 'Saved'
-                  : 'Save as Draft'}
-            </Button>
+            {canDispatch && (
+              <Button
+                variant="outlined"
+                onClick={handleSaveDraft}
+                disabled={saveDraftMutation.isPending || dispatchQtys.size === 0 || !isDraftDirty}
+                title={
+                  dispatchQtys.size === 0
+                    ? 'Enter at least one quantity before saving'
+                    : !isDraftDirty
+                      ? 'Already saved — make a change to save again'
+                      : undefined
+                }
+                sx={{
+                  textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                {saveDraftMutation.isPending
+                  ? 'Saving…'
+                  : !isDraftDirty && dispatchQtys.size > 0
+                    ? 'Saved'
+                    : 'Save as Draft'}
+              </Button>
+            )}
+            {/* Finalise — Dispatch for Orders, Accept for Returns. Same
+                "every line filled" gate (0 is valid = out of stock / refused
+                that item). */}
             <Button
               variant="contained"
               startIcon={<PackageCheck className="w-4 h-4" />}
               onClick={() => setConfirmOpen(true)}
-              disabled={dispatchMutation.isPending || !allLinesFilled}
+              disabled={
+                (canAccept ? acceptReturnMutation.isPending : dispatchMutation.isPending)
+                || !allLinesFilled
+              }
               title={!allLinesFilled ? 'Enter a quantity for every product first (0 = out of stock)' : undefined}
               sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
             >
-              {dispatchMutation.isPending ? 'Dispatching…' : 'Mark as Dispatched'}
+              {canAccept
+                ? (acceptReturnMutation.isPending ? 'Accepting…' : 'Accept Return')
+                : (dispatchMutation.isPending ? 'Dispatching…' : 'Mark as Dispatched')}
             </Button>
           </Box>
         </Paper>
       )}
 
+      {/* One confirm dialog drives both finalisations — text + handler flip
+          on isReturn / canAccept. The same `confirmOpen` state opens it from
+          either the Dispatch or Accept Return button. */}
       <ConfirmDialog
         open={confirmOpen}
-        title="Confirm dispatch?"
-        message={`Mark ${request.code} as Dispatched with the quantities entered (total ${formatINR(stats.dispatchTotal)}). The shop will then be able to confirm receipt.`}
-        confirmLabel="Yes, Dispatch"
+        title={canAccept ? 'Accept this return?' : 'Confirm dispatch?'}
+        message={canAccept
+          ? `Mark ${request.code} as Accepted with the quantities entered (total ${formatINR(stats.dispatchTotal)}). This closes the return on the godown side.`
+          : `Mark ${request.code} as Dispatched with the quantities entered (total ${formatINR(stats.dispatchTotal)}). The shop will then be able to confirm receipt.`}
+        confirmLabel={canAccept ? 'Yes, Accept' : 'Yes, Dispatch'}
         cancelLabel="Not yet"
-        onConfirm={handleDispatch}
+        onConfirm={canAccept ? handleAccept : handleDispatch}
         onCancel={() => setConfirmOpen(false)}
       />
 

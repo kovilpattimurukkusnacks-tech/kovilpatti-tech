@@ -11,9 +11,7 @@ import {
 } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
-import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
-import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../components/FilterBar'
-import type { RequestStatus, StockRequestDto } from '../../api/stock-requests/types'
+import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
@@ -21,26 +19,34 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
+  // Returns' terminal state — green-success once goods are back at godown.
+  Accepted: 'success',
 }
 
-// Quick-filter presets. Each maps to a single status the BE understands.
-// `undefined` = show all statuses. Order mirrors the request lifecycle so
-// the chip row reads left-to-right as the workflow: Pending → Approved →
-// Dispatched → Received → catch-all.
-//
-// Approval step is "legacy" per workflow guidance — a freshly submitted
-// request is Pending and goes straight to inventory for dispatch. The
-// Approved chip is here because the Approve button is still live in the
-// detail page, and any request the inventory user has approved needs a
-// home in the filter row (otherwise it silently vanishes from Needs
-// Action and only the "All" chip finds it).
-type Preset = { key: string; label: string; status: RequestStatus | undefined }
+// Quick-filter presets. Per client feedback (demo, 26 May 2026), the inventory
+// list shows four lifecycle buckets:
+//   • Needs Action = Pending (request just landed, not yet approved)
+//   • In-Progress  = Approved (godown is working on it, shop can no longer edit)
+//   • Delivered    = Received (shop confirmed receipt)
+//   • All          = everything
+// The previous "In Transit" (Dispatched) chip was dropped — dispatched rows
+// surface under "All". "Approved" label was renamed to "In-Progress" to match
+// how the client describes the workflow state.
+// A fifth chip "Return" (added 28 May 2026) filters by request_type and cuts
+// across statuses so the godown can see Pending Returns waiting for accept
+// alongside Accepted ones in one place.
+type Preset = {
+  key: string
+  label: string
+  status?: RequestStatus
+  requestType?: RequestType
+}
 const PRESETS: Preset[] = [
-  { key: 'pending',    label: 'Needs Action',  status: 'Pending'    },
-  { key: 'approved',   label: 'Approved',      status: 'Approved'   },
-  { key: 'dispatched', label: 'In Transit',    status: 'Dispatched' },
-  { key: 'received',   label: 'Delivered',     status: 'Received'   },
-  { key: 'all',        label: 'All',           status: undefined    },
+  { key: 'pending',  label: 'Needs Action', status: 'Pending'  },
+  { key: 'approved', label: 'In-Progress',  status: 'Approved' },
+  { key: 'received', label: 'Delivered',    status: 'Received' },
+  { key: 'all',      label: 'All',          status: undefined  },
+  { key: 'return',   label: 'Return',       requestType: 'Return' },
 ]
 
 export default function InventoryRequests() {
@@ -50,29 +56,19 @@ export default function InventoryRequests() {
   // Optional second-level drill-down — clicking a shop chip toggles it.
   const [shopId, setShopId] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState<string>('')
-  // Date range filter on submitted_at — defaults to today (both ends).
-  const [fromDate, setFromDate] = useState<string>(istToday())
-  const [toDate, setToDate]     = useState<string>(istToday())
-  // Filter controls collapsed by default; active filters shown as pills.
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
 
-  const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
-
-  const handleDateChange = (from: string, to: string) => {
-    setFromDate(from)
-    setToDate(to)
-    setPaginationModel(m => ({ ...m, page: 0 }))
-  }
+  const currentPreset      = PRESETS.find(p => p.key === activePreset)
+  const currentStatus      = currentPreset?.status
+  const currentRequestType = currentPreset?.requestType
 
   const list = useIncomingStockRequests({
     status: currentStatus,
+    requestType: currentRequestType,
     shopId,
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
     pageSize: paginationModel.pageSize,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
   })
 
   // Inventory user's own scope is enforced server-side, so no inventoryId
@@ -81,13 +77,11 @@ export default function InventoryRequests() {
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
 
-  // Per-shop chips for the active status filter. BE forces the inventory
-  // scope to this user's godown — so we only see shops served by it.
-  const shopCounts = useRequestCountByShop({
-    status: currentStatus,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
-  })
+  // Per-shop chips for the active preset. BE forces the inventory scope to
+  // this user's godown — so we only see shops served by it. When the Return
+  // chip is active, both status and requestType collapse to a single filter
+  // (requestType='Return', no status) so the chip row mirrors the table.
+  const shopCounts = useRequestCountByShop({ status: currentStatus, requestType: currentRequestType })
 
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
@@ -101,7 +95,27 @@ export default function InventoryRequests() {
     // Every chip shows date + time so the user can correlate timestamps
     // (requested at vs approved/dispatched/received at) at a glance.
     const codeCol: GridColDef<StockRequestDto> = {
-      field: 'code', headerName: 'Code', width: 110, sortable: false, filterable: false,
+      field: 'code', headerName: 'Code', width: 180, sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <span style={{ fontWeight: 600 }}>{row.code}</span>
+          {row.requestType === 'Return' && (
+            <Chip
+              label="Return"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C62828',
+                color: '#C62828',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+          )}
+        </Box>
+      ),
     }
     const requestedDateCol: GridColDef<StockRequestDto> = {
       // Most useful triage signal — when the request landed in the queue.
@@ -116,7 +130,7 @@ export default function InventoryRequests() {
     }
 
     // Code always leads — most reliable triage anchor across every chip
-    // (Pending, Approved, In Transit, Delivered, All). Date column(s) and
+    // (Needs Action, In-Progress, Delivered, All). Date column(s) and
     // user / shop / qty columns follow.
     const cols: GridColDef<StockRequestDto>[] = [codeCol, requestedDateCol]
   // Lifecycle-specific second column — surfaces the timestamp of the state
@@ -125,15 +139,7 @@ export default function InventoryRequests() {
   // these chips so the pair reads consistently.
   if (activePreset === 'approved') {
     cols.push({
-      field: 'approvedAt', headerName: 'Approved Date', width: 190, sortable: false, filterable: false,
-      renderCell: ({ value }) => value
-        ? formatIstDateTime(value as string)
-        : <span className="text-[#1F1F1F]/40">—</span>,
-    })
-  }
-  if (activePreset === 'dispatched') {
-    cols.push({
-      field: 'dispatchedAt', headerName: 'Dispatched Date', width: 190, sortable: false, filterable: false,
+      field: 'approvedAt', headerName: 'In-Progress Since', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
         ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
@@ -141,7 +147,7 @@ export default function InventoryRequests() {
   }
   if (activePreset === 'received') {
     cols.push({
-      field: 'receivedAt', headerName: 'Received Date', width: 190, sortable: false, filterable: false,
+      field: 'receivedAt', headerName: 'Delivered On', width: 190, sortable: false, filterable: false,
       renderCell: ({ value }) => value
         ? formatIstDateTime(value as string)
         : <span className="text-[#1F1F1F]/40">—</span>,
@@ -202,39 +208,13 @@ export default function InventoryRequests() {
           label={value}
           size="small"
           color={STATUS_COLOR[value as RequestStatus]}
-          variant={row.status === 'Received' ? 'filled' : 'outlined'}
+          variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
         />
       ),
     },
   )
   return cols
   }, [activePreset])
-
-  // Active-filter pills shown when the panel is collapsed. Each ✕ clears that
-  // one filter (date → all dates; status → All; shop → none; search → empty).
-  const activePills: FilterPill[] = []
-  // Date pill has no ✕ — the date filter is always present (defaults to today)
-  // and is changed via the expanded panel, not cleared from the summary.
-  if (fromDate || toDate)
-    activePills.push({ key: 'date', label: dateRangeLabel(fromDate, toDate) })
-  if (currentStatus !== undefined)
-    activePills.push({
-      key: 'status',
-      label: PRESETS.find(p => p.key === activePreset)?.label ?? activePreset,
-      onRemove: () => { setActivePreset('all'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
-    })
-  if (shopId)
-    activePills.push({
-      key: 'shop',
-      label: shopCounts.data?.find(s => s.shopId === shopId)?.shopName ?? 'Shop',
-      onRemove: () => { setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) },
-    })
-  if (search.trim())
-    activePills.push({
-      key: 'search',
-      label: `“${search.trim()}”`,
-      onRemove: () => { setSearch(''); setPaginationModel(m => ({ ...m, page: 0 })) },
-    })
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
@@ -251,7 +231,7 @@ export default function InventoryRequests() {
             startIcon={<Printer className="w-4 h-4" />}
             onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
             disabled={!hasPending}
-            title={hasPending ? undefined : 'No pending requests to print'}
+            title={hasPending ? undefined : 'No in-progress requests to print'}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
             Print Cumulative
@@ -308,108 +288,114 @@ export default function InventoryRequests() {
         </Box>
       )}
 
-      <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
-      <FilterBar>
-        {/* Date row — search box sits at the right of this row. */}
-        <FilterRow
-          label="Date"
-          right={
-            <TextField
-              size="small"
-              value={search}
-              onChange={e => { setSearch(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
-              placeholder="Search by code"
-              sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search className="w-4 h-4 text-[#1F1F1F]" />
-                    </InputAdornment>
-                  ),
-                },
+      {/* Status chips + search — inline single row. Inventory filters per
+          client (demo, 26 May 2026): no date filter, no collapse panel,
+          chips collapsed to Needs Action / In-Progress / Delivered / All.
+          The Return chip (28 May 2026) is themed red to match the inline
+          Return pill on rows + detail. */}
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 1.5, flexWrap: 'wrap', alignItems: 'center' }}>
+        {PRESETS.map(p => {
+          const active   = activePreset === p.key
+          const isReturn = p.key === 'return'
+          return (
+            <Button
+              key={p.key}
+              onClick={() => {
+                setActivePreset(p.key)
+                // Drop the shop drill-down when the preset changes — a shop
+                // that has rows in one bucket may have none in the next.
+                setShopId(undefined)
+                setPaginationModel(m => ({ ...m, page: 0 }))
               }}
-            />
-          }
-        >
-          <DateRangeFilter from={fromDate} to={toDate} onChange={handleDateChange} hideLabel />
-        </FilterRow>
+              disableElevation
+              variant={active ? 'contained' : 'outlined'}
+              size="small"
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                borderRadius: 999,
+                px: 2,
+                py: 0.5,
+                minHeight: 32,
+                ...(active
+                  ? isReturn
+                    ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
+                    : { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                  : isReturn
+                  ? {
+                      bgcolor: '#FFFFFF', color: '#C62828',
+                      borderColor: 'rgba(198,40,40,0.45)',
+                      '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
+                    }
+                  : {
+                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      borderColor: 'rgba(31,31,31,0.25)',
+                      '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
+                    }),
+              }}
+            >
+              {p.label}
+            </Button>
+          )
+        })}
 
-        {/* Status chips */}
-        <FilterRow label="Status">
-          {PRESETS.map(p => {
-            const active = activePreset === p.key
+        <Box sx={{ flex: 1 }} />
+
+        <TextField
+          size="small"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
+          placeholder="Search by code"
+          sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search className="w-4 h-4 text-[#1F1F1F]" />
+                </InputAdornment>
+              ),
+            },
+          }}
+        />
+      </Box>
+
+      {/* Per-shop drill-down chips for the active status filter. Server
+          prunes zero-count shops; row hidden when nothing matches. Click a
+          chip to filter; click again to clear. */}
+      {(shopCounts.data?.length ?? 0) > 0 && (
+        <Box sx={{ display: 'flex', gap: 1, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+          <Box sx={{ fontSize: 12, fontWeight: 600, color: '#1F1F1F99', mr: 0.5 }}>
+            By shop:
+          </Box>
+          {shopCounts.data!.map(s => {
+            const active = shopId === s.shopId
             return (
-              <Button
-                key={p.key}
+              <Chip
+                key={s.shopId}
                 onClick={() => {
-                  setActivePreset(p.key)
-                  // Drop the shop drill-down when the status changes — a shop
-                  // that has rows in one status may have none in the next.
-                  setShopId(undefined)
+                  setShopId(prev => prev === s.shopId ? undefined : s.shopId)
                   setPaginationModel(m => ({ ...m, page: 0 }))
                 }}
-                disableElevation
-                variant={active ? 'contained' : 'outlined'}
+                label={`${s.shopName} (${s.requestCount})`}
                 size="small"
+                variant={active ? 'filled' : 'outlined'}
                 sx={{
-                  textTransform: 'none',
-                  fontWeight: 700,
+                  cursor: 'pointer',
                   borderRadius: 999,
-                  px: 2,
-                  py: 0.5,
-                  minHeight: 32,
+                  fontWeight: 600,
                   ...(active
                     ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
                     : {
                         bgcolor: '#FFFFFF', color: '#1F1F1F',
-                        borderColor: 'rgba(31,31,31,0.25)',
-                        '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
+                        borderColor: 'rgba(31,31,31,0.2)',
+                        '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
                       }),
                 }}
-              >
-                {p.label}
-              </Button>
+              />
             )
           })}
-        </FilterRow>
-
-        {/* Per-shop drill-down chips for the active status filter. Server
-            prunes zero-count shops; row hidden when nothing matches. Click a
-            chip to filter; click again to clear. */}
-        {(shopCounts.data?.length ?? 0) > 0 && (
-          <FilterRow label="By shop">
-            {shopCounts.data!.map(s => {
-              const active = shopId === s.shopId
-              return (
-                <Chip
-                  key={s.shopId}
-                  onClick={() => {
-                    setShopId(prev => prev === s.shopId ? undefined : s.shopId)
-                    setPaginationModel(m => ({ ...m, page: 0 }))
-                  }}
-                  label={`${s.shopName} (${s.requestCount})`}
-                  size="small"
-                  variant={active ? 'filled' : 'outlined'}
-                  sx={{
-                    cursor: 'pointer',
-                    borderRadius: 999,
-                    fontWeight: 600,
-                    ...(active
-                      ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
-                      : {
-                          bgcolor: '#FFFFFF', color: '#1F1F1F',
-                          borderColor: 'rgba(31,31,31,0.2)',
-                          '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
-                        }),
-                  }}
-                />
-              )
-            })}
-          </FilterRow>
-        )}
-      </FilterBar>
-      </FilterPanel>
+        </Box>
+      )}
 
       <Paper className="products-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <DataGrid

@@ -6,9 +6,14 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
 
 /**
- * Cumulative pending workload — one batch-plan report covering every
- * Pending request in the caller's inventory. Admin may pass ?inventoryId=
- * in the URL; inventory user's own scope is enforced server-side.
+ * Cumulative in-progress workload — one batch-plan report covering every
+ * Approved (= "In-Progress") request in the caller's inventory. Admin may
+ * pass ?inventoryId= in the URL; inventory user's own scope is enforced
+ * server-side.
+ *
+ * Why Approved and not Pending: once a request is Approved, the shop can no
+ * longer edit it — so the totals here are stable while the kitchen packs.
+ * (Client ask, 26 May 2026 demo.)
  *
  * SKUs are grouped under their category so the kitchen can plan each
  * production line in one pass (all Snacks together, all Biscuits together…).
@@ -65,8 +70,8 @@ export default function PrintCumulative() {
     <div className="print-page">
       <header className="print-header">
         <div>
-          <h1 className="print-title">Cumulative Pending — Batch Plan</h1>
-          <div className="print-meta">All Pending requests, grouped by category</div>
+          <h1 className="print-title">Cumulative In-Progress — Batch Plan</h1>
+          <div className="print-meta">All In-Progress (Approved) requests, grouped by category</div>
         </div>
         <div className="print-meta-right">
           <div><span className="muted">Generated:</span> {formatIstDateTime(new Date())}</div>
@@ -77,99 +82,79 @@ export default function PrintCumulative() {
       </header>
 
       {sections.length === 0 ? (
-        <p style={{ marginTop: 32 }}>No pending requests right now — nothing to prepare.</p>
+        <p style={{ marginTop: 32 }}>No in-progress requests right now — nothing to prepare.</p>
       ) : (
         <>
-          {/* Column legend at the top — shown once so the reader knows what
-              the numbers in each card mean. */}
-          <table className="print-table" style={{ marginBottom: 8 }}>
-            <colgroup>
-              <col style={{ width: 50 }} />
-              <col />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 110 }} />
-              <col style={{ width: 130 }} />
-            </colgroup>
-            <thead>
-              <tr>
-                <th>#</th>
-                <th>Product</th>
-                <th>Type</th>
-                <th style={{ textAlign: 'right' }}>Total Qty</th>
-                <th style={{ textAlign: 'right' }}>From Requests</th>
-              </tr>
-            </thead>
-          </table>
+          {/* Two-column flow — categories stack down two side-by-side columns
+              for paper density. Each section's break-inside:avoid keeps a
+              category together when possible. Columns 4 cells wide:
+              # / product / type / qty. From-Requests dropped per row and
+              surfaced in the page header + summary instead. */}
+          <div className="print-dense-grid">
+            {sections.map(section => {
+              const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
+              const subtotalQty = section.weightGroups.reduce(
+                (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0)
+              return (
+                <section key={section.category} className="print-dense-section">
+                  <div className="print-dense-banner">
+                    {section.category}
+                    <span className="muted">
+                      · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
+                      · {subtotalQty} units
+                    </span>
+                  </div>
+                  <table className="print-dense-table">
+                    <colgroup>
+                      <col style={{ width: 22 }} />
+                      <col />
+                      <col style={{ width: 60 }} />
+                      <col style={{ width: 48 }} />
+                    </colgroup>
+                    <tbody>
+                      {section.weightGroups.map(wg => {
+                        let idx = 0
+                        return (
+                          <Fragment key={`${section.category}__${wg.label}`}>
+                            <tr className="print-weight-row-dense">
+                              <td colSpan={4}>{wg.label}</td>
+                            </tr>
+                            {wg.items.map(r => {
+                              idx++
+                              return (
+                                <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
+                                  <td>{idx}</td>
+                                  <td><strong>{r.productName}</strong></td>
+                                  <td>{r.type}</td>
+                                  <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
+                                </tr>
+                              )
+                            })}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              )
+            })}
+          </div>
 
-          {sections.map(section => {
-            const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
-            const subtotalQty = section.weightGroups.reduce(
-              (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0)
-            return (
-              <div key={section.category} className="print-card">
-                <div className="print-card-header">
-                  {section.category}
-                  <span className="muted">
-                    · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
-                    · {subtotalQty} units
-                  </span>
-                </div>
-                <table className="print-table">
-                  <colgroup>
-                    <col style={{ width: 50 }} />
-                    <col />
-                    <col style={{ width: 90 }} />
-                    <col style={{ width: 110 }} />
-                    <col style={{ width: 130 }} />
-                  </colgroup>
-                  <tbody>
-                    {section.weightGroups.map(wg => {
-                      let idx = 0
-                      return (
-                        <Fragment key={`${section.category}__${wg.label}`}>
-                          <tr className="print-weight-row">
-                            <td colSpan={5}>{wg.label}</td>
-                          </tr>
-                          {wg.items.map(r => {
-                            idx++
-                            return (
-                              <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
-                                <td>{idx}</td>
-                                <td><strong>{r.productName}</strong></td>
-                                <td>{r.type}</td>
-                                <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
-                                <td style={{ textAlign: 'right' }}>{r.requestCount}</td>
-                              </tr>
-                            )
-                          })}
-                        </Fragment>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )
-          })}
-
-          {/* Grand totals strip below all category cards. */}
-          <table className="print-table" style={{ marginTop: 4 }}>
-            <colgroup>
-              <col style={{ width: 50 }} />
-              <col />
-              <col style={{ width: 90 }} />
-              <col style={{ width: 110 }} />
-              <col style={{ width: 130 }} />
-            </colgroup>
-            <tfoot>
-              <tr>
-                <td colSpan={3} className="strong" style={{ textAlign: 'right' }}>
-                  {totalSkus} {totalSkus === 1 ? 'SKU' : 'SKUs'} across {sections.length} {sections.length === 1 ? 'category' : 'categories'}
-                </td>
-                <td className="strong" style={{ textAlign: 'right' }}>{totalUnits} units</td>
-                <td />
-              </tr>
-            </tfoot>
-          </table>
+          {/* Compact grand-totals strip below the column grid. */}
+          <div className="print-dense-summary">
+            <span>
+              {totalSkus} {totalSkus === 1 ? 'SKU' : 'SKUs'}
+              <span className="muted"> · {sections.length} {sections.length === 1 ? 'category' : 'categories'}</span>
+            </span>
+            <span>
+              {totalUnits} units
+              {totalRequests > 0 && (
+                <span className="muted">
+                  {' '}· from up to {totalRequests} request{totalRequests === 1 ? '' : 's'}
+                </span>
+              )}
+            </span>
+          </div>
         </>
       )}
 

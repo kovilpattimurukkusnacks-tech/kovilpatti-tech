@@ -10,21 +10,24 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
-import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
-import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../components/FilterBar'
-import type { StockRequestDto, RequestStatus, StockRequestListFilters } from '../../api/stock-requests/types'
+import type { StockRequestDto, RequestStatus, RequestType, StockRequestListFilters } from '../../api/stock-requests/types'
 
-// Quick-filter chip presets — same row of chips the admin / inventory pages
-// use, ordered along the request lifecycle. `undefined` status = show all.
-type Preset = { key: string; label: string; status: RequestStatus | undefined }
+// Quick-filter chip presets. Per client feedback (demo, 26 May 2026), shop
+// users only care about three lifecycle buckets — All / Pending / Received —
+// plus a dedicated Return chip (added 28 May 2026) that cuts across statuses
+// to show every Return regardless of where it sits in the flow. The Return
+// preset filters by request_type; the others by status.
+type Preset = {
+  key: string
+  label: string
+  status?: RequestStatus
+  requestType?: RequestType
+}
 const PRESETS: Preset[] = [
-  { key: 'all',        label: 'All',        status: undefined    },
-  { key: 'pending',    label: 'Pending',    status: 'Pending'    },
-  { key: 'approved',   label: 'Approved',   status: 'Approved'   },
-  { key: 'dispatched', label: 'Dispatched', status: 'Dispatched' },
-  { key: 'received',   label: 'Received',   status: 'Received'   },
-  { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
-  { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
+  { key: 'all',      label: 'All',      status: undefined },
+  { key: 'pending',  label: 'Pending',  status: 'Pending'  },
+  { key: 'received', label: 'Received', status: 'Received' },
+  { key: 'return',   label: 'Return',   requestType: 'Return' },
 ]
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
@@ -38,6 +41,9 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Dispatched: 'primary',
   Received:   'success',
   Cancelled:  'default',
+  // Returns' terminal state — green-success, same as Received, since the
+  // goods have changed hands successfully (just in the opposite direction).
+  Accepted:   'success',
 }
 
 export default function ShopRequests() {
@@ -45,45 +51,29 @@ export default function ShopRequests() {
   // Default to All — shop user usually wants the full list of their requests.
   const [activePreset, setActivePreset] = useState<string>('all')
   const [search, setSearch] = useState<string>('')
-  // Date range filter on submitted_at — defaults to today (both ends).
-  const [fromDate, setFromDate] = useState<string>(istToday())
-  const [toDate, setToDate]     = useState<string>(istToday())
-  // Filter controls collapsed by default; active filters shown as pills.
-  const [filtersOpen, setFiltersOpen] = useState(false)
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
   // Only one row open at a time so the table stays scannable.
   const [expandedId, setExpandedId] = useState<string | null>(null)
 
-  const currentStatus = PRESETS.find(p => p.key === activePreset)?.status
-
-  const handleDateChange = (from: string, to: string) => {
-    setFromDate(from)
-    setToDate(to)
-    setPage(0)
-  }
+  const currentPreset      = PRESETS.find(p => p.key === activePreset)
+  const currentStatus      = currentPreset?.status
+  const currentRequestType = currentPreset?.requestType
 
   const list = useMyStockRequests({
     status: currentStatus,
+    requestType: currentRequestType,
     search: search.trim() || undefined,
     page: page + 1,
     pageSize,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
   } satisfies StockRequestListFilters)
 
-  // Status-specific extra column — surfaces the most relevant per-status
-  // info right after the Submitted column. Timestamp for approved /
-  // dispatched / received / cancelled; rejection reason text for rejected.
-  // NULL on the chips that don't have a meaningful extra signal
-  // ("All", "Pending") so the table stays compact.
+  // Status-specific extra column — only the Received chip surfaces a
+  // timestamp (the moment the shop confirmed receipt). All / Pending have
+  // no extra column so the table stays compact.
   const mutedDash = <span className="text-[#1F1F1F]/40">—</span>
   const extraCol: { header: string; render: (r: StockRequestDto) => React.ReactNode } | null =
-      activePreset === 'approved'   ? { header: 'Approved',   render: r => r.approvedAt   ? formatIstDateTime(r.approvedAt)   : mutedDash }
-    : activePreset === 'dispatched' ? { header: 'Dispatched', render: r => r.dispatchedAt ? formatIstDateTime(r.dispatchedAt) : mutedDash }
-    : activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? formatIstDateTime(r.receivedAt)   : mutedDash }
-    : activePreset === 'rejected'   ? { header: 'Reason',     render: r => r.rejectionReason ?? mutedDash }
-    : activePreset === 'cancelled'  ? { header: 'Cancelled',  render: r => r.cancelledAt  ? formatIstDateTime(r.cancelledAt)  : mutedDash }
+      activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? formatIstDateTime(r.receivedAt)   : mutedDash }
     : null
   // Total column count — used by the empty-state row and the expansion-row
   // colSpan so the layout stays correct whichever chip is active.
@@ -95,26 +85,6 @@ export default function ShopRequests() {
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
-
-  // Active-filter pills shown when the panel is collapsed. Each ✕ clears that
-  // one filter (date → all dates; status → All; search → empty).
-  const activePills: FilterPill[] = []
-  // Date pill has no ✕ — the date filter is always present (defaults to today)
-  // and is changed via the expanded panel, not cleared from the summary.
-  if (fromDate || toDate)
-    activePills.push({ key: 'date', label: dateRangeLabel(fromDate, toDate) })
-  if (activePreset !== 'all')
-    activePills.push({
-      key: 'status',
-      label: PRESETS.find(p => p.key === activePreset)?.label ?? activePreset,
-      onRemove: () => { setActivePreset('all'); setPage(0) },
-    })
-  if (search.trim())
-    activePills.push({
-      key: 'search',
-      label: `“${search.trim()}”`,
-      onRemove: () => { setSearch(''); setPage(0) },
-    })
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
@@ -181,67 +151,70 @@ export default function ShopRequests() {
         </Paper>
       )}
 
-      <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
-      <FilterBar>
-        {/* Date row — search box sits at the right of this row. */}
-        <FilterRow
-          label="Date"
-          right={
-            <TextField
+      {/* Status chips + search — inline single row. Shop user filters per
+          client (demo, 26 May 2026): three status buckets, no date filter, no
+          collapse panel. The fourth chip "Return" (added 28 May 2026) filters
+          by request_type instead of status, and is themed red to match the
+          inline Return pill on the row + detail page. */}
+      <Box sx={{ display: 'flex', gap: 1.5, mb: 2, flexWrap: 'wrap', alignItems: 'center' }}>
+        {PRESETS.map(p => {
+          const active   = activePreset === p.key
+          const isReturn = p.key === 'return'
+          return (
+            <Button
+              key={p.key}
+              onClick={() => { setActivePreset(p.key); setPage(0) }}
+              disableElevation
+              variant={active ? 'contained' : 'outlined'}
               size="small"
-              value={search}
-              onChange={e => { setSearch(e.target.value); setPage(0) }}
-              placeholder="Search by code"
-              sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
-              slotProps={{
-                input: {
-                  startAdornment: (
-                    <InputAdornment position="start">
-                      <Search className="w-4 h-4 text-[#1F1F1F]" />
-                    </InputAdornment>
-                  ),
-                },
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                borderRadius: 999,
+                px: 2,
+                py: 0.5,
+                minHeight: 32,
+                ...(active
+                  ? isReturn
+                    ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
+                    : { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                  : isReturn
+                  ? {
+                      bgcolor: '#FFFFFF', color: '#C62828',
+                      borderColor: 'rgba(198,40,40,0.45)',
+                      '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
+                    }
+                  : {
+                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      borderColor: 'rgba(31,31,31,0.25)',
+                      '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
+                    }),
               }}
-            />
-          }
-        >
-          <DateRangeFilter from={fromDate} to={toDate} onChange={handleDateChange} hideLabel />
-        </FilterRow>
+            >
+              {p.label}
+            </Button>
+          )
+        })}
 
-        {/* Status chips */}
-        <FilterRow label="Status">
-          {PRESETS.map(p => {
-            const active = activePreset === p.key
-            return (
-              <Button
-                key={p.key}
-                onClick={() => { setActivePreset(p.key); setPage(0) }}
-                disableElevation
-                variant={active ? 'contained' : 'outlined'}
-                size="small"
-                sx={{
-                  textTransform: 'none',
-                  fontWeight: 700,
-                  borderRadius: 999,
-                  px: 2,
-                  py: 0.5,
-                  minHeight: 32,
-                  ...(active
-                    ? { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
-                    : {
-                        bgcolor: '#FFFFFF', color: '#1F1F1F',
-                        borderColor: 'rgba(31,31,31,0.25)',
-                        '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
-                      }),
-                }}
-              >
-                {p.label}
-              </Button>
-            )
-          })}
-        </FilterRow>
-      </FilterBar>
-      </FilterPanel>
+        <Box sx={{ flex: 1 }} />
+
+        <TextField
+          size="small"
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(0) }}
+          placeholder="Search by code"
+          sx={{ minWidth: 220, '& .MuiOutlinedInput-root': { bgcolor: 'transparent' } }}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search className="w-4 h-4 text-[#1F1F1F]" />
+                </InputAdornment>
+              ),
+            },
+          }}
+        />
+      </Box>
 
       <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
         <TableContainer>
@@ -292,7 +265,26 @@ export default function ShopRequests() {
                           {isOpen ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
                         </IconButton>
                       </TableCell>
-                      <TableCell sx={{ fontWeight: 600 }}>{row.code}</TableCell>
+                      <TableCell sx={{ fontWeight: 600 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+                          <span>{row.code}</span>
+                          {row.requestType === 'Return' && (
+                            <Chip
+                              label="Return"
+                              size="small"
+                              variant="outlined"
+                              sx={{
+                                borderColor: '#C62828',
+                                color: '#C62828',
+                                fontWeight: 700,
+                                fontSize: 10,
+                                height: 20,
+                                letterSpacing: 0.5,
+                              }}
+                            />
+                          )}
+                        </Box>
+                      </TableCell>
                       <TableCell>{formatIstDateTime(row.submittedAt)}</TableCell>
                       {extraCol && (
                         <TableCell>{extraCol.render(row)}</TableCell>
@@ -305,7 +297,7 @@ export default function ShopRequests() {
                           label={row.status}
                           size="small"
                           color={STATUS_COLOR[row.status]}
-                          variant={row.status === 'Received' ? 'filled' : 'outlined'}
+                          variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
                         />
                       </TableCell>
                     </TableRow>

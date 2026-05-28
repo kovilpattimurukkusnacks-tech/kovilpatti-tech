@@ -19,12 +19,13 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] Guid?     inventoryId,
         [FromQuery] string?   status,
         [FromQuery] string?   search,
-        [FromQuery] int       page     = 1,
-        [FromQuery] int       pageSize = 10,
-        [FromQuery] DateOnly? fromDate = null,
-        [FromQuery] DateOnly? toDate   = null,
+        [FromQuery] int       page        = 1,
+        [FromQuery] int       pageSize    = 10,
+        [FromQuery] DateOnly? fromDate    = null,
+        [FromQuery] DateOnly? toDate      = null,
+        [FromQuery] string?   requestType = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, fromDate, toDate, ct));
+        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, fromDate, toDate, requestType, ct));
 
     // ─── Shop user: own shop's requests ──────────────────────
     [HttpGet("mine")]
@@ -32,12 +33,13 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     public async Task<ActionResult<PagedResult<StockRequestDto>>> ListMine(
         [FromQuery] string?   status,
         [FromQuery] string?   search,
-        [FromQuery] int       page     = 1,
-        [FromQuery] int       pageSize = 10,
-        [FromQuery] DateOnly? fromDate = null,
-        [FromQuery] DateOnly? toDate   = null,
+        [FromQuery] int       page        = 1,
+        [FromQuery] int       pageSize    = 10,
+        [FromQuery] DateOnly? fromDate    = null,
+        [FromQuery] DateOnly? toDate      = null,
+        [FromQuery] string?   requestType = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, fromDate, toDate, ct));
+        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, fromDate, toDate, requestType, ct));
 
     // ─── Inventory user: requests for their godown ───────────
     // shopId is an optional drill-down filter from the per-shop chip row;
@@ -48,12 +50,13 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] Guid?     shopId,
         [FromQuery] string?   status,
         [FromQuery] string?   search,
-        [FromQuery] int       page     = 1,
-        [FromQuery] int       pageSize = 10,
-        [FromQuery] DateOnly? fromDate = null,
-        [FromQuery] DateOnly? toDate   = null,
+        [FromQuery] int       page        = 1,
+        [FromQuery] int       pageSize    = 10,
+        [FromQuery] DateOnly? fromDate    = null,
+        [FromQuery] DateOnly? toDate      = null,
+        [FromQuery] string?   requestType = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, fromDate, toDate, ct));
+        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, fromDate, toDate, requestType, ct));
 
     // ─── Cumulative pending workload (Inventory + Admin) ─────
     // Aggregate of every Pending request's items, grouped by SKU. Inventory
@@ -75,10 +78,11 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     public async Task<ActionResult<IReadOnlyList<ShopRequestCountDto>>> CountByShop(
         [FromQuery] string?   status,
         [FromQuery] Guid?     inventoryId,
-        [FromQuery] DateOnly? fromDate = null,
-        [FromQuery] DateOnly? toDate   = null,
+        [FromQuery] DateOnly? fromDate    = null,
+        [FromQuery] DateOnly? toDate      = null,
+        [FromQuery] string?   requestType = null,
         CancellationToken ct = default)
-        => Ok(await requests.GetCountByShopAsync(status, inventoryId, fromDate, toDate, ct));
+        => Ok(await requests.GetCountByShopAsync(status, inventoryId, fromDate, toDate, requestType, ct));
 
     // ─── Detail (any role — service enforces ownership) ──────
     [HttpGet("{id:guid}")]
@@ -190,6 +194,45 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         Guid id,
         CancellationToken ct)
         => Ok(await requests.ClearDispatchDraftAsync(id, ct));
+
+    // ─── Return Stock ─────────────────────────────────────────
+    // Shop user creates a Return (items back to godown). Optional
+    // sourceRequestId links to the original Order so Phase 3 accounts
+    // can reverse the exact ledger entry.
+    [HttpPost("return")]
+    [Authorize(Roles = "ShopUser")]
+    public async Task<ActionResult<StockRequestDto>> CreateReturn(
+        [FromBody] CreateReturnRequest request,
+        CancellationToken ct)
+    {
+        var dto = await requests.CreateReturnAsync(request, ct);
+        return CreatedAtAction(nameof(Get), new { id = dto.Id }, dto);
+    }
+
+    // Inventory user / Admin accepts a Pending Return → terminal "Accepted".
+    // Per-item acceptedQty allowed for partial accepts (physical count
+    // differs from what the shop claimed they were sending back).
+    [HttpPatch("{id:guid}/accept")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> AcceptReturn(
+        Guid id,
+        [FromBody] AcceptReturnRequest request,
+        CancellationToken ct)
+        => Ok(await requests.AcceptReturnAsync(id, request, ct));
+
+    // Admin amends an item's dispatched_qty AFTER the request has been
+    // completed (Received Orders or Accepted Returns). Each edit is logged
+    // to stock_request_qty_audits for Phase 3 accounts to reconcile.
+    // Service-side also re-checks the Admin role so this can never be
+    // called from a less-restrictive route by mistake.
+    [HttpPatch("{id:guid}/items/{itemId:guid}/dispatched-qty")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<StockRequestDto>> EditDispatchedQty(
+        Guid id,
+        Guid itemId,
+        [FromBody] EditDispatchedQtyRequest request,
+        CancellationToken ct)
+        => Ok(await requests.EditDispatchedQtyAsync(id, itemId, request, ct));
 
     // ─── Inventory dispatch drafts list (Inventory + Admin) ──
     // Returns Pending/Approved requests that have at least one item with a

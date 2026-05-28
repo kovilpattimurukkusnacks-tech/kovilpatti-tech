@@ -4,6 +4,7 @@ import { NotFoundError } from '../api/errors'
 import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
+  RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -17,11 +18,12 @@ export const stockRequestsKeys = {
 
 // ─── Queries ─────────────────────────────────────────────
 
-export function useMyStockRequests(filters?: StockRequestListFilters) {
+export function useMyStockRequests(filters?: StockRequestListFilters, options?: { enabled?: boolean }) {
   return useQuery({
     queryKey: stockRequestsKeys.listMine(filters),
     queryFn: () => stockRequestsApi.listMine(filters),
     placeholderData: keepPreviousData,
+    enabled: options?.enabled ?? true,
   })
 }
 
@@ -63,11 +65,12 @@ export function useCumulativePending(inventoryId?: string) {
  *  quick-filter chips on the admin/inventory list pages. Refetches when the
  *  status changes; keeps the prior result visible during the refetch so the
  *  chip row doesn't blink to empty. */
-export function useRequestCountByShop(args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string }) {
+export function useRequestCountByShop(args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string; requestType?: RequestType }) {
   return useQuery({
     queryKey: ['stock-requests', 'count-by-shop',
       args?.status ?? 'all', args?.inventoryId ?? 'all',
-      args?.fromDate ?? '', args?.toDate ?? ''] as const,
+      args?.fromDate ?? '', args?.toDate ?? '',
+      args?.requestType ?? 'all'] as const,
     queryFn: () => stockRequestsApi.countByShop(args),
     placeholderData: keepPreviousData,
   })
@@ -286,10 +289,58 @@ export function useReceiveStockRequest() {
   })
 }
 
+/** Shop user creates a Return — items go back to the godown. Same cache
+ *  invalidation as useCreateStockRequest: only the shop's "mine" list needs
+ *  the new row visible immediately; other lists refetch when the inventory
+ *  user navigates to /incoming. */
+export function useCreateReturn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (req: CreateReturnRequest) => stockRequestsApi.createReturn(req),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
+    },
+  })
+}
+
+/** Inventory/Admin accepts a Pending Return (terminal Accepted). Same
+ *  invalidation strategy as the other lifecycle mutations — patch the row in
+ *  every cached paged list AND refetch (so status filters drop it from
+ *  Needs-Action and pick it up on the All chip). */
+export function useAcceptReturn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: AcceptReturnRequest }) =>
+      stockRequestsApi.acceptReturn(id, req),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      patchAllListCaches(qc, updated)
+    },
+  })
+}
+
 export function useCancelStockRequest() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (id: string) => stockRequestsApi.cancel(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      patchAllListCaches(qc, updated)
+    },
+  })
+}
+
+/** Admin's post-completion dispatched_qty edit. Same patch-on-success
+ *  strategy as the lifecycle mutations — qty totals on the parent change,
+ *  so list caches need to reflect that too (delivered amount column). */
+export function useEditDispatchedQty() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ requestId, itemId, req }: {
+      requestId: string
+      itemId:    string
+      req:       EditDispatchedQtyRequest
+    }) => stockRequestsApi.editDispatchedQty(requestId, itemId, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)

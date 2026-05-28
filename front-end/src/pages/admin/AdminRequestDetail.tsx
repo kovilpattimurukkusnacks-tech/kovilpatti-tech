@@ -1,9 +1,10 @@
 import { Fragment, useMemo, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, Pencil, Printer } from 'lucide-react'
 import {
-  Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableRow,
+  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableRow,
+  TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -11,8 +12,10 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
-import { useStockRequest, useCancelStockRequest } from '../../hooks/useStockRequests'
-import type { RequestStatus } from '../../api/stock-requests/types'
+import {
+  useStockRequest, useCancelStockRequest, useEditDispatchedQty,
+} from '../../hooks/useStockRequests'
+import type { RequestStatus, StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 
@@ -23,14 +26,33 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Draft: 'default',
   Pending: 'warning', Approved: 'info', Rejected: 'error',
   Dispatched: 'primary', Received: 'success', Cancelled: 'default',
+  // Returns' terminal state — green-success once goods are back at godown.
+  Accepted: 'success',
 }
 
 export default function AdminRequestDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  // location.key === 'default' means this tab landed directly on the detail
+  // route (refresh / bookmark / paste-url). Anything else means the user
+  // navigated in from another route within the app — so navigate(-1) is
+  // safe and preserves the list page's filter URL. Fallback to the bare
+  // list URL when there's no app history to go back to.
+  const location = useLocation()
+  const backToList = () => {
+    if (location.key !== 'default') navigate(-1)
+    else navigate('/admin/requests')
+  }
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
+  const editQtyMutation = useEditDispatchedQty()
   const [cancelConfirm, setCancelConfirm]   = useState(false)
+  // Post-completion qty edit dialog state. `editingItem` is the row being
+  // edited (null = dialog closed). The qty field is a string so we can
+  // distinguish "" (untouched / cleared) from "0" (valid edit to zero).
+  const [editingItem,    setEditingItem]    = useState<StockRequestItemDto | null>(null)
+  const [editingQtyText, setEditingQtyText] = useState<string>('')
+  const [editingReason,  setEditingReason]  = useState<string>('')
 
   // Card-per-category grouping. Computed unconditionally so hooks order stays
   // stable across loading / error renders.
@@ -46,7 +68,7 @@ export default function AdminRequestDetail() {
   if (error || !request) {
     return (
       <Box>
-        <PageHeader title="Request not found" subtitle="" action={<BackButton onClick={() => navigate('/admin/requests')} />} />
+        <PageHeader title="Request not found" subtitle="" action={<BackButton onClick={backToList} />} />
         <Alert severity="error">{error instanceof Error ? error.message : 'Could not load request.'}</Alert>
       </Box>
     )
@@ -57,6 +79,10 @@ export default function AdminRequestDetail() {
   // Items can be amended right up until the inventory dispatches.
   const canEdit   = request.status === 'Pending' || request.status === 'Approved'
   const canCancel = ['Pending', 'Approved'].includes(request.status)
+  // Admin-only post-completion qty correction. Available on terminal states
+  // (Received Orders + Accepted Returns). Phase 3 accounts uses the audit
+  // trail this writes to post reconciliation entries.
+  const canEditQty = request.status === 'Received' || request.status === 'Accepted'
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
@@ -66,6 +92,36 @@ export default function AdminRequestDetail() {
   const handleCancel = async () => {
     try { await cancelMutation.mutateAsync(request.id) }
     finally { setCancelConfirm(false) }
+  }
+
+  const openQtyEdit = (item: StockRequestItemDto) => {
+    setEditingItem(item)
+    // Pre-fill with the current dispatched value (or empty when null) so the
+    // admin starts from the existing state, not a blank cell.
+    setEditingQtyText(item.dispatchedQty == null ? '' : String(item.dispatchedQty))
+    setEditingReason('')
+    editQtyMutation.reset()
+  }
+
+  const closeQtyEdit = () => {
+    setEditingItem(null)
+    setEditingQtyText('')
+    setEditingReason('')
+    editQtyMutation.reset()
+  }
+
+  const handleSaveQty = async () => {
+    if (!editingItem) return
+    const trimmed = editingQtyText.trim()
+    // "" → null (clear the dispatched value). Otherwise must parse to int.
+    const parsed  = trimmed === '' ? null : Number(trimmed)
+    if (parsed !== null && (!Number.isInteger(parsed) || parsed < 0)) return
+    await editQtyMutation.mutateAsync({
+      requestId: request.id,
+      itemId:    editingItem.id,
+      req: { newQty: parsed, reason: editingReason.trim() || undefined },
+    })
+    closeQtyEdit()
   }
 
   return (
@@ -87,7 +143,7 @@ export default function AdminRequestDetail() {
             >
               Print
             </Button>
-            <BackButton onClick={() => navigate('/admin/requests')} />
+            <BackButton onClick={backToList} />
           </Box>
         }
       />
@@ -96,10 +152,26 @@ export default function AdminRequestDetail() {
         <Chip
           label={request.status}
           color={STATUS_COLOR[request.status]}
-          variant={request.status === 'Received' ? 'filled' : 'outlined'}
+          variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
           sx={{ fontWeight: 700 }}
         />
+        {/* Red "Return" pill — sits next to the status chip so admin can
+            see at a glance that this is a Return, regardless of where it
+            is in the flow. */}
+        {request.requestType === 'Return' && (
+          <Chip
+            label="Return"
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: '#C62828',
+              color: '#C62828',
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          />
+        )}
       </Box>
 
       {/* Legacy: historical rows from before approval-step removal may still
@@ -161,7 +233,7 @@ export default function AdminRequestDetail() {
                   <Fragment key={`${catGroup.category}__${wg.label}`}>
                     <TableRow>
                       <TableCell
-                        colSpan={5}
+                        colSpan={canEditQty ? 6 : 5}
                         sx={{
                           bgcolor: '#FFFFFF',
                           pl: 2,
@@ -198,6 +270,20 @@ export default function AdminRequestDetail() {
                           <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
                             {formatINR(effectiveSubtotal)}
                           </TableCell>
+                          {/* Admin post-completion qty edit — pencil opens a
+                              dialog that writes to the audit trail. Visible
+                              only when the request is in a terminal state. */}
+                          {canEditQty && (
+                            <TableCell align="center" sx={{ py: 1.25, width: 48 }}>
+                              <IconButton
+                                size="small"
+                                aria-label="Edit dispatched qty"
+                                onClick={() => openQtyEdit(item)}
+                              >
+                                <Pencil className="w-4 h-4" />
+                              </IconButton>
+                            </TableCell>
+                          )}
                         </TableRow>
                       )
                     })}
@@ -221,7 +307,7 @@ export default function AdminRequestDetail() {
         </Paper>
       )}
 
-      {[flatErr(cancelMutation.error)]
+      {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error)]
         .filter(Boolean)
         .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
 
@@ -266,6 +352,83 @@ export default function AdminRequestDetail() {
         onConfirm={handleCancel}
         onCancel={() => setCancelConfirm(false)}
       />
+
+      {/* Post-completion qty edit dialog. Opens when the admin clicks the
+          pencil on any item row (only visible on Received/Accepted requests).
+          Save writes an audit row via fn_request_item_edit_dispatched_qty. */}
+      <Dialog open={!!editingItem} onClose={closeQtyEdit} maxWidth="xs" fullWidth>
+        <DialogTitle sx={{ fontWeight: 700 }}>Edit dispatched qty</DialogTitle>
+        <DialogContent>
+          {editingItem && (
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: 2, pt: 1 }}>
+              <Box>
+                <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>
+                  Product
+                </Box>
+                <Box sx={{ fontSize: 14, fontWeight: 600, color: '#1F1F1F' }}>
+                  {editingItem.productName}
+                </Box>
+                <Box sx={{ fontSize: 12, color: '#1F1F1F99', mt: 0.5 }}>
+                  Requested {editingItem.requestedQty}
+                  {' · '}
+                  Currently dispatched {editingItem.dispatchedQty ?? '—'}
+                </Box>
+              </Box>
+
+              <TextField
+                label="New qty"
+                value={editingQtyText}
+                onChange={e => {
+                  // Digits only — empty string is a valid intent ("clear it").
+                  const v = e.target.value
+                  if (v === '' || /^\d+$/.test(v)) setEditingQtyText(v)
+                }}
+                placeholder="Leave blank to clear"
+                inputMode="numeric"
+                fullWidth
+                size="small"
+                autoFocus
+              />
+
+              <TextField
+                label="Reason (optional)"
+                value={editingReason}
+                onChange={e => setEditingReason(e.target.value)}
+                placeholder="e.g. counted wrong; one carton miscount"
+                fullWidth
+                size="small"
+                multiline
+                minRows={2}
+                slotProps={{ htmlInput: { maxLength: 500 } }}
+              />
+            </Box>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, pb: 2 }}>
+          <Button
+            onClick={closeQtyEdit}
+            disabled={editQtyMutation.isPending}
+            sx={{ textTransform: 'none' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={handleSaveQty}
+            disabled={
+              editQtyMutation.isPending
+              // No-op guard — disable Save when the qty hasn't actually changed.
+              || (editingItem != null
+                  && (editingQtyText.trim() === ''
+                        ? editingItem.dispatchedQty == null
+                        : Number(editingQtyText.trim()) === editingItem.dispatchedQty))
+            }
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            Save
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

@@ -28,6 +28,8 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
   Dispatched: 'primary',
   Received:   'success',
   Cancelled:  'default',
+  // Returns' terminal state — green-success once goods are back at godown.
+  Accepted:   'success',
 }
 
 export default function ShopRequestDetail() {
@@ -109,7 +111,10 @@ export default function ShopRequestDetail() {
             <Button
               variant="outlined"
               startIcon={<Printer className="w-4 h-4" />}
-              onClick={() => window.open(`/print/request/${request.id}`, '_blank', 'noopener,noreferrer')}
+              // Shop user prints on the shop's 3" thermal printer — route to
+              // the thermal layout. Admin/Inventory still use the A4 picklist
+              // route (/print/request/:id) from their respective detail pages.
+              onClick={() => window.open(`/print/request/${request.id}/thermal`, '_blank', 'noopener,noreferrer')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
                 borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
@@ -128,11 +133,31 @@ export default function ShopRequestDetail() {
         <Chip
           label={request.status}
           color={STATUS_COLOR[request.status]}
-          variant={request.status === 'Received' ? 'filled' : 'outlined'}
+          variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
           sx={{ fontWeight: 700 }}
         />
-        {request.status === 'Pending' && (
+        {/* Return pill — same red as the Return Stock submit button + the
+            list-page pill. Visible only on Return-type requests so the user
+            knows at a glance this isn't a normal order. */}
+        {request.requestType === 'Return' && (
+          <Chip
+            label="Return"
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: '#C62828',
+              color: '#C62828',
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          />
+        )}
+        {/* Editable-window countdown is an Order concept (daily cutoff). Returns
+            set editable_until 100 years out so the column is non-null — but
+            rendering that as "Editable for 876575h" makes no sense. Hide on
+            Returns; show the Order countdown / locked-admin-only chip only. */}
+        {request.requestType === 'Order' && request.status === 'Pending' && (
           inEditWindow ? (
             <Chip
               icon={<Clock className="w-3.5 h-3.5" />}
