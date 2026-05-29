@@ -5,6 +5,11 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
 
+// Brand block — mirrors the thermal receipt + per-request picklist so all
+// three printouts feel like the same family. Contact phone is per-shop on
+// the picklist; cumulative is cross-shop so we omit it here.
+const BRAND_NAME = 'Kovilpatti Murukku & Snacks'
+
 /**
  * Cumulative in-progress workload — one batch-plan report covering every
  * Approved (= "In-Progress") request in the caller's inventory. Admin may
@@ -68,18 +73,26 @@ export default function PrintCumulative() {
 
   return (
     <div className="print-page">
-      <header className="print-header">
-        <div>
-          <h1 className="print-title">Cumulative In-Progress — Batch Plan</h1>
-          <div className="print-meta">All In-Progress (Approved) requests, grouped by category</div>
-        </div>
-        <div className="print-meta-right">
-          <div><span className="muted">Generated:</span> {formatIstDateTime(new Date())}</div>
-          {totalRequests > 0 && (
-            <div><span className="muted">Sourced from:</span> up to {totalRequests} request{totalRequests === 1 ? '' : 's'}</div>
-          )}
-        </div>
+      {/* Centred brand header — same shape as the per-request picklist
+          + the thermal receipt. Contact line is omitted because this print
+          spans every shop. */}
+      <header className="print-brand-header">
+        <div className="print-brand-name">{BRAND_NAME}</div>
+        <div className="print-brand-subtitle">Cumulative Batch Plan</div>
       </header>
+
+      <div className="print-meta-strip">
+        <div>
+          <span className="muted">Generated: </span>
+          {formatIstDateTime(new Date())}
+        </div>
+        {totalRequests > 0 && (
+          <div>
+            <span className="muted">Sourced from: </span>
+            up to <strong>{totalRequests}</strong> request{totalRequests === 1 ? '' : 's'}
+          </div>
+        )}
+      </div>
 
       {sections.length === 0 ? (
         <p style={{ marginTop: 32 }}>No in-progress requests right now — nothing to prepare.</p>

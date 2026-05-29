@@ -10,6 +10,52 @@
   margin: 0 auto;
 }
 
+/* ─────────────────────────────────────────────────────────────────────
+ * Brand header — centred, same shape as the thermal receipt so admin /
+ * inventory / shop prints all read as one product family. Used by both
+ * PrintRequestPicklist + PrintCumulative.
+ * ───────────────────────────────────────────────────────────────────── */
+.print-brand-header {
+  text-align: center;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 2px solid #1F1F1F;
+}
+.print-brand-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.print-brand-contact {
+  font-size: 11px;
+  margin-top: 1px;
+  color: rgba(31, 31, 31, 0.7);
+}
+.print-brand-subtitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* Meta strip — single-band fact row that replaces the old timestamps row
+ * + parties block. Splits onto multiple lines on narrow widths via flex
+ * wrap; on a wide A4 page everything sits in a single line. */
+.print-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+}
+.print-meta-strip > div {
+  white-space: nowrap;
+}
+
 .print-header {
   display: flex;
   justify-content: space-between;
@@ -370,6 +416,13 @@
 .print-dense-summary .muted {
   font-weight: 500;
   color: rgba(31, 31, 31, 0.6);
+}
+
+/* Post-dispatch shortfall — the delivered amount flips red when it
+ * underruns the requested amount. Same shade as the on-screen detail
+ * page uses for short rows. */
+.print-dense-summary .danger {
+  color: #C62828;
 }
 
 /* Browser-print rules. Hide UI affordances; tighten margins for paper. */

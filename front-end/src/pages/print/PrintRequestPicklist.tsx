@@ -7,6 +7,11 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
 
+// Brand block — mirrors the thermal receipt's centred header so admin/godown
+// prints feel like the same product. Name stays constant; contact comes from
+// the request's shopContactPhone (per-shop), falling back to em-dash.
+const BRAND_NAME = 'Kovilpatti Murukku & Snacks'
+
 /**
  * Single-request picklist. Standalone route, no sidebar/header chrome,
  * auto-triggers the browser print dialog once the data lands. User can
@@ -62,40 +67,48 @@ export default function PrintRequestPicklist() {
 
   return (
     <div className="print-page">
-      {/* Centered title bar with status pill underneath; timestamps live on
-          a separate row on the right so the title can dominate visually. */}
-      <header className="print-header print-header-centered">
-        <div className="print-title-block">
-          <h1 className="print-title">Stock Request — Picklist</h1>
-          <div className="print-meta">
-            <strong>{request.code}</strong> · {request.status}
-          </div>
+      {/* Centred brand header — mirrors the thermal receipt style. Subtitle
+          flips to "RETURN BILL" on Return-type requests. Below the rule, a
+          single meta strip carries every shop / godown / who / when fact so
+          the old parties block + timestamps row collapse into one band. */}
+      <header className="print-brand-header">
+        <div className="print-brand-name">{BRAND_NAME}</div>
+        <div className="print-brand-contact">
+          Contact: {request.shopContactPhone ?? '—'}
         </div>
-        <div className="print-meta-right">
-          <div><span className="muted">Requested:</span> {formatIstDateTime(request.submittedAt)}</div>
-          {request.dispatchedAt && (
-            <div><span className="muted">Dispatched:</span> {formatIstDateTime(request.dispatchedAt)}</div>
-          )}
+        <div className="print-brand-subtitle">
+          {request.requestType === 'Return' ? 'Return Bill' : 'Stock Request'}
         </div>
       </header>
 
-      {/* Shop on the left, Inventory on the right edge of the page. */}
-      <section className="print-parties">
+      <div className="print-meta-strip">
         <div>
-          <div className="muted">Shop</div>
-          <div className="strong">{request.shopCode} — {request.shopName}</div>
+          <span className="muted">Code: </span>
+          <strong>{request.code}</strong>
+          <span className="muted"> · {request.status}</span>
+        </div>
+        <div>
+          <span className="muted">Shop: </span>
+          <strong>{request.shopName}</strong>
           {request.submittedByName && (
-            <div className="small">Requested by {request.submittedByName}</div>
+            <span className="muted"> · by {request.submittedByName}</span>
           )}
         </div>
-        <div className="print-parties-right">
-          <div className="muted">Inventory</div>
-          <div className="strong">{request.inventoryCode} — {request.inventoryName}</div>
-          {request.dispatchedByName && (
-            <div className="small">Dispatched by {request.dispatchedByName}</div>
+        <div>
+          <span className="muted">Godown: </span>
+          <strong>{request.inventoryName}</strong>
+        </div>
+        <div>
+          <span className="muted">Submitted: </span>
+          {formatIstDateTime(request.submittedAt)}
+          {request.dispatchedAt && (
+            <>
+              <span className="muted"> · Dispatched: </span>
+              {formatIstDateTime(request.dispatchedAt)}
+            </>
           )}
         </div>
-      </section>
+      </div>
 
       {/* Items — dense 2-column flow (same compression as the cumulative
           report). Each category sits in its own section with a slim banner
@@ -115,11 +128,15 @@ export default function PrintRequestPicklist() {
                   · {sectionQty} units
                 </span>
               </div>
+              {/* 5-col dense table — # / product / req / disp / amount.
+                  Amount is qty × unit_price; qty = dispatchedQty when set
+                  (post-dispatch), else requestedQty (pre-dispatch). */}
               <table className="print-dense-table">
                 <colgroup>
-                  <col style={{ width: 22 }} />
+                  <col style={{ width: 20 }} />
                   <col />
-                  <col style={{ width: 44 }} />
+                  <col style={{ width: 32 }} />
+                  <col style={{ width: 40 }} />
                   <col style={{ width: 56 }} />
                 </colgroup>
                 <tbody>
@@ -128,10 +145,12 @@ export default function PrintRequestPicklist() {
                     return (
                       <Fragment key={`${section.category}__${wg.label}`}>
                         <tr className="print-weight-row-dense">
-                          <td colSpan={4}>{wg.label}</td>
+                          <td colSpan={5}>{wg.label}</td>
                         </tr>
                         {wg.items.map(it => {
                           idx++
+                          const effQty = it.dispatchedQty ?? it.requestedQty
+                          const lineAmt = effQty * it.unitPrice
                           return (
                             <tr key={it.id}>
                               <td>{idx}</td>
@@ -139,6 +158,9 @@ export default function PrintRequestPicklist() {
                               <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
                               <td style={{ textAlign: 'right' }}>
                                 <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
+                              </td>
+                              <td style={{ textAlign: 'right' }} className="strong">
+                                {formatINR(lineAmt, { prefix: false })}
                               </td>
                             </tr>
                           )
@@ -153,53 +175,24 @@ export default function PrintRequestPicklist() {
         })}
       </div>
 
-      {/* Grand totals strip — compact, full width below the column grid. */}
+      {/* Single compact totals strip — quantities on the left, money on
+          the right. Post-dispatch shows the delivered numbers; pre-dispatch
+          shows the requested ones. Replaces the previous quantity strip +
+          money summary block so the footer takes one band, not three. */}
       <div className="print-dense-summary">
         <span>
-          Total
+          {hasDispatch ? 'Dispatched' : 'Requested'}
+          <span className="muted"> · </span>
+          <strong>{hasDispatch ? request.totalDispatchedQty : request.totalQty}</strong> units
           <span className="muted"> · {sections.length} {sections.length === 1 ? 'category' : 'categories'}</span>
         </span>
-        <span>
-          Requested {request.totalQty}
-          {request.totalDispatchedQty != null && (
-            <>
-              <span className="muted"> · </span>
-              Dispatched {request.totalDispatchedQty}
-            </>
+        <span className={isShort ? 'danger' : ''}>
+          <strong>{formatINR(hasDispatch ? deliveredAmount : request.totalAmount)}</strong>
+          {hasDispatch && request.totalDispatchedQty !== request.totalQty && (
+            <span className="muted"> (req. {request.totalQty} · {formatINR(request.totalAmount)})</span>
           )}
         </span>
       </div>
-
-      {/* Money totals — printed below the picklist so the kitchen / godown
-          has both quantity AND amount on the same sheet. Delivered line is
-          only rendered post-dispatch; it goes red if it's short of requested. */}
-      <section className="print-summary">
-        <div className="print-summary-row">
-          <span className="muted">Requested quantity</span>
-          <span className="strong">{request.totalQty} {request.totalQty === 1 ? 'unit' : 'units'}</span>
-        </div>
-        <div className="print-summary-row">
-          <span className="muted">Requested amount</span>
-          <span className="strong">{formatINR(request.totalAmount)}</span>
-        </div>
-        {hasDispatch && (
-          <>
-            <div className="print-summary-divider" />
-            <div className="print-summary-row">
-              <span className="muted">Dispatched quantity</span>
-              <span className={'strong' + (isShort ? ' danger' : '')}>
-                {request.totalDispatchedQty} {request.totalDispatchedQty === 1 ? 'unit' : 'units'}
-              </span>
-            </div>
-            <div className="print-summary-row">
-              <span className="muted">Dispatched amount</span>
-              <span className={'strong' + (isShort ? ' danger' : '')}>
-                {formatINR(deliveredAmount)}
-              </span>
-            </div>
-          </>
-        )}
-      </section>
 
       {request.notes && (
         <section className="print-notes">
