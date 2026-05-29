@@ -519,6 +519,9 @@ RETURNS TABLE (
   shop_id               uuid,
   shop_code             varchar,
   shop_name             varchar,
+  -- Contact phone surfaced for the thermal print header — every shop has
+  -- contact_phone_1 (NOT NULL on the table). contact_phone_2 left out for now.
+  shop_contact_phone    varchar,
   inventory_id          uuid,
   inventory_code        varchar,
   inventory_name        varchar,
@@ -554,7 +557,7 @@ RETURNS TABLE (
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
-         r.shop_id, s.code, s.name,
+         r.shop_id, s.code, s.name, s.contact_phone_1 AS shop_contact_phone,
          r.inventory_id, i.code, i.name,
          u.full_name    AS submitted_by_name,
          ua.full_name   AS approved_by_name,

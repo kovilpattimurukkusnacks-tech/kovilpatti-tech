@@ -1137,10 +1137,11 @@ function ProductsTable({
                       <TableCell
                         colSpan={3}
                         sx={{
-                          // Stronger styling than the weight bar so the sub-cat
-                          // grouping reads as the OUTER layer at a glance.
-                          bgcolor: '#1F1F1F',
-                          color: '#FCD835',
+                          // Metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
+                          // with dark text. Luxury brand-feel sweep; reads as
+                          // the OUTER grouping layer next to the cream weight bar.
+                          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                          color: '#1F1F1F',
                           fontWeight: 800,
                           textTransform: 'uppercase',
                           letterSpacing: 0.8,
@@ -1151,7 +1152,7 @@ function ProductsTable({
                         }}
                       >
                         {cg.catLabel}
-                        <Box component="span" sx={{ ml: 1.5, color: '#FCD835AA', fontWeight: 600, fontSize: 11 }}>
+                        <Box component="span" sx={{ ml: 1.5, color: '#1F1F1F99', fontWeight: 600, fontSize: 11 }}>
                           · {itemCount} {itemCount === 1 ? 'product' : 'products'}
                         </Box>
                       </TableCell>

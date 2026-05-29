@@ -14,6 +14,7 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useReceiveStockRequest,
 } from '../../hooks/useStockRequests'
+import { useSettings } from '../../hooks/useSettings'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
@@ -38,6 +39,12 @@ export default function ShopRequestDetail() {
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
   const receiveMutation = useReceiveStockRequest()
+  // App settings — used to gate the editable-window chip below. When admin
+  // has toggled request_lock_enabled = false, neither the countdown nor the
+  // "Locked — admin only" chip is meaningful, so we drop the whole block.
+  const settingsQuery = useSettings()
+  const lockEnabled = (settingsQuery.data ?? [])
+    .find(s => s.key === 'request_lock_enabled')?.value?.toLowerCase() !== 'false'
   const [cancelOpen, setCancelOpen]   = useState(false)
   const [receiveOpen, setReceiveOpen] = useState(false)
 
@@ -50,6 +57,11 @@ export default function ShopRequestDetail() {
     ),
     [request?.items],
   )
+
+  // Layout note: cards are placed into a CSS `column-count` container below,
+  // so the browser auto-balances them across 2 columns (1 on mobile). No
+  // manual left/right split needed — `break-inside: avoid` on each card keeps
+  // categories intact while column heights stay close.
 
   if (isLoading) {
     return (
@@ -80,8 +92,12 @@ export default function ShopRequestDetail() {
   const hoursLeft = Math.max(0, Math.floor(msLeft / 3_600_000))
   const minsLeft  = Math.max(0, Math.floor((msLeft % 3_600_000) / 60_000))
 
-  const canEdit    = request.status === 'Pending' && inEditWindow
-  const canCancel  = (request.status === 'Pending' || request.status === 'Approved') && inEditWindow
+  // When admin has turned off request_lock_enabled, treat every Pending
+  // request as still inside its edit window — even legacy rows whose stored
+  // editable_until is already in the past.
+  const effectiveInWindow = inEditWindow || !lockEnabled
+  const canEdit    = request.status === 'Pending' && effectiveInWindow
+  const canCancel  = (request.status === 'Pending' || request.status === 'Approved') && effectiveInWindow
   const canReceive = request.status === 'Dispatched'
 
   const cancelError =
@@ -100,6 +116,93 @@ export default function ShopRequestDetail() {
     try { await receiveMutation.mutateAsync(request.id) }
     finally { setReceiveOpen(false) }
   }
+
+  // Card renderer — extracted so both columns of the 2-col grid can call it
+  // without duplicating 80 lines of JSX. Closes over formatINR / DispatchedCell
+  // from the outer scope, no extra props needed.
+  const renderCatGroup = (catGroup: typeof grouped[number]) => (
+    <Paper
+      key={catGroup.category}
+      elevation={0}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+    >
+      {/* Category header — metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
+          with dark text. Luxury brand-feel sweep; no dark stops so the bar
+          reads warm + premium against the cream weight strip below. */}
+      <Box
+        sx={{
+          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          color: '#1F1F1F',
+          borderBottom: '2px solid #1F1F1F',
+          px: 2,
+          py: 1.25,
+          fontWeight: 800,
+          fontSize: 14,
+          textTransform: 'uppercase',
+          letterSpacing: 0.8,
+        }}
+      >
+        {catGroup.category}
+      </Box>
+
+      <TableContainer>
+        <Table size="small">
+          <TableBody>
+            {catGroup.weightGroups.map((wg, wIdx) => (
+              <Fragment key={`${catGroup.category}__${wg.label}`}>
+                {/* Weight strip — yellow-tinted with yellow left-edge. */}
+                <TableRow>
+                  <TableCell
+                    colSpan={5}
+                    sx={{
+                      bgcolor: '#FFF8DC',
+                      borderLeft: '4px solid #FCD835',
+                      borderTop: wIdx === 0 ? 'none' : '2px solid #1F1F1F',
+                      pl: 2,
+                      py: 1,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.6,
+                      color: '#1F1F1F',
+                    }}
+                  >
+                    {wg.label}
+                    <Box component="span" sx={{ ml: 1, color: '#1F1F1F99', fontWeight: 600 }}>
+                      · {wg.items.length} {wg.items.length === 1 ? 'product' : 'products'}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+                {wg.items.map(item => {
+                  // Subtotal reflects effective qty × price. Post-dispatch
+                  // that's dispatched_qty; pre-dispatch falls back to
+                  // requested_qty so the column stays meaningful.
+                  const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                  const effectiveSubtotal = effectiveQty * item.unitPrice
+                  const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  return (
+                    <TableRow key={item.id} hover>
+                      <TableCell sx={{ pl: 3, py: 1.25 }}>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
+                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                        {formatINR(effectiveSubtotal)}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Paper>
+  )
 
   return (
     <Box sx={{ pb: 4 }}>
@@ -153,11 +256,12 @@ export default function ShopRequestDetail() {
             }}
           />
         )}
-        {/* Editable-window countdown is an Order concept (daily cutoff). Returns
-            set editable_until 100 years out so the column is non-null — but
-            rendering that as "Editable for 876575h" makes no sense. Hide on
-            Returns; show the Order countdown / locked-admin-only chip only. */}
-        {request.requestType === 'Order' && request.status === 'Pending' && (
+        {/* Editable-window chip is an Order concept (daily cutoff) and only
+            relevant while the lock is enabled in app_settings. Returns set
+            editable_until 100 years out so the countdown is nonsensical; when
+            lock is disabled, the whole concept goes away. Both cases → drop
+            the chip entirely. */}
+        {lockEnabled && request.requestType === 'Order' && request.status === 'Pending' && (
           inEditWindow ? (
             <Chip
               icon={<Clock className="w-3.5 h-3.5" />}
@@ -204,92 +308,18 @@ export default function ShopRequestDetail() {
         </Box>
       </Paper>
 
-      {/* Items — one bordered card per category. Each card has its own yellow
-          header strip with the category name, then a body with weight
-          sub-headings and product rows. Cards make the boundaries between
-          categories unambiguous, so the user always knows "what is this
-          product under?" at a glance. */}
-      {grouped.map(catGroup => (
-        <Paper
-          key={catGroup.category}
-          elevation={0}
-          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
-        >
-          {/* Category header strip */}
-          <Box
-            sx={{
-              bgcolor: '#FCD835',
-              borderBottom: '2px solid #1F1F1F',
-              px: 2,
-              py: 1.25,
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: 'uppercase',
-              letterSpacing: 0.6,
-              color: '#1F1F1F',
-            }}
-          >
-            {catGroup.category}
-          </Box>
-
-          {/* Card body — table without its own column header (kept clean per
-              the picked layout). Column meaning is implied by alignment and
-              context; the request detail audience already knows the shape. */}
-          <TableContainer>
-            <Table size="small">
-              <TableBody>
-                {catGroup.weightGroups.map((wg, wIdx) => (
-                  <Fragment key={`${catGroup.category}__${wg.label}`}>
-                    {/* Weight sub-heading — small uppercase eyebrow, muted */}
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        sx={{
-                          bgcolor: '#FFFFFF',
-                          pl: 2,
-                          pt: wIdx === 0 ? 1.5 : 2.5,
-                          pb: 0.5,
-                          fontWeight: 700,
-                          fontSize: 10,
-                          textTransform: 'uppercase',
-                          letterSpacing: 1.4,
-                          color: '#1F1F1F66',
-                          borderBottom: '1px solid rgba(31,31,31,0.08)',
-                        }}
-                      >
-                        {wg.label}
-                      </TableCell>
-                    </TableRow>
-                    {wg.items.map(item => {
-                      // Subtotal reflects what's actually counted: before dispatch
-                      // that's the requested qty, after dispatch it's the dispatched qty.
-                      // Without this the column shows "₹65" even when only 2 of 5 shipped.
-                      const effectiveQty = item.dispatchedQty ?? item.requestedQty
-                      const effectiveSubtotal = effectiveQty * item.unitPrice
-                      const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
-                      return (
-                        <TableRow key={item.id} hover>
-                          <TableCell sx={{ pl: 3, py: 1.25 }}>
-                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                            <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
-                            {formatINR(effectiveSubtotal)}
-                          </TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      ))}
+      {/* Items — CSS column-count masonry. Browser distributes cards across
+          two columns (1 on xs) to even out column height. break-inside on
+          each card stops a category from splitting across the gutter. */}
+      <Box
+        sx={{
+          columnCount: { xs: 1, md: 2 },
+          columnGap: 2,
+          '& > *': { breakInside: 'avoid', display: 'block' },
+        }}
+      >
+        {grouped.map(cg => renderCatGroup(cg))}
+      </Box>
 
       {/* Summary panel — overall totals broken out for clarity. */}
       <Box sx={{ mb: 2 }}>

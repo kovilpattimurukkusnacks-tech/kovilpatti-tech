@@ -35,7 +35,7 @@ export default function InventorySidebar({ onNavigate }: Props) {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
                 isActive
-                  ? 'bg-[#1F1F1F] text-[#FCD835] shadow-lg shadow-black/30'
+                  ? 'gold-gradient shadow-lg shadow-black/30'
                   : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
               }`
             }
@@ -48,7 +48,7 @@ export default function InventorySidebar({ onNavigate }: Props) {
 
       <div className="relative z-10 px-4 py-4 border-t-2 border-[#1F1F1F]/15">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 bg-[#1F1F1F] text-[#FCD835] rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-md shadow-black/30">
+          <div className="w-9 h-9 gold-gradient rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-md shadow-black/30">
             {currentUser?.fullName.charAt(0).toUpperCase() ?? 'I'}
           </div>
           <div className="text-sm flex-1 min-w-0">
@@ -58,7 +58,7 @@ export default function InventorySidebar({ onNavigate }: Props) {
         </div>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-[#1F1F1F] hover:bg-[#1F1F1F] hover:text-[#FCD835] font-bold transition"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-[#1F1F1F] hover:gold-gradient font-bold transition"
         >
           <LogOut className="w-3.5 h-3.5" />
           Logout

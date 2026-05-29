@@ -125,9 +125,22 @@ public class StockRequestService(
         var shop = await shops.GetAsync(shopId, ct)
             ?? throw new NotFoundException("Your shop record was not found.");
 
-        // Compute editable_until from the configured cutoff.
-        var cutoffStr = (await settings.GetAsync("request_lock_cutoff", ct))?.Value ?? "09:00";
-        var editableUntil = ComputeEditableUntil(cutoffStr);
+        // Compute editable_until. When request_lock_enabled = false, the shop
+        // can edit anytime — set a far-future timestamp so the FE chip / the
+        // service's own UpdateAsync time-window check never fires. Otherwise
+        // use the daily IST cutoff (request_lock_cutoff).
+        DateTimeOffset editableUntil;
+        if (await IsRequestLockEnabledAsync(ct))
+        {
+            var cutoffStr = (await settings.GetAsync("request_lock_cutoff", ct))?.Value ?? "09:00";
+            editableUntil = ComputeEditableUntil(cutoffStr);
+        }
+        else
+        {
+            // 100-year horizon — same value the Returns flow uses to mean
+            // "editing window is effectively unlimited".
+            editableUntil = DateTimeOffset.UtcNow.AddYears(100);
+        }
 
         var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
@@ -696,7 +709,7 @@ public class StockRequestService(
     private static StockRequestDto MapHeaderToDto(StockRequest r)
         => new(
             r.Id, r.Code,
-            r.Shop_Id, r.Shop_Code, r.Shop_Name,
+            r.Shop_Id, r.Shop_Code, r.Shop_Name, r.Shop_Contact_Phone,
             r.Inventory_Id, r.Inventory_Code, r.Inventory_Name,
             r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
             r.Accepted_By_Name,

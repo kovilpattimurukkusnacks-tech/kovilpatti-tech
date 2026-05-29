@@ -170,13 +170,18 @@
   margin-top: 4mm;
 }
 .thermal-print-btn {
-  background: #1F1F1F;
-  color: #FCD835;
-  border: 0;
+  /* Brand gold gradient — matches MUI containedPrimary in theme.ts so
+   * the on-screen Print button feels native to the rest of the UI. */
+  background: linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%);
+  color: #1F1F1F;
+  border: 1px solid #C28A00;
   padding: 8px 16px;
   border-radius: 6px;
   font-weight: 700;
   cursor: pointer;
+}
+.thermal-print-btn:hover {
+  background: linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%);
 }
 
 /* ============================================================

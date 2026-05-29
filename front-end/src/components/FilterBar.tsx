@@ -16,7 +16,8 @@ export function FilterBar({ children }: { children: ReactNode }) {
       sx={{
         border: '1.5px solid rgba(31,31,31,0.15)',
         borderRadius: 2.5,
-        bgcolor: '#FFFFFF',
+        // Cream tint — matches the warm row backdrop on every data table.
+        bgcolor: '#FFFBE6',
         px: 2,
         py: 1.5,
         display: 'flex',
@@ -78,9 +79,10 @@ export function FilterPanel({
             sx={{
               borderRadius: 999,
               fontWeight: 600,
-              bgcolor: '#1F1F1F',
-              color: '#FCD835',
-              '& .MuiChip-deleteIcon': { color: '#FCD835', '&:hover': { color: '#FFFFFF' } },
+              background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+              color: '#1F1F1F',
+              border: '1px solid #C28A00',
+              '& .MuiChip-deleteIcon': { color: '#1F1F1F', '&:hover': { color: '#7B1A1A' } },
             }}
           />
         ))}

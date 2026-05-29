@@ -146,6 +146,10 @@ export default function InventoryRequestDetail() {
     [items],
   )
 
+  // Layout note: cards go into a CSS `column-count` container below — the
+  // browser auto-balances them across 2 columns (1 on mobile) so column
+  // heights stay close. break-inside: avoid keeps each card whole.
+
   // ── Hooks below MUST stay before the early-return block. React's rules
   //    of hooks demand a stable count per render; if we run only the hooks
   //    above on the loading render and these too on the loaded render,
@@ -363,6 +367,102 @@ export default function InventoryRequestDetail() {
   //    moved above the isLoading early return (see top of the component)
   //    to keep React's hooks order stable across loading / loaded renders. ──
 
+  // Card renderer for one category-group — same JSX used by both columns
+  // of the 2-col grid. Closes over dispatchQtys / canEditQty / setItemQty
+  // / formatINR / DispatchedCell from the outer scope.
+  const renderCatGroup = (catGroup: typeof grouped[number]) => (
+    <Paper
+      key={catGroup.category}
+      elevation={0}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+    >
+      {/* Category header — metallic gold gradient with dark text. */}
+      <Box
+        sx={{
+          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          color: '#1F1F1F',
+          borderBottom: '2px solid #1F1F1F',
+          px: 2,
+          py: 1.25,
+          fontWeight: 800,
+          fontSize: 14,
+          textTransform: 'uppercase',
+          letterSpacing: 0.8,
+        }}
+      >
+        {catGroup.category}
+      </Box>
+      <TableContainer>
+        <Table size="small">
+          <TableBody>
+            {catGroup.weightGroups.map((wg, wIdx) => (
+              <Fragment key={`${catGroup.category}__${wg.label}`}>
+                <TableRow>
+                  <TableCell
+                    colSpan={5}
+                    sx={{
+                      bgcolor: '#FFF8DC',
+                      borderLeft: '4px solid #FCD835',
+                      borderTop: wIdx === 0 ? 'none' : '2px solid #1F1F1F',
+                      pl: 2,
+                      py: 1,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.6,
+                      color: '#1F1F1F',
+                    }}
+                  >
+                    {wg.label}
+                    <Box component="span" sx={{ ml: 1, color: '#1F1F1F99', fontWeight: 600 }}>
+                      · {wg.items.length} {wg.items.length === 1 ? 'product' : 'products'}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+                {wg.items.map(item => {
+                  const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
+                  const lineTotal = currentDispatch * item.unitPrice
+                  const isShort = canEditQty && currentDispatch < item.requestedQty
+                  return (
+                    <TableRow key={item.id} hover>
+                      <TableCell sx={{ pl: 3, py: 1 }}>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
+                      <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
+                        {canEditQty ? (
+                          <TextField
+                            type="number"
+                            size="small"
+                            value={dispatchQtys.get(item.id) ?? ''}
+                            onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
+                            onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                            slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px' } } }}
+                            sx={{
+                              width: 86,
+                              '& .MuiOutlinedInput-root': {
+                                bgcolor: isShort ? '#FFEBEE' : '#FFF8DC',
+                                '& fieldset': { borderColor: isShort ? '#C62828' : '#1F1F1F' },
+                              },
+                            }}
+                          />
+                        ) : (
+                          <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                        )}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600 }}>{formatINR(lineTotal)}</TableCell>
+                    </TableRow>
+                  )
+                })}
+              </Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Paper>
+  )
+
   return (
     <Box sx={{ pb: canEditQty ? 12 : 4 }}>
       <PageHeader
@@ -479,98 +579,16 @@ export default function InventoryRequestDetail() {
         )}
       </Box>
 
-      {/* Items — one bordered card per category. Yellow header strip with the
-          category name; weight sub-headings + product rows inside. Dispatch
-          quantity column flips between editable TextField (pre-dispatch) and
-          read-only DispatchedCell (post-dispatch). */}
-      {grouped.map(catGroup => (
-        <Paper
-          key={catGroup.category}
-          elevation={0}
-          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
-        >
-          <Box
-            sx={{
-              bgcolor: '#FCD835',
-              borderBottom: '2px solid #1F1F1F',
-              px: 2,
-              py: 1.25,
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: 'uppercase',
-              letterSpacing: 0.6,
-              color: '#1F1F1F',
-            }}
-          >
-            {catGroup.category}
-          </Box>
-          <TableContainer>
-            <Table size="small">
-              <TableBody>
-                {catGroup.weightGroups.map((wg, wIdx) => (
-                  <Fragment key={`${catGroup.category}__${wg.label}`}>
-                    <TableRow>
-                      <TableCell
-                        colSpan={5}
-                        sx={{
-                          bgcolor: '#FFFFFF',
-                          pl: 2,
-                          pt: wIdx === 0 ? 1.5 : 2.5,
-                          pb: 0.5,
-                          fontWeight: 700,
-                          fontSize: 10,
-                          textTransform: 'uppercase',
-                          letterSpacing: 1.4,
-                          color: '#1F1F1F66',
-                          borderBottom: '1px solid rgba(31,31,31,0.08)',
-                        }}
-                      >
-                        {wg.label}
-                      </TableCell>
-                    </TableRow>
-                    {wg.items.map(item => {
-                      const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
-                      const lineTotal = currentDispatch * item.unitPrice
-                      const isShort = canEditQty && currentDispatch < item.requestedQty
-                      return (
-                        <TableRow key={item.id} hover>
-                          <TableCell sx={{ pl: 3, py: 1 }}>
-                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
-                          <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
-                            {canEditQty ? (
-                              <TextField
-                                type="number"
-                                size="small"
-                                value={dispatchQtys.get(item.id) ?? ''}
-                                onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
-                                onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
-                                slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px' } } }}
-                                sx={{
-                                  width: 86,
-                                  '& .MuiOutlinedInput-root': {
-                                    bgcolor: isShort ? '#FFEBEE' : '#FFF8DC',
-                                    '& fieldset': { borderColor: isShort ? '#C62828' : '#1F1F1F' },
-                                  },
-                                }}
-                              />
-                            ) : (
-                              <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                            )}
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
-                          <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600 }}>{formatINR(lineTotal)}</TableCell>
-                        </TableRow>
-                      )
-                    })}
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      ))}
+      {/* Items — CSS column-count masonry; cards auto-balanced. */}
+      <Box
+        sx={{
+          columnCount: { xs: 1, md: 2 },
+          columnGap: 2,
+          '& > *': { breakInside: 'avoid', display: 'block' },
+        }}
+      >
+        {grouped.map(cg => renderCatGroup(cg))}
+      </Box>
 
       {/* Summary panel — overall totals broken out for clarity.
           Pre-dispatch editing flow keeps live numbers in the sticky bottom bar. */}

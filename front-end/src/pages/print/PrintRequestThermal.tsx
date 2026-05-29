@@ -12,12 +12,13 @@ import './thermal.css'
  * thermal printer, so the printed picklist slips into the same
  * shop-floor workflow.
  *
- * Branding (shop name + contact) is hardcoded for the demo per client.
- * When shop master data starts tracking phone/address fields, swap the
- * constants below for the request's `request.shopName` / linked phone.
+ * Brand NAME is the parent business — same across every shop, so it
+ * stays a constant. The CONTACT phone IS shop-specific and comes from
+ * the request's shopContactPhone (shops.contact_phone_1). Falls back
+ * to a placeholder if a legacy request comes back without the field.
  */
-const BRAND_NAME    = 'Kovilpatti Murukku & Snacks'
-const BRAND_CONTACT = '8072860401'
+const BRAND_NAME             = 'Kovilpatti Murukku & Snacks'
+const BRAND_CONTACT_FALLBACK = '—'
 
 export default function PrintRequestThermal() {
   const { id } = useParams<{ id: string }>()
@@ -68,12 +69,17 @@ export default function PrintRequestThermal() {
   return (
     <div className="thermal-preview">
       <div className="thermal-page">
-        {/* Centered shop branding + contact — hardcoded for the demo,
-            see BRAND_* constants above. */}
+        {/* Centered brand + per-shop contact + title. Title flips to
+            "RETURN BILL" on Return-type requests so the slip is visually
+            distinct from a forward Order at a glance. */}
         <div className="thermal-header">
           <div className="thermal-shop">{BRAND_NAME}</div>
-          <div className="thermal-contact">Contact: {BRAND_CONTACT}</div>
-          <div className="thermal-title">Stock Request</div>
+          <div className="thermal-contact">
+            Contact: {request.shopContactPhone ?? BRAND_CONTACT_FALLBACK}
+          </div>
+          <div className="thermal-title">
+            {request.requestType === 'Return' ? 'Return Bill' : 'Stock Request'}
+          </div>
         </div>
 
         <div className="thermal-rule" />
@@ -90,11 +96,13 @@ export default function PrintRequestThermal() {
           <span className="label">Status:</span>
           <span className="value">{request.status}</span>
 
+          {/* Shop + Godown show the NAME only — code is operational metadata
+              the shop staff don't recognise on a printed slip. */}
           <span className="label">Shop:</span>
-          <span className="value">{request.shopCode} · {request.shopName}</span>
+          <span className="value">{request.shopName}</span>
 
           <span className="label">Godown:</span>
-          <span className="value">{request.inventoryCode} · {request.inventoryName}</span>
+          <span className="value">{request.inventoryName}</span>
 
           {request.submittedByName && (
             <>

@@ -11,6 +11,10 @@ public class StockRequest
     public Guid Shop_Id { get; set; }
     public string Shop_Code { get; set; } = default!;
     public string Shop_Name { get; set; } = default!;
+    /// Shop's primary contact phone (shops.contact_phone_1). Surfaced for the
+    /// thermal-print header. Populated by fn_request_get only — null on list
+    /// rows since fn_request_list_paged doesn't SELECT it.
+    public string? Shop_Contact_Phone { get; set; }
 
     public Guid Inventory_Id { get; set; }
     public string Inventory_Code { get; set; } = default!;

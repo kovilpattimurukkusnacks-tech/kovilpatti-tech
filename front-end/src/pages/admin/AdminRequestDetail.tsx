@@ -64,6 +64,10 @@ export default function AdminRequestDetail() {
     [request?.items],
   )
 
+  // Layout note: cards flow into a CSS `column-count` container below — the
+  // browser auto-balances across 2 columns (1 on mobile). break-inside keeps
+  // each card intact, so categories never split across the gutter.
+
   if (isLoading) return <Box><PageHeader title="Loading…" subtitle="" /></Box>
   if (error || !request) {
     return (
@@ -123,6 +127,97 @@ export default function AdminRequestDetail() {
     })
     closeQtyEdit()
   }
+
+  // Card renderer for one category-group. Same JSX serves both columns of
+  // the 2-col grid below. Closes over canEditQty / openQtyEdit / formatINR
+  // / DispatchedCell / Pencil from the outer scope.
+  const renderCatGroup = (catGroup: typeof grouped[number]) => (
+    <Paper
+      key={catGroup.category}
+      elevation={0}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+    >
+      {/* Category header — metallic gold gradient with dark text. */}
+      <Box
+        sx={{
+          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          color: '#1F1F1F',
+          borderBottom: '2px solid #1F1F1F',
+          px: 2,
+          py: 1.25,
+          fontWeight: 800,
+          fontSize: 14,
+          textTransform: 'uppercase',
+          letterSpacing: 0.8,
+        }}
+      >
+        {catGroup.category}
+      </Box>
+      <TableContainer>
+        <Table size="small">
+          <TableBody>
+            {catGroup.weightGroups.map((wg, wIdx) => (
+              <Fragment key={`${catGroup.category}__${wg.label}`}>
+                <TableRow>
+                  <TableCell
+                    colSpan={canEditQty ? 6 : 5}
+                    sx={{
+                      bgcolor: '#FFF8DC',
+                      borderLeft: '4px solid #FCD835',
+                      borderTop: wIdx === 0 ? 'none' : '2px solid #1F1F1F',
+                      pl: 2,
+                      py: 1,
+                      fontWeight: 700,
+                      fontSize: 12,
+                      textTransform: 'uppercase',
+                      letterSpacing: 0.6,
+                      color: '#1F1F1F',
+                    }}
+                  >
+                    {wg.label}
+                    <Box component="span" sx={{ ml: 1, color: '#1F1F1F99', fontWeight: 600 }}>
+                      · {wg.items.length} {wg.items.length === 1 ? 'product' : 'products'}
+                    </Box>
+                  </TableCell>
+                </TableRow>
+                {wg.items.map(item => {
+                  const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                  const effectiveSubtotal = effectiveQty * item.unitPrice
+                  const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  return (
+                    <TableRow key={item.id} hover>
+                      <TableCell sx={{ pl: 3, py: 1.25 }}>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
+                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                        {formatINR(effectiveSubtotal)}
+                      </TableCell>
+                      {canEditQty && (
+                        <TableCell align="center" sx={{ py: 1.25, width: 48 }}>
+                          <IconButton
+                            size="small"
+                            aria-label="Edit dispatched qty"
+                            onClick={() => openQtyEdit(item)}
+                          >
+                            <Pencil className="w-4 h-4" />
+                          </IconButton>
+                        </TableCell>
+                      )}
+                    </TableRow>
+                  )
+                })}
+              </Fragment>
+            ))}
+          </TableBody>
+        </Table>
+      </TableContainer>
+    </Paper>
+  )
 
   return (
     <Box sx={{ pb: 4 }}>
@@ -202,98 +297,16 @@ export default function AdminRequestDetail() {
         </Box>
       </Paper>
 
-      {/* Items — one bordered card per category. Yellow header strip at the
-          top of each card with the category name; inside, weight sub-headings
-          and product rows. Same pattern across all request-detail screens. */}
-      {grouped.map(catGroup => (
-        <Paper
-          key={catGroup.category}
-          elevation={0}
-          sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
-        >
-          <Box
-            sx={{
-              bgcolor: '#FCD835',
-              borderBottom: '2px solid #1F1F1F',
-              px: 2,
-              py: 1.25,
-              fontWeight: 700,
-              fontSize: 14,
-              textTransform: 'uppercase',
-              letterSpacing: 0.6,
-              color: '#1F1F1F',
-            }}
-          >
-            {catGroup.category}
-          </Box>
-          <TableContainer>
-            <Table size="small">
-              <TableBody>
-                {catGroup.weightGroups.map((wg, wIdx) => (
-                  <Fragment key={`${catGroup.category}__${wg.label}`}>
-                    <TableRow>
-                      <TableCell
-                        colSpan={canEditQty ? 6 : 5}
-                        sx={{
-                          bgcolor: '#FFFFFF',
-                          pl: 2,
-                          pt: wIdx === 0 ? 1.5 : 2.5,
-                          pb: 0.5,
-                          fontWeight: 700,
-                          fontSize: 10,
-                          textTransform: 'uppercase',
-                          letterSpacing: 1.4,
-                          color: '#1F1F1F66',
-                          borderBottom: '1px solid rgba(31,31,31,0.08)',
-                        }}
-                      >
-                        {wg.label}
-                      </TableCell>
-                    </TableRow>
-                    {wg.items.map(item => {
-                      // Subtotal reflects effective qty × price. Post-dispatch this is
-                      // dispatched_qty; pre-dispatch (or never dispatched) it falls back
-                      // to requested_qty so the column is meaningful in every state.
-                      const effectiveQty = item.dispatchedQty ?? item.requestedQty
-                      const effectiveSubtotal = effectiveQty * item.unitPrice
-                      const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
-                      return (
-                        <TableRow key={item.id} hover>
-                          <TableCell sx={{ pl: 3, py: 1.25 }}>
-                            <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                            <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
-                          </TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                          <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
-                            {formatINR(effectiveSubtotal)}
-                          </TableCell>
-                          {/* Admin post-completion qty edit — pencil opens a
-                              dialog that writes to the audit trail. Visible
-                              only when the request is in a terminal state. */}
-                          {canEditQty && (
-                            <TableCell align="center" sx={{ py: 1.25, width: 48 }}>
-                              <IconButton
-                                size="small"
-                                aria-label="Edit dispatched qty"
-                                onClick={() => openQtyEdit(item)}
-                              >
-                                <Pencil className="w-4 h-4" />
-                              </IconButton>
-                            </TableCell>
-                          )}
-                        </TableRow>
-                      )
-                    })}
-                  </Fragment>
-                ))}
-              </TableBody>
-            </Table>
-          </TableContainer>
-        </Paper>
-      ))}
+      {/* Items — CSS column-count masonry; cards auto-balanced. */}
+      <Box
+        sx={{
+          columnCount: { xs: 1, md: 2 },
+          columnGap: 2,
+          '& > *': { breakInside: 'avoid', display: 'block' },
+        }}
+      >
+        {grouped.map(cg => renderCatGroup(cg))}
+      </Box>
 
       {/* Summary panel — overall totals broken out for clarity. */}
       <Box sx={{ mb: 2 }}>

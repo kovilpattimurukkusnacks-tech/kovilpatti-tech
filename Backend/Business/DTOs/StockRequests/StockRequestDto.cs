@@ -6,6 +6,9 @@ public record StockRequestDto(
     Guid   ShopId,
     string ShopCode,
     string ShopName,
+    /// Shop's primary contact phone for the thermal print header. Populated
+    /// by fn_request_get only; null on list rows (the list SPs don't return it).
+    string? ShopContactPhone,
     Guid   InventoryId,
     string InventoryCode,
     string InventoryName,

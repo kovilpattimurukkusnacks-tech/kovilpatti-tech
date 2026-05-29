@@ -27,12 +27,15 @@
   border-bottom: 2px solid #1F1F1F;
 }
 
+/* Cream-tinted rows by default — same warm backdrop the request list
+ * pages use (Admin / Inventory / Shop). Hover deepens to a richer cream
+ * so the row clearly responds to the pointer. */
 .products-grid .MuiDataGrid-row {
-  background-color: #FFFFFF;
+  background-color: #FFFBE6;
 }
 
 .products-grid .MuiDataGrid-row:hover {
-  background-color: #FFF8DC;
+  background-color: #FFF4B8;
 }
 
 .products-grid .MuiDataGrid-cell {

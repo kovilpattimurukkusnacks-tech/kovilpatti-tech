@@ -44,6 +44,9 @@ export type StockRequestDto = {
   shopId: string
   shopCode: string
   shopName: string
+  /** Shop's primary contact phone — populated on the detail endpoint
+   *  (used by the thermal print header). Null on list rows. */
+  shopContactPhone: string | null
   inventoryId: string
   inventoryCode: string
   inventoryName: string

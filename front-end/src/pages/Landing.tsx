@@ -107,7 +107,7 @@ export default function Landing() {
             <button
               type="submit"
               disabled={!username || !password || submitting}
-              className="landing-login-submit w-full bg-[#1F1F1F] hover:bg-[#0A0A0A] disabled:bg-gray-300 disabled:text-gray-500 text-[#FCD835] py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition"
+              className="landing-login-submit w-full gold-gradient gold-gradient-hover-target disabled:bg-gray-300 disabled:text-gray-500 py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition"
             >
               {submitting ? 'Signing in…' : 'Sign In'}
             </button>

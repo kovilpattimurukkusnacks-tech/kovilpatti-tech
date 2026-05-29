@@ -177,7 +177,14 @@ export default function ShopRequests() {
                 ...(active
                   ? isReturn
                     ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
-                    : { bgcolor: '#1F1F1F', color: '#FCD835', '&:hover': { bgcolor: '#0A0A0A' } }
+                    : {
+                      background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                      color: '#1F1F1F',
+                      borderColor: '#C28A00',
+                      '&:hover': {
+                        background: 'linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%)',
+                      },
+                    }
                   : isReturn
                   ? {
                       bgcolor: '#FFFFFF', color: '#C62828',
@@ -250,12 +257,14 @@ export default function ShopRequests() {
                       onClick={() => setExpandedId(isOpen ? null : row.id)}
                       sx={{
                         cursor: 'pointer',
-                        // Only kill the bottom border when expanded, so the
-                        // main row visually flows into the expansion panel.
-                        // When collapsed, keep the default divider so rows
-                        // don't look like one huge unbroken block.
+                        // Cream-tinted row by default — matches the warm look
+                        // on InventoryRequests so every list page reads the
+                        // same. Goes slightly deeper when expanded.
+                        bgcolor: isOpen ? '#FFF4B8' : '#FFFBE6',
+                        // When expanded, drop the divider so the main row
+                        // flows visually into the expansion panel; collapsed
+                        // rows keep the divider so the table doesn't blob.
                         ...(isOpen && {
-                          bgcolor: '#FFFBE6',
                           '& > *': { borderBottom: 'unset' },
                         }),
                       }}
