@@ -177,8 +177,10 @@ export default function PrintRequestPicklist() {
 
       {/* Single compact totals strip — quantities on the left, money on
           the right. Post-dispatch shows the delivered numbers; pre-dispatch
-          shows the requested ones. Replaces the previous quantity strip +
-          money summary block so the footer takes one band, not three. */}
+          shows the requested ones. The printed timestamp is folded into the
+          right column's muted suffix so the standalone footer can stay hidden
+          on print — same fix the cumulative page uses to avoid a near-full
+          last page overflowing onto a second sheet. */}
       <div className="print-dense-summary">
         <span>
           {hasDispatch ? 'Dispatched' : 'Requested'}
@@ -191,6 +193,7 @@ export default function PrintRequestPicklist() {
           {hasDispatch && request.totalDispatchedQty !== request.totalQty && (
             <span className="muted"> (req. {request.totalQty} · {formatINR(request.totalAmount)})</span>
           )}
+          <span className="muted"> · printed {formatIstDateTime(new Date())}</span>
         </span>
       </div>
 
@@ -201,8 +204,9 @@ export default function PrintRequestPicklist() {
         </section>
       )}
 
-      <footer className="print-footer">
-        <div>Printed {formatIstDateTime(new Date())}</div>
+      {/* On-screen-only footer — holds the Print button. The "printed at"
+          line lives inside the dense-summary strip above. */}
+      <footer className="print-footer print-only">
         <div className="print-only">
           <button onClick={() => window.print()} className="print-trigger">Print</button>
         </div>

@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer } from 'lucide-react'
-import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui/material'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp } from 'lucide-react'
+import { Alert, Box, Button, Chip, Collapse, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
@@ -57,6 +57,10 @@ export default function InventoryRequests() {
   const [shopId, setShopId] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState<string>('')
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
+  // Dispatch-drafts strip collapse state. With several drafts saved the list
+  // eats most of the viewport; we keep it collapsed by default and let the
+  // user expand on demand.
+  const [draftsOpen, setDraftsOpen] = useState(false)
 
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
@@ -241,50 +245,86 @@ export default function InventoryRequests() {
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
 
-      {/* Dispatch draft strips — one Paper per request that has WIP dispatch
-          qtys saved. Mirrors the shop-side "Resume Draft" strip but can
-          stack multiple cards since an inventory user may have drafts on
-          several requests. Hidden when the list is empty. */}
+      {/* Dispatch drafts — collapsed strip with a chevron toggle. When the
+          inventory user has multiple drafts saved (one per in-flight request),
+          the full stack of cards used to push the table off-screen. We now
+          show a single summary row by default ("N dispatch drafts saved") and
+          let the user expand to see / resume specific ones. */}
       {(dispatchDrafts.data?.length ?? 0) > 0 && (
-        <Box sx={{ mb: 2, display: 'flex', flexDirection: 'column', gap: 1 }}>
-          {dispatchDrafts.data!.map(d => (
-            <Paper
-              key={d.id}
-              elevation={0}
-              sx={{
-                borderRadius: 2,
-                border: '2px solid #1F1F1F',
-                bgcolor: '#FFF8DC',
-                px: 2,
-                py: 1.5,
-                display: 'flex',
-                alignItems: 'center',
-                gap: 2,
-                flexWrap: 'wrap',
-              }}
-            >
-              <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
-              <Box sx={{ flex: 1, minWidth: 0 }}>
-                <Box sx={{ fontWeight: 700, fontSize: 14 }}>
-                  Resume dispatch draft — {d.code}
-                </Box>
-                <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
-                  {d.shopCode} · {d.shopName}
-                  · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
-                  · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
-                  · Last saved {formatIstDateTime(d.updatedAt)}
-                </Box>
+        <Box sx={{ mb: 2 }}>
+          <Paper
+            elevation={0}
+            onClick={() => setDraftsOpen(o => !o)}
+            sx={{
+              borderRadius: 2,
+              border: '2px solid #1F1F1F',
+              bgcolor: '#FFF8DC',
+              px: 2,
+              py: 1.25,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1.5,
+              cursor: 'pointer',
+              userSelect: 'none',
+              '&:hover': { bgcolor: '#FFF4B8' },
+            }}
+          >
+            <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+            <Box sx={{ flex: 1, minWidth: 0 }}>
+              <Box sx={{ fontWeight: 700, fontSize: 14 }}>
+                {dispatchDrafts.data!.length} dispatch draft{dispatchDrafts.data!.length === 1 ? '' : 's'} saved
               </Box>
-              <Button
-                variant="contained"
-                size="small"
-                onClick={() => navigate(`/inventory/requests/${d.id}`)}
-                sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
-              >
-                Resume
-              </Button>
-            </Paper>
-          ))}
+              <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+                {draftsOpen ? 'Click to collapse' : 'Click to expand and resume any of them'}
+              </Box>
+            </Box>
+            {draftsOpen
+              ? <ChevronUp   className="w-5 h-5 text-[#1F1F1F]" />
+              : <ChevronDown className="w-5 h-5 text-[#1F1F1F]" />}
+          </Paper>
+
+          <Collapse in={draftsOpen} timeout="auto" unmountOnExit>
+            <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
+              {dispatchDrafts.data!.map(d => (
+                <Paper
+                  key={d.id}
+                  elevation={0}
+                  sx={{
+                    borderRadius: 2,
+                    border: '2px solid #1F1F1F',
+                    bgcolor: '#FFF8DC',
+                    px: 2,
+                    py: 1.25,
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 2,
+                    flexWrap: 'wrap',
+                  }}
+                >
+                  <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box sx={{ fontWeight: 700, fontSize: 14 }}>
+                      Resume dispatch draft — {d.code}
+                    </Box>
+                    <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+                      {d.shopCode} · {d.shopName}
+                      · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
+                      · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
+                      · Last saved {formatIstDateTime(d.updatedAt)}
+                    </Box>
+                  </Box>
+                  <Button
+                    variant="contained"
+                    size="small"
+                    onClick={() => navigate(`/inventory/requests/${d.id}`)}
+                    sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+                  >
+                    Resume
+                  </Button>
+                </Paper>
+              ))}
+            </Box>
+          </Collapse>
         </Box>
       )}
 

@@ -153,7 +153,10 @@ export default function PrintCumulative() {
             })}
           </div>
 
-          {/* Compact grand-totals strip below the column grid. */}
+          {/* Compact grand-totals strip below the column grid. The printed
+              timestamp is folded into the muted right column so the standalone
+              footer can stay hidden on print — that footer's top margin +
+              border was tipping a near-full last page into a second sheet. */}
           <div className="print-dense-summary">
             <span>
               {totalSkus} {totalSkus === 1 ? 'SKU' : 'SKUs'}
@@ -166,13 +169,15 @@ export default function PrintCumulative() {
                   {' '}· from up to {totalRequests} request{totalRequests === 1 ? '' : 's'}
                 </span>
               )}
+              <span className="muted"> · printed {formatIstDateTime(new Date())}</span>
             </span>
           </div>
         </>
       )}
 
-      <footer className="print-footer">
-        <div>Printed {formatIstDateTime(new Date())}</div>
+      {/* Footer with Print button — visible on-screen only. The "Printed at"
+          line already lives inside the dense-summary strip above. */}
+      <footer className="print-footer print-only">
         <div className="print-only">
           <button onClick={() => window.print()} className="print-trigger">Print</button>
         </div>
