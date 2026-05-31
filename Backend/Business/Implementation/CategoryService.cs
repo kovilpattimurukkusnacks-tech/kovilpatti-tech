@@ -37,15 +37,27 @@ public class CategoryService(
 
         var name = request.Name.Trim();
 
-        if (await categories.ExistsByNameAsync(name, excludeId: null, ct))
+        // Parent must exist (or be null for a root) — surface a clean 400
+        // before the SP raises its own foreign_key_violation.
+        if (request.ParentId.HasValue
+            && !await categories.ExistsAsync(request.ParentId.Value, ct))
             throw new ValidationException(new[] {
-                new ValidationFailure(nameof(request.Name), $"Category '{name}' already exists.")
+                new ValidationFailure(nameof(request.ParentId),
+                    $"Parent category '{request.ParentId}' not found.")
+            });
+
+        // Name uniqueness is scoped per-parent — same name under different
+        // parents is fine (e.g. Snacks > Spicy AND Drinks > Spicy).
+        if (await categories.ExistsByNameAsync(name, request.ParentId, excludeId: null, ct))
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Name),
+                    $"Category '{name}' already exists under this parent.")
             });
 
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var newId = await categories.CreateAsync(name, request.Active, userId, ct);
+        var newId = await categories.CreateAsync(name, request.ParentId, request.Active, userId, ct);
         return await GetAsync(newId, ct);
     }
 
@@ -59,16 +71,45 @@ public class CategoryService(
 
         var name = request.Name.Trim();
 
-        if (await categories.ExistsByNameAsync(name, excludeId: id, ct))
+        // Same checks as create. Self-as-parent caught BE-side; deeper cycles
+        // (A→B→C→A) are caught by the DB trigger on UPDATE.
+        if (request.ParentId.HasValue)
+        {
+            if (request.ParentId.Value == id)
+                throw new ValidationException(new[] {
+                    new ValidationFailure(nameof(request.ParentId),
+                        "A category cannot be its own parent.")
+                });
+
+            if (!await categories.ExistsAsync(request.ParentId.Value, ct))
+                throw new ValidationException(new[] {
+                    new ValidationFailure(nameof(request.ParentId),
+                        $"Parent category '{request.ParentId}' not found.")
+                });
+        }
+
+        if (await categories.ExistsByNameAsync(name, request.ParentId, excludeId: id, ct))
             throw new ValidationException(new[] {
-                new ValidationFailure(nameof(request.Name), $"Category '{name}' already exists.")
+                new ValidationFailure(nameof(request.Name),
+                    $"Category '{name}' already exists under this parent.")
             });
 
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var ok = await categories.UpdateAsync(id, name, request.Active, userId, ct);
-        if (!ok) throw new NotFoundException($"Category '{id}' not found.");
+        try
+        {
+            var ok = await categories.UpdateAsync(id, name, request.ParentId, request.Active, userId, ct);
+            if (!ok) throw new NotFoundException($"Category '{id}' not found.");
+        }
+        catch (PostgresException ex) when (ex.MessageText.Contains("Cycle"))
+        {
+            // The cycle-guard trigger raises a clear message — surface it as a
+            // 400 instead of a 500 so the FE can render it next to the field.
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.ParentId), ex.MessageText)
+            });
+        }
 
         return await GetAsync(id, ct);
     }
@@ -93,5 +134,6 @@ public class CategoryService(
         }
     }
 
-    private static CategoryDto MapToDto(Category c) => new(c.Id, c.Name, c.Active);
+    private static CategoryDto MapToDto(Category c)
+        => new(c.Id, c.Name, c.Parent_Id, c.Path, c.Depth, c.Active);
 }

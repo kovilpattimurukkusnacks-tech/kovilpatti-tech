@@ -8,19 +8,42 @@ BEGIN;
 
 -- ============== Users ============================================
 
+-- Map the PG enum (snake_case: 'admin' / 'shop_user' / 'inventory') to the
+-- PascalCase labels the C# UserRole enum uses (Admin / ShopUser / Inventory).
+-- Without this, Dapper can't reconcile 'shop_user' ↔ ShopUser via its
+-- default case-insensitive string→enum match (the underscore breaks it),
+-- and shop user login fails with a 500 even though admin/inventory work.
+CREATE OR REPLACE FUNCTION fn_user_role_label(r user_role)
+RETURNS varchar
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE r
+    WHEN 'admin'     THEN 'Admin'
+    WHEN 'shop_user' THEN 'ShopUser'
+    WHEN 'inventory' THEN 'Inventory'
+  END::varchar;
+$$;
+
+-- All four user-listing SPs return `role` as varchar (via the helper above)
+-- because Npgsql 8+ rejects unmapped custom enum types on the read path.
+-- DROP needed where the RETURNS TABLE shape changed from user_role → varchar.
+DROP FUNCTION IF EXISTS fn_user_find_by_username(varchar);
+
 CREATE OR REPLACE FUNCTION fn_user_find_by_username(p_username varchar)
 RETURNS TABLE (
   id            uuid,
   username      varchar,
   password_hash varchar,
   full_name     varchar,
-  role          user_role,
+  role          varchar,
   shop_id       uuid,
   inventory_id  uuid,
   active        boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  -- fn_user_role_label(u.role) — Npgsql 8+ rejects unmapped custom enum types on the
+  -- read path. Casting to varchar here lets the BE stay agnostic of enum
+  -- registration at the data source level.
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, u.inventory_id, u.active
   FROM users u
   WHERE u.username = p_username
@@ -66,36 +89,98 @@ LANGUAGE sql STABLE AS $$
   SELECT EXISTS(SELECT 1 FROM categories WHERE id = p_id AND is_deleted = false);
 $$;
 
+-- ---- fn_category_list ------------------------------------------------
+-- Flat list. Now also surfaces parent_id + breadcrumb path so callers that
+-- can't recurse (legacy code, simple pickers) still get the hierarchy info
+-- in one shot. Path is " > "-joined names from root to this node.
+DROP FUNCTION IF EXISTS fn_category_list();
 CREATE OR REPLACE FUNCTION fn_category_list()
 RETURNS TABLE (
-  id     int,
-  name   varchar,
-  active boolean
+  id        int,
+  name      varchar,
+  parent_id int,
+  path      varchar,
+  depth     int,
+  active    boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT c.id, c.name, c.active
-  FROM categories c
-  WHERE c.is_deleted = false
-  ORDER BY c.name;
+  WITH RECURSIVE tree AS (
+    SELECT c.id, c.name, c.parent_id, c.name::varchar AS path, 0 AS depth, c.active, c.is_deleted
+    FROM categories c
+    WHERE c.parent_id IS NULL AND c.is_deleted = false
+    UNION ALL
+    SELECT c.id, c.name, c.parent_id,
+           (t.path || ' > ' || c.name)::varchar AS path,
+           t.depth + 1, c.active, c.is_deleted
+    FROM categories c
+    JOIN tree t ON c.parent_id = t.id
+    WHERE c.is_deleted = false
+  )
+  SELECT id, name, parent_id, path, depth, active
+  FROM tree
+  ORDER BY path;
 $$;
 
+-- ---- fn_category_get -------------------------------------------------
+DROP FUNCTION IF EXISTS fn_category_get(int);
 CREATE OR REPLACE FUNCTION fn_category_get(p_id int)
 RETURNS TABLE (
-  id     int,
-  name   varchar,
-  active boolean
+  id        int,
+  name      varchar,
+  parent_id int,
+  path      varchar,
+  depth     int,
+  active    boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT c.id, c.name, c.active
-  FROM categories c
-  WHERE c.id = p_id AND c.is_deleted = false
+  WITH RECURSIVE up AS (
+    -- Walk from this node back to root, collecting names along the way.
+    SELECT c.id, c.name, c.parent_id, c.active, c.is_deleted, 0 AS depth,
+           ARRAY[c.name::text] AS names
+    FROM categories c
+    WHERE c.id = p_id AND c.is_deleted = false
+    UNION ALL
+    SELECT p.id, p.name, p.parent_id, p.active, p.is_deleted, u.depth + 1,
+           p.name::text || u.names
+    FROM categories p
+    JOIN up u ON p.id = u.parent_id
+    WHERE p.is_deleted = false
+  )
+  SELECT u.id, u.name, u.parent_id,
+         array_to_string(top.names, ' > ')::varchar AS path,
+         top.depth AS depth, u.active
+  FROM up u
+  JOIN (
+    SELECT names, depth FROM up ORDER BY depth DESC LIMIT 1
+  ) top ON true
+  WHERE u.id = p_id
   LIMIT 1;
 $$;
 
--- Case-insensitive name lookup, optionally excluding a specific id (used for
--- update-time uniqueness so a row doesn't conflict with itself).
+-- ---- fn_category_tree ------------------------------------------------
+-- Same shape as fn_category_list (root-first, depth-ordered) but exposed
+-- under a name that signals the recursive tree intent. Used by the admin
+-- tree UI + the cascading category picker (#6) on the product form.
+CREATE OR REPLACE FUNCTION fn_category_tree()
+RETURNS TABLE (
+  id        int,
+  name      varchar,
+  parent_id int,
+  path      varchar,
+  depth     int,
+  active    boolean
+)
+LANGUAGE sql STABLE AS $$
+  SELECT * FROM fn_category_list();
+$$;
+
+-- Case-insensitive name lookup, scoped to siblings under the same parent.
+-- p_parent_id IS NULL means "check among root categories". p_exclude_id is
+-- used during update so a row doesn't conflict with itself.
+DROP FUNCTION IF EXISTS fn_category_exists_by_name(varchar, int);
 CREATE OR REPLACE FUNCTION fn_category_exists_by_name(
   p_name       varchar,
+  p_parent_id  int DEFAULT NULL,
   p_exclude_id int DEFAULT NULL
 )
 RETURNS boolean
@@ -104,38 +189,58 @@ LANGUAGE sql STABLE AS $$
     SELECT 1 FROM categories
     WHERE lower(name) = lower(p_name)
       AND is_deleted = false
+      AND parent_id IS NOT DISTINCT FROM p_parent_id
       AND (p_exclude_id IS NULL OR id <> p_exclude_id)
   );
 $$;
 
+DROP FUNCTION IF EXISTS fn_category_create(varchar, boolean, uuid);
 CREATE OR REPLACE FUNCTION fn_category_create(
-  p_name    varchar,
-  p_active  boolean,
-  p_user_id uuid
+  p_name      varchar,
+  p_parent_id int,
+  p_active    boolean,
+  p_user_id   uuid
 )
 RETURNS int
 LANGUAGE plpgsql AS $$
 DECLARE
   v_id int;
 BEGIN
-  INSERT INTO categories (name, active, created_by, updated_by)
-  VALUES (p_name, p_active, p_user_id, p_user_id)
+  -- Parent must exist + be non-deleted when provided. Cycle prevention is
+  -- delegated to the trigger on the table.
+  IF p_parent_id IS NOT NULL AND NOT fn_category_exists(p_parent_id) THEN
+    RAISE EXCEPTION 'Parent category % not found (or deleted).', p_parent_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  INSERT INTO categories (name, parent_id, active, created_by, updated_by)
+  VALUES (p_name, p_parent_id, p_active, p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
 
+DROP FUNCTION IF EXISTS fn_category_update(int, varchar, boolean, uuid);
 CREATE OR REPLACE FUNCTION fn_category_update(
-  p_id      int,
-  p_name    varchar,
-  p_active  boolean,
-  p_user_id uuid
+  p_id        int,
+  p_name      varchar,
+  p_parent_id int,
+  p_active    boolean,
+  p_user_id   uuid
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
 BEGIN
+  -- Same parent-exists guard as create. The cycle-prevention trigger picks
+  -- up the BEFORE UPDATE and rejects self-descendant assignments.
+  IF p_parent_id IS NOT NULL AND p_parent_id <> p_id AND NOT fn_category_exists(p_parent_id) THEN
+    RAISE EXCEPTION 'Parent category % not found (or deleted).', p_parent_id
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
   UPDATE categories
   SET name       = p_name,
+      parent_id  = p_parent_id,
       active     = p_active,
       updated_by = p_user_id
   WHERE id = p_id AND is_deleted = false;
@@ -144,12 +249,12 @@ END;
 $$;
 
 -- Soft delete. Blocks if ANY non-deleted product still references the category,
--- because hard-deleting would dangle category_id (FK has ON DELETE RESTRICT,
--- but products keep the row visible via the soft-delete flag).
+-- OR if the category has non-deleted children — admin must clear those first
+-- (otherwise the subtree would orphan).
 -- Returns:
 --   true   — soft-deleted
 --   false  — not found (or already deleted)
--- Raises  — when in-use, with a clear message the BE surfaces to the user.
+-- Raises  — when in-use OR has children, with a clear message the BE surfaces.
 CREATE OR REPLACE FUNCTION fn_category_soft_delete(
   p_id      int,
   p_user_id uuid
@@ -157,7 +262,8 @@ CREATE OR REPLACE FUNCTION fn_category_soft_delete(
 RETURNS boolean
 LANGUAGE plpgsql AS $$
 DECLARE
-  v_in_use_count int;
+  v_in_use_count   int;
+  v_child_count    int;
 BEGIN
   SELECT count(*) INTO v_in_use_count
   FROM products
@@ -165,6 +271,15 @@ BEGIN
 
   IF v_in_use_count > 0 THEN
     RAISE EXCEPTION 'Cannot delete category — % product(s) still use it. Reassign or delete those products first.', v_in_use_count
+      USING ERRCODE = 'foreign_key_violation';
+  END IF;
+
+  SELECT count(*) INTO v_child_count
+  FROM categories
+  WHERE parent_id = p_id AND is_deleted = false;
+
+  IF v_child_count > 0 THEN
+    RAISE EXCEPTION 'Cannot delete category — % sub-categor(y/ies) still reference it. Delete or move them first.', v_child_count
       USING ERRCODE = 'foreign_key_violation';
   END IF;
 
@@ -571,6 +686,19 @@ BEGIN
 END;
 $$;
 
+-- TODO(multi-inventory): when PROD onboards a 2nd inventory/godown, this SP
+-- must also cascade the shop's new inventory_id onto in-flight stock requests.
+-- Today PROD has one inventory so reassignment never happens and this is safe.
+-- The day a 2nd inventory is added, also do the following inside this tx:
+--   UPDATE stock_requests
+--   SET    inventory_id = p_inventory_id,
+--          updated_at   = now()
+--   WHERE  shop_id  = p_id
+--     AND  status   IN ('Pending', 'Approved')
+--     AND  inventory_id IS DISTINCT FROM p_inventory_id;
+-- Dispatched/Received/Rejected/Cancelled stay frozen to the original godown
+-- because those rows represent goods that physically left that godown — the
+-- audit trail must remain consistent. Pre-dispatch rows follow the shop.
 CREATE OR REPLACE FUNCTION fn_shop_update(
   p_id              uuid,
   p_name            varchar,
@@ -615,13 +743,17 @@ LANGUAGE sql STABLE AS $$
   SELECT EXISTS(SELECT 1 FROM users WHERE username = p_username);
 $$;
 
+-- `role` column cast user_role → varchar; signature stays but RETURNS TABLE
+-- shape changed. DROP needed.
+DROP FUNCTION IF EXISTS fn_user_list();
+
 CREATE OR REPLACE FUNCTION fn_user_list()
 RETURNS TABLE (
   id              uuid,
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -629,7 +761,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active
@@ -640,13 +772,15 @@ LANGUAGE sql STABLE AS $$
   ORDER BY u.username;
 $$;
 
+DROP FUNCTION IF EXISTS fn_user_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_user_get(p_id uuid)
 RETURNS TABLE (
   id              uuid,
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -654,7 +788,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active

@@ -11,14 +11,44 @@ namespace KovilpattiSnacks.API.Controllers;
 [Route("api/products")]
 public class ProductsController(IProductService products) : ControllerBase
 {
+    // Filter inputs:
+    //   • search       — substring match on name/code
+    //   • categoryIds  — comma-separated int list (e.g. "1,3,7"); empty = any
+    //   • types        — comma-separated type list (e.g. "pack,jar"); empty = any
+    // Single-value legacy callers (?categoryId=2) still work via the alias below.
     [HttpGet]
     public async Task<ActionResult<PagedResult<ProductDto>>> List(
         [FromQuery] string? search,
-        [FromQuery] int? categoryId,
+        [FromQuery] string? categoryIds,
+        [FromQuery] string? types,
+        [FromQuery(Name = "categoryId")] int? legacyCategoryId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10,
         CancellationToken ct = default)
-        => Ok(await products.ListAsync(search, categoryId, page, pageSize, ct));
+    {
+        var cats = ParseIntCsv(categoryIds);
+        if (cats is null && legacyCategoryId.HasValue) cats = new[] { legacyCategoryId.Value };
+
+        var typeArr = ParseStringCsv(types);
+        return Ok(await products.ListAsync(search, cats, typeArr, page, pageSize, ct));
+    }
+
+    private static int[]? ParseIntCsv(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        var result = new List<int>(parts.Length);
+        foreach (var p in parts)
+            if (int.TryParse(p, out var n)) result.Add(n);
+        return result.Count == 0 ? null : result.ToArray();
+    }
+
+    private static string[]? ParseStringCsv(string? raw)
+    {
+        if (string.IsNullOrWhiteSpace(raw)) return null;
+        var parts = raw.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return parts.Length == 0 ? null : parts;
+    }
 
     [HttpGet("{id:guid}")]
     public async Task<ActionResult<ProductDto>> Get(Guid id, CancellationToken ct)

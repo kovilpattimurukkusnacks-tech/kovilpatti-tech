@@ -116,18 +116,79 @@ ALTER TABLE shops
   ADD CONSTRAINT fk_shops_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL;
 
 -- ------------------------------------------------------------
--- 5. categories
+-- 5. categories — nested (self-FK parent_id, NULL = root).
+--    Unlimited depth; per client #1 (28-May-2026) the tree can nest
+--    arbitrarily and products can sit on any node (root OR sub-category).
 -- ------------------------------------------------------------
 CREATE TABLE categories (
   id         serial       PRIMARY KEY,
-  name       varchar(50)  UNIQUE NOT NULL,
+  name       varchar(50)  NOT NULL,
+  -- NULL = top-level category. ON DELETE RESTRICT so admin can't accidentally
+  -- orphan the subtree by deleting a parent (a separate guard checks for
+  -- products + child rows before allowing soft-delete).
+  parent_id  int          REFERENCES categories(id) ON DELETE RESTRICT,
   active     boolean      NOT NULL DEFAULT true,
   is_deleted boolean      NOT NULL DEFAULT false,
   created_at timestamptz  NOT NULL DEFAULT now(),
   created_by uuid         REFERENCES users(id) ON DELETE SET NULL,
   updated_at timestamptz  NOT NULL DEFAULT now(),
-  updated_by uuid         REFERENCES users(id) ON DELETE SET NULL
+  updated_by uuid         REFERENCES users(id) ON DELETE SET NULL,
+
+  -- A category cannot be its own parent. The deeper cycle guard (parent of
+  -- parent of … = self) lives in the trigger below; this CHECK catches the
+  -- common single-step mistake without needing a function call.
+  CONSTRAINT chk_categories_not_self_parent CHECK (parent_id IS NULL OR parent_id <> id)
 );
+
+-- Case-insensitive uniqueness, scoped per-parent. PostgreSQL UNIQUE treats
+-- NULLs as distinct (pre-PG15), so we split into two partial indexes:
+--   • Among the roots (parent_id IS NULL) — name is unique.
+--   • Within a given parent — name is unique among that parent's children.
+-- "Spicy" can exist under both "Snacks" and "Drinks" because their parent_id
+-- differs. is_deleted=true rows are excluded so soft-deleted names free up.
+CREATE UNIQUE INDEX idx_categories_unique_root_name
+  ON categories(lower(name))
+  WHERE parent_id IS NULL AND is_deleted = false;
+
+CREATE UNIQUE INDEX idx_categories_unique_child_name
+  ON categories(parent_id, lower(name))
+  WHERE parent_id IS NOT NULL AND is_deleted = false;
+
+-- Children lookup index — drives the tree-view recursive CTE.
+CREATE INDEX idx_categories_parent ON categories(parent_id) WHERE is_deleted = false;
+
+-- Cycle guard. Adjacency-list trees can be silently corrupted by a row whose
+-- parent chain loops back to itself (e.g. A→B→C→A). The CHECK above blocks
+-- the trivial case (parent_id = id); this trigger walks the ancestor chain
+-- and raises when it sees p_id before reaching a NULL root.
+CREATE OR REPLACE FUNCTION fn_categories_no_cycle()
+RETURNS trigger
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_walker int := NEW.parent_id;
+  v_steps  int := 0;
+BEGIN
+  WHILE v_walker IS NOT NULL LOOP
+    -- Bail at any depth that's clearly bogus — protects against ALTER on a
+    -- pathological dataset where the trigger isn't enough.
+    v_steps := v_steps + 1;
+    IF v_steps > 100 THEN
+      RAISE EXCEPTION 'Category hierarchy is too deep (>100) or contains a cycle.';
+    END IF;
+    IF v_walker = NEW.id THEN
+      RAISE EXCEPTION 'Cycle detected — category % cannot be a descendant of itself.', NEW.id;
+    END IF;
+    SELECT parent_id INTO v_walker FROM categories WHERE id = v_walker;
+  END LOOP;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_categories_no_cycle ON categories;
+CREATE TRIGGER trg_categories_no_cycle
+  BEFORE INSERT OR UPDATE OF parent_id ON categories
+  FOR EACH ROW WHEN (NEW.parent_id IS NOT NULL)
+  EXECUTE FUNCTION fn_categories_no_cycle();
 
 -- ------------------------------------------------------------
 -- 6. products

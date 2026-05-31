@@ -288,8 +288,7 @@ function ShopFormDialog({ open, shop, inventories, submitting, submitError, onCl
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {isEdit && shop && (
-            <Box sx={{ display: 'flex', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>ID:</b> {shop.id}</span>
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
               <span><b>Code:</b> {shop.code}</span>
             </Box>
           )}

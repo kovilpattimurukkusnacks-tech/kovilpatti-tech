@@ -29,6 +29,45 @@ body {
   min-height: 100vh;
 }
 
+/* ── Brand gold gradient utilities ─────────────────────────────────
+ * Single source of truth for the metallic gold sweep used on primary
+ * CTAs (MuiButton.containedPrimary in theme.ts uses the same colour
+ * stops). Apply via className="gold-gradient" wherever Tailwind's
+ * arbitrary `bg-[#...]` can't express a gradient.
+ *
+ * Use .gold-gradient-hover-target on a parent (or the element itself)
+ * to opt into the deeper hover sweep without writing per-element rules.
+ * ────────────────────────────────────────────────────────────────── */
+.gold-gradient {
+  background: linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%);
+  color: #1F1F1F;
+}
+.gold-gradient.gold-gradient-hover-target:hover,
+.hover\:gold-gradient:hover {
+  background: linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%);
+}
+
+/* Safety net for MUI v9 — the theme styleOverrides callback should already
+ * be doing this, but MUI v9 split the colour-variant CSS classes
+ * (.MuiButton-contained + .MuiButton-colorPrimary are now separate, no
+ * combined .MuiButton-containedPrimary). Targeting the actual rendered
+ * classes here guarantees the gradient wins even if MUI's internal
+ * stylesheet loads after the theme override.  */
+.MuiButton-root.MuiButton-contained.MuiButton-colorPrimary {
+  background: linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%) !important;
+  color: #1F1F1F !important;
+  border: 1px solid #C28A00 !important;
+  box-shadow: none !important;
+}
+.MuiButton-root.MuiButton-contained.MuiButton-colorPrimary:hover {
+  background: linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%) !important;
+}
+.MuiButton-root.MuiButton-contained.MuiButton-colorPrimary.Mui-disabled {
+  background: #E6B800 !important;
+  color: rgba(31, 31, 31, 0.5) !important;
+  border-color: #C28A00 !important;
+}
+
 h1, h2, h3, h4, h5, h6 {
   letter-spacing: -0.02em;
   font-weight: 600;
@@ -72,12 +111,14 @@ h1 { font-weight: 700; }
   border-bottom: 2px solid #1F1F1F;
 }
 
+/* Cream-tinted rows — matches Products + request-list pages so every
+ * data-page table shares the same warm backdrop. */
 .data-page-grid .MuiDataGrid-row {
-  background-color: #FFFFFF;
+  background-color: #FFFBE6;
 }
 
 .data-page-grid .MuiDataGrid-row:hover {
-  background-color: #FFF8DC;
+  background-color: #FFF4B8;
 }
 
 .data-page-grid .MuiDataGrid-cell {
@@ -118,4 +159,45 @@ h1 { font-weight: 700; }
 
 .MuiDataGrid-columnHeader.col-pin-right {
   background-color: #FCD835;
+}
+
+/* ─── New Stock Request — per-row qty input ────────────────────────
+   Plain styled <input> used in place of MUI TextField for the qty
+   cell on the New Stock Request page. With ~200 product rows on
+   screen, TextField's nested components dragged the Category
+   dropdown into "frozen" territory; this input keeps the same
+   look at a tenth of the per-row render cost. */
+.qty-input {
+  width: 70px;
+  padding: 6px 8px;
+  font-size: 14px;
+  font-family: inherit;
+  text-align: center;
+  color: #1F1F1F;
+  border-width: 1px;
+  border-style: solid;
+  border-radius: 4px;
+  outline: none;
+  box-sizing: border-box;
+  transition: border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.qty-input:hover {
+  border-color: #1F1F1F;
+}
+
+.qty-input:focus {
+  border-color: #1F1F1F;
+  box-shadow: 0 0 0 2px #FCD835;
+}
+
+/* Hide the spinner buttons — keystroke-only entry matches the previous
+   TextField behavior and keeps the box width predictable. */
+.qty-input::-webkit-outer-spin-button,
+.qty-input::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.qty-input[type=number] {
+  -moz-appearance: textfield;
 }

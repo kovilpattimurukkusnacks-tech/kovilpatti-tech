@@ -16,14 +16,20 @@
 -- ------------------------------------------------------------
 -- PRODUCTS
 -- ------------------------------------------------------------
--- Return type gained a `gst` column → must DROP before redefining.
+-- Filter signature now takes arrays for category and type to support
+-- multi-select on the FE. Pass NULL or an empty array to skip a filter.
+-- (Drop the previous shapes — signatures changed → CREATE OR REPLACE cannot.)
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int, int, int);
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
+DROP FUNCTION IF EXISTS fn_product_count(varchar, int);
+DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
-  p_search      varchar DEFAULT NULL,
-  p_category_id int     DEFAULT NULL,
-  p_page        int     DEFAULT 1,
-  p_page_size   int     DEFAULT 25
+  p_search       varchar    DEFAULT NULL,
+  p_category_ids int[]      DEFAULT NULL,
+  p_types        varchar[]  DEFAULT NULL,
+  p_page         int        DEFAULT 1,
+  p_page_size    int        DEFAULT 25
 )
 RETURNS TABLE (
   id             uuid,
@@ -49,7 +55,10 @@ LANGUAGE sql STABLE AS $$
     AND (p_search IS NULL
          OR p.name ILIKE '%' || p_search || '%'
          OR p.code ILIKE '%' || p_search || '%')
-    AND (p_category_id IS NULL OR p.category_id = p_category_id)
+    AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
+         OR p.category_id = ANY(p_category_ids))
+    AND (p_types IS NULL OR cardinality(p_types) = 0
+         OR p.type = ANY(p_types))
   ORDER BY p.code
   LIMIT  GREATEST(p_page_size, 1)
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
@@ -57,8 +66,9 @@ $$;
 
 
 CREATE OR REPLACE FUNCTION fn_product_count(
-  p_search      varchar DEFAULT NULL,
-  p_category_id int     DEFAULT NULL
+  p_search       varchar    DEFAULT NULL,
+  p_category_ids int[]      DEFAULT NULL,
+  p_types        varchar[]  DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
@@ -68,7 +78,10 @@ LANGUAGE sql STABLE AS $$
     AND (p_search IS NULL
          OR p.name ILIKE '%' || p_search || '%'
          OR p.code ILIKE '%' || p_search || '%')
-    AND (p_category_id IS NULL OR p.category_id = p_category_id);
+    AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
+         OR p.category_id = ANY(p_category_ids))
+    AND (p_types IS NULL OR cardinality(p_types) = 0
+         OR p.type = ANY(p_types));
 $$;
 
 
@@ -148,6 +161,13 @@ $$;
 -- ------------------------------------------------------------
 -- USERS (non-admin only — admin row is excluded from staff list)
 -- ------------------------------------------------------------
+-- `role` column casts the user_role enum to a PascalCase varchar via
+-- fn_user_role_label so Dapper can map it to the C# UserRole enum
+-- (snake_case 'shop_user' would not match PascalCase 'ShopUser'
+-- under Dapper's default string→enum conversion). DROP needed since
+-- the RETURNS TABLE shape changed from the original user_role version.
+DROP FUNCTION IF EXISTS fn_user_list_paged(int, int);
+
 CREATE OR REPLACE FUNCTION fn_user_list_paged(
   p_page      int DEFAULT 1,
   p_page_size int DEFAULT 25
@@ -157,7 +177,7 @@ RETURNS TABLE (
   username        varchar,
   password_hash   varchar,
   full_name       varchar,
-  role            user_role,
+  role            varchar,
   shop_id         uuid,
   shop_name       varchar,
   inventory_id    uuid,
@@ -165,7 +185,7 @@ RETURNS TABLE (
   active          boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT u.id, u.username, u.password_hash, u.full_name, u.role,
+  SELECT u.id, u.username, u.password_hash, u.full_name, fn_user_role_label(u.role),
          u.shop_id, s.name AS shop_name,
          u.inventory_id, i.name AS inventory_name,
          u.active

@@ -1,8 +1,9 @@
 /* Landing page (unified login) — yellow + dark theme. */
 
 .landing-header-badge {
-  background-color: #1F1F1F;
-  box-shadow: 4px 4px 0 0 #FCD835;
+  /* Brand gold gradient — matches the rest of the project. */
+  background: linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%);
+  box-shadow: 4px 4px 0 0 #1F1F1F;
 }
 
 .landing-welcome-card {

@@ -6,10 +6,15 @@ import type {
 function toQueryString(filters?: ProductListFilters): string {
   if (!filters) return ''
   const params = new URLSearchParams()
-  if (filters.search)              params.set('search', filters.search)
-  if (filters.categoryId != null)  params.set('categoryId', String(filters.categoryId))
-  if (filters.page != null)        params.set('page', String(filters.page))
-  if (filters.pageSize != null)    params.set('pageSize', String(filters.pageSize))
+  if (filters.search) params.set('search', filters.search)
+  if (filters.categoryIds && filters.categoryIds.length > 0) {
+    params.set('categoryIds', filters.categoryIds.join(','))
+  }
+  if (filters.types && filters.types.length > 0) {
+    params.set('types', filters.types.join(','))
+  }
+  if (filters.page != null)     params.set('page', String(filters.page))
+  if (filters.pageSize != null) params.set('pageSize', String(filters.pageSize))
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }

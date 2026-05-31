@@ -36,3 +36,9 @@ Desktop.ini
 ./node_modules/
 ./dist/
 ./build/
+
+# One-shot DB scripts — local-dev seeds, resets, and migrations that should
+# never be checked into the canonical schema folder. Canonical SQL
+# (phase{N}_init / phase{N}_procedures + idempotent addendums) stays tracked
+# under DB/phaseN/.
+DB/One shot scripts/

@@ -15,6 +15,7 @@ import type {
 } from '../api/products/types'
 import type { CategoryDto } from '../api/categories/types'
 import { ValidationError } from '../api/errors'
+import { formatINR } from '../utils/format'
 import './Products.css'
 
 type FormMode =
@@ -55,7 +56,7 @@ export default function Products() {
   const [filterOpen, setFilterOpen] = useState(false)
 
   const activeFilterCount =
-    (filters.search ? 1 : 0) + (filters.categoryId != null ? 1 : 0)
+    (filters.search ? 1 : 0) + (filters.categoryIds?.length ? 1 : 0)
 
   const products  = list.data?.items ?? []
   const total     = list.data?.total ?? 0
@@ -65,7 +66,7 @@ export default function Products() {
   // first page of the newly-filtered result set instead of an empty page N.
   useEffect(() => {
     setPaginationModel(prev => ({ ...prev, page: 0 }))
-  }, [filters.search, filters.categoryId])
+  }, [filters.search, filters.categoryIds])
 
   const closeForm = () => setFormMode({ kind: 'closed' })
 
@@ -115,12 +116,12 @@ export default function Products() {
     },
     {
       field: 'mrp',          headerName: 'MRP',          width: 110, sortable: false, filterable: false,
-      renderCell: ({ value }) => <span>₹ {value}</span>,
+      renderCell: ({ value }) => <span>{formatINR(Number(value))}</span>,
     },
     {
       field: 'purchasePrice', headerName: 'Purchase Price', width: 130, sortable: false, filterable: false,
       renderCell: ({ value }) =>
-        value == null ? <span className="text-[#1F1F1F]/40">—</span> : <span>₹ {value}</span>,
+        value == null ? <span className="text-[#1F1F1F]/40">—</span> : <span>{formatINR(Number(value))}</span>,
     },
     {
       field: 'active', headerName: 'Status', width: 100, sortable: false, filterable: false,
@@ -191,6 +192,12 @@ export default function Products() {
               color="primary"
               startIcon={<Upload className="w-4 h-4" />}
               onClick={() => setImportOpen(true)}
+              // Mirror the Add Product gate — import would 400 anyway when no
+              // categories exist, since every row's category column has to
+              // resolve. Disabling the button surfaces that prerequisite
+              // before the dialog even opens.
+              disabled={categories.length === 0 || categoriesQuery.isLoading}
+              title={categories.length === 0 ? 'Add at least one category before importing products' : undefined}
               sx={{ textTransform: 'none', fontWeight: 600 }}
             >
               Import Products
@@ -235,13 +242,17 @@ export default function Products() {
               onDelete={() => setFilters(f => ({ ...f, search: undefined }))}
             />
           )}
-          {filters.categoryId != null && (
+          {filters.categoryIds?.length ? (
             <Chip
-              label={`Category: ${categories.find(c => c.id === filters.categoryId)?.name ?? filters.categoryId}`}
+              label={`Category: ${
+                filters.categoryIds
+                  .map(id => categories.find(c => c.id === id)?.name ?? id)
+                  .join(', ')
+              }`}
               size="small"
-              onDelete={() => setFilters(f => ({ ...f, categoryId: undefined }))}
+              onDelete={() => setFilters(f => ({ ...f, categoryIds: undefined }))}
             />
-          )}
+          ) : null}
           <Button size="small" onClick={() => setFilters({})} sx={{ textTransform: 'none' }}>
             Clear all
           </Button>
@@ -425,16 +436,22 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {isEdit && product && (
-            <Box sx={{ display: 'flex', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>ID:</b> {product.id}</span>
+            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
               <span><b>Code:</b> {product.code}</span>
             </Box>
           )}
           <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+            {/* Categories are nested (client #1). Server returns rows in tree
+                order (root-first, depth-grouped); we indent each MenuItem by
+                its depth and show only the leaf name so the visual hierarchy
+                reads cleanly. Same-named leaves under different parents stay
+                disambiguated by their indentation context. */}
             <TextField select label="Category" value={categoryId} onChange={e => setCategoryId(Number(e.target.value))} size="small" required disabled={submitting}>
               {categories.map(c => (
-                <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+                <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
+                  {c.name}
+                </MenuItem>
               ))}
             </TextField>
             <TextField select label="Type" value={type} onChange={e => setType(e.target.value)} required size="small" disabled={submitting}>
@@ -529,7 +546,14 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
   const importMutation = useImportProducts()
 
   const submitting = importMutation.isPending
-  const apiError = importMutation.error instanceof Error ? importMutation.error.message : null
+  // BE returns ValidationException as { error: "Validation failed", errors: { file: [msg] } }.
+  // `.message` is just the generic "Validation failed" header — we want the
+  // actual field messages from `.flatten()` so the user sees something
+  // actionable like "No categories exist yet. Create one first…"
+  const apiError =
+    importMutation.error instanceof ValidationError ? importMutation.error.flatten()
+    : importMutation.error instanceof Error          ? importMutation.error.message
+    : null
 
   const handleClose = () => {
     if (submitting) return
@@ -702,14 +726,16 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
   useEffect(() => {
     if (!open) return
     setSearch(filters.search ?? '')
-    setCategoryId(filters.categoryId ?? '')
+    // Admin filter dialog is single-select; we keep the first of the array for UI,
+    // then re-wrap as a 1-element array when applying.
+    setCategoryId(filters.categoryIds?.[0] ?? '')
   }, [open, filters])
 
   const handleApply = (e: React.FormEvent) => {
     e.preventDefault()
     onApply({
       search: search.trim() || undefined,
-      categoryId: typeof categoryId === 'number' ? categoryId : undefined,
+      categoryIds: typeof categoryId === 'number' ? [categoryId] : undefined,
     })
   }
 
@@ -756,7 +782,9 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
           >
             <MenuItem value="">All categories</MenuItem>
             {categories.map(c => (
-              <MenuItem key={c.id} value={c.id}>{c.name}</MenuItem>
+              <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
+                {c.name}
+              </MenuItem>
             ))}
           </TextField>
         </DialogContent>

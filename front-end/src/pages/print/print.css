@@ -1,0 +1,451 @@
+/* Standalone print pages — minimal styling so the browser print dialog
+   ("Save as PDF" or send to printer) produces a clean, paper-friendly page. */
+
+.print-page {
+  background: #FFFFFF;
+  color: #1F1F1F;
+  font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  padding: 24px 32px;
+  max-width: 960px;
+  margin: 0 auto;
+}
+
+/* ─────────────────────────────────────────────────────────────────────
+ * Brand header — centred, same shape as the thermal receipt so admin /
+ * inventory / shop prints all read as one product family. Used by both
+ * PrintRequestPicklist + PrintCumulative.
+ * ───────────────────────────────────────────────────────────────────── */
+.print-brand-header {
+  text-align: center;
+  padding-bottom: 8px;
+  margin-bottom: 6px;
+  border-bottom: 2px solid #1F1F1F;
+}
+.print-brand-name {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+}
+.print-brand-contact {
+  font-size: 11px;
+  margin-top: 1px;
+  color: rgba(31, 31, 31, 0.7);
+}
+.print-brand-subtitle {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-top: 4px;
+}
+
+/* Meta strip — single-band fact row that replaces the old timestamps row
+ * + parties block. Splits onto multiple lines on narrow widths via flex
+ * wrap; on a wide A4 page everything sits in a single line. */
+.print-meta-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  margin-bottom: 10px;
+  padding-bottom: 6px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+}
+.print-meta-strip > div {
+  white-space: nowrap;
+}
+
+.print-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  border-bottom: 2px solid #1F1F1F;
+  padding-bottom: 12px;
+  margin-bottom: 16px;
+}
+
+.print-title {
+  font-size: 22px;
+  font-weight: 700;
+  margin: 0 0 4px;
+  letter-spacing: -0.01em;
+}
+
+/* Variant: centered title block above a right-aligned meta strip.
+   Used by the picklist where the title needs to be the visual anchor. */
+.print-header-centered {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+.print-header-centered .print-title-block {
+  text-align: center;
+}
+
+.print-header-centered .print-title {
+  font-size: 28px;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+  margin-bottom: 6px;
+}
+
+.print-header-centered .print-meta {
+  font-size: 13px;
+  color: #1F1F1F99;
+}
+
+.print-header-centered .print-meta-right {
+  align-self: flex-end;
+}
+
+/* Inventory column pushed to the right edge of the parties block,
+   visually mirroring "From shop → To inventory" on a delivery slip. */
+.print-parties-right {
+  text-align: right;
+}
+
+.print-meta {
+  font-size: 13px;
+  color: #1F1F1F;
+}
+
+.print-meta-right {
+  text-align: right;
+  font-size: 12px;
+  line-height: 1.5;
+  color: #1F1F1F;
+}
+
+.print-parties {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-bottom: 16px;
+  padding: 12px;
+  background: #FFF8DC;
+  border: 1px solid rgba(31, 31, 31, 0.2);
+  border-radius: 4px;
+}
+
+.print-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+.print-table thead th {
+  background: #FCD835;
+  text-align: left;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-size: 11px;
+  padding: 8px;
+  border-bottom: 2px solid #1F1F1F;
+}
+
+.print-table tbody td {
+  padding: 8px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+  vertical-align: top;
+}
+
+.print-table tbody tr:nth-child(even) td {
+  background: #FFFBE6;
+}
+
+.print-table tfoot td {
+  padding: 10px 8px;
+  border-top: 2px solid #1F1F1F;
+  background: #FFF8DC;
+  font-weight: 700;
+}
+
+/* Category banner row — "modern invoice" style: mostly white with a thick
+   brand-yellow accent bar on the left and a bold dark heading. Much less
+   visually heavy than a full-fill banner, prints cleanly even on B/W, and
+   reads like a chapter header in a financial document.
+   Specificity bumped (`.print-table tbody …`) to beat the zebra-stripe
+   `tr:nth-child(even)` rule that would tint every other section row. */
+.print-table tbody tr.print-section-row td {
+  background: #FFFFFF !important;
+  color: #1F1F1F;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 10px 8px 8px;
+  border-top: 2px solid #1F1F1F;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.2);
+  border-left: 4px solid #FCD835;   /* brand-yellow accent bar */
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-table tbody tr.print-section-row td .muted {
+  color: rgba(31, 31, 31, 0.55);
+  font-weight: 600;
+}
+
+/* Weight sub-heading row — subordinate to the category banner above. Slim
+   uppercase eyebrow label, lightly indented, muted colour, hairline bottom
+   border. No background fill so it doesn't compete with the category strip
+   for visual weight. Specificity bumped same way as the section row. */
+.print-table tbody tr.print-weight-row td {
+  background: #FFFFFF !important;
+  color: rgba(31, 31, 31, 0.6);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 6px 8px 4px 16px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.08);
+}
+
+/* Category card — mirrors the card-per-category layout used on the request
+   detail screens. Solid black border, yellow header strip, weight sub-bands
+   and item rows inside. `page-break-inside: avoid` keeps a category on one
+   page when possible (browser falls back to a clean split when forced). */
+.print-card {
+  border: 2px solid #1F1F1F;
+  border-radius: 8px;
+  overflow: hidden;
+  margin-bottom: 16px;
+  page-break-inside: avoid;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+/* Header strip — matches detail screen: 16px horizontal × 10px vertical
+   padding, 14px bold uppercase text, brand-yellow background. */
+.print-card-header {
+  background: #FCD835;
+  border-bottom: 2px solid #1F1F1F;
+  padding: 10px 16px;
+  font-weight: 700;
+  font-size: 14px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-card-header .muted {
+  color: rgba(31, 31, 31, 0.65);
+  font-weight: 600;
+  margin-left: 8px;
+}
+
+/* Table sitting inside a card — drops outer borders (card has its own),
+   and re-tunes the weight-row indent and metrics to match the detail
+   screen's eyebrow style exactly. */
+.print-card .print-table {
+  margin-bottom: 0;
+}
+
+.print-card .print-table tbody tr.print-weight-row td {
+  padding: 12px 8px 4px 16px;
+  letter-spacing: 0.14em;
+}
+
+/* Weight rows that follow another weight group in the same card get a
+   little extra top breathing room — same rhythm as the detail screen. */
+.print-card .print-table tbody tr.print-weight-row + tr td {
+  border-top: none;
+}
+
+/* Money summary printed below the picklist. Compact two-column rows, right
+   side bold. A faint divider separates the Requested block from the
+   post-dispatch Dispatched block when both are present. */
+.print-summary {
+  margin-top: 12px;
+  margin-left: auto;
+  max-width: 380px;
+  padding: 12px 14px;
+  background: #FFF8DC;
+  border: 1px solid #1F1F1F;
+  border-radius: 4px;
+  font-size: 13px;
+}
+
+.print-summary-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  gap: 16px;
+  padding: 3px 0;
+}
+
+.print-summary-row .danger {
+  color: #C62828;
+}
+
+.print-summary-divider {
+  height: 1px;
+  margin: 6px 0;
+  background: rgba(31, 31, 31, 0.2);
+}
+
+.print-notes {
+  margin-top: 16px;
+  padding: 10px 12px;
+  border: 1px dashed rgba(31, 31, 31, 0.5);
+  background: #FFFBE6;
+  font-size: 13px;
+}
+
+.print-footer {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-top: 24px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(31, 31, 31, 0.3);
+  font-size: 11px;
+  color: rgba(31, 31, 31, 0.7);
+}
+
+.print-trigger {
+  border: 1px solid #1F1F1F;
+  background: #FCD835;
+  color: #1F1F1F;
+  font-weight: 700;
+  font-size: 12px;
+  padding: 6px 12px;
+  border-radius: 4px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.print-trigger:hover {
+  background: #1F1F1F;
+  color: #FCD835;
+}
+
+.muted  { color: #1F1F1F99; }
+.small  { font-size: 11px; color: #1F1F1F99; margin-top: 2px; }
+.strong { font-weight: 700; }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Cumulative print — dense two-column flow.
+   Client demo, 26-May-2026: the original card-per-category layout was 9-10
+   sheets. This collapses it to ~3-4 by:
+     • CSS multi-column container so categories flow down two side-by-side
+       columns (mimics the client's spreadsheet style).
+     • Slim banner per section (no card border, no big yellow header strip).
+     • Tighter rows (11px font, 3-4px padding, no zebra).
+     • Dropped the 'From Requests' per-row column — surfaced in the page
+       summary instead.
+   ───────────────────────────────────────────────────────────────────────── */
+.print-dense-grid {
+  column-count: 2;
+  column-gap: 18px;
+  column-fill: balance;
+  margin-top: 4px;
+}
+
+.print-dense-section {
+  /* Keep an entire category section together — don't split a category across
+     a column or page boundary unless it's genuinely too tall for one page. */
+  break-inside: avoid;
+  page-break-inside: avoid;
+  margin-bottom: 12px;
+  display: inline-block;
+  width: 100%;
+}
+
+.print-dense-banner {
+  background: #FFF8DC;
+  border-left: 4px solid #FCD835;
+  border-bottom: 1px solid #1F1F1F;
+  padding: 5px 8px;
+  font-weight: 700;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
+.print-dense-banner .muted {
+  color: rgba(31, 31, 31, 0.55);
+  font-weight: 600;
+  margin-left: 6px;
+}
+
+.print-dense-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 11px;
+}
+
+.print-dense-table td {
+  padding: 3px 6px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.1);
+  vertical-align: top;
+}
+
+/* Weight subheading inside a category — slim eyebrow, no background. */
+.print-dense-table tr.print-weight-row-dense td {
+  padding: 5px 6px 2px 12px;
+  border-bottom: 1px solid rgba(31, 31, 31, 0.08);
+  color: rgba(31, 31, 31, 0.55);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-size: 9px;
+  font-weight: 700;
+}
+
+/* Grand totals strip — same compact font as the cumulative tables. */
+.print-dense-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-top: 2px solid #1F1F1F;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.print-dense-summary .muted {
+  font-weight: 500;
+  color: rgba(31, 31, 31, 0.6);
+}
+
+/* Post-dispatch shortfall — the delivered amount flips red when it
+ * underruns the requested amount. Same shade as the on-screen detail
+ * page uses for short rows. */
+.print-dense-summary .danger {
+  color: #C62828;
+}
+
+/* Browser-print rules. Hide UI affordances; tighten margins for paper. */
+@media print {
+  body {
+    background: #FFFFFF !important;
+    background-image: none !important;
+  }
+  .print-page {
+    padding: 0;
+    max-width: none;
+  }
+  .print-only,
+  .print-trigger {
+    display: none !important;
+  }
+  /* MUI Drawer / Sidebar in the rest of the app might inject content; the
+     /print/* routes don't mount Layout but this is a belt-and-braces guard. */
+  nav, aside, .MuiDrawer-root, .sidebar {
+    display: none !important;
+  }
+  @page {
+    size: A4;
+    margin: 12mm;
+  }
+}
