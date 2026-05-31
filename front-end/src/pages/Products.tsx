@@ -192,6 +192,12 @@ export default function Products() {
               color="primary"
               startIcon={<Upload className="w-4 h-4" />}
               onClick={() => setImportOpen(true)}
+              // Mirror the Add Product gate — import would 400 anyway when no
+              // categories exist, since every row's category column has to
+              // resolve. Disabling the button surfaces that prerequisite
+              // before the dialog even opens.
+              disabled={categories.length === 0 || categoriesQuery.isLoading}
+              title={categories.length === 0 ? 'Add at least one category before importing products' : undefined}
               sx={{ textTransform: 'none', fontWeight: 600 }}
             >
               Import Products
@@ -540,7 +546,14 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
   const importMutation = useImportProducts()
 
   const submitting = importMutation.isPending
-  const apiError = importMutation.error instanceof Error ? importMutation.error.message : null
+  // BE returns ValidationException as { error: "Validation failed", errors: { file: [msg] } }.
+  // `.message` is just the generic "Validation failed" header — we want the
+  // actual field messages from `.flatten()` so the user sees something
+  // actionable like "No categories exist yet. Create one first…"
+  const apiError =
+    importMutation.error instanceof ValidationError ? importMutation.error.flatten()
+    : importMutation.error instanceof Error          ? importMutation.error.message
+    : null
 
   const handleClose = () => {
     if (submitting) return

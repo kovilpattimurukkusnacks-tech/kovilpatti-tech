@@ -171,7 +171,41 @@ public class ProductService(
             return new ImportProductsResult(0, 0, [], []);
 
         var allCategories  = await categories.ListAsync(ct);
-        var categoryByName = allCategories.ToDictionary(c => c.Name.Trim(), c => c, StringComparer.OrdinalIgnoreCase);
+
+        // Hard short-circuit: when there are ZERO categories in the system,
+        // every row would fail with "category not found" and the admin gets
+        // 50 identical error lines telling them nothing actionable. Fail
+        // once with a clear, top-level message instead.
+        if (allCategories.Count == 0)
+        {
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure("file",
+                    "No categories exist yet. Create at least one category on the Categories page before importing products. " +
+                    "Every product must belong to a category — the import can't auto-create them.")
+            });
+        }
+
+        // Two lookups so the Excel can write either the bare leaf name (when
+        // it's unique system-wide) OR the full breadcrumb path (always
+        // unambiguous). Path uses " > " as the separator — same shape the
+        // categories tree SP returns on c.Path.
+        //
+        //   "Snacks > Sweets > 100g"  → unambiguous match via byPath
+        //   "100g"                    → matched via byName when only one
+        //                               category named "100g" exists; row
+        //                               errors with a "use full path" hint
+        //                               otherwise.
+        var byPath = new Dictionary<string, Category>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in allCategories)
+        {
+            // Cat.Path is " > "-joined from root. Fall back to bare Name when
+            // the SP didn't populate Path (defensive — shouldn't happen post #1).
+            var key = NormalizeCategoryPath(c.Path ?? c.Name);
+            byPath[key] = c;
+        }
+        var byName = allCategories
+            .ToLookup(c => c.Name.Trim(), StringComparer.OrdinalIgnoreCase);
 
         // Variant-key dedup (both cross-DB and same-file) was removed per
         // client #8. `skipped` is still tracked because the result type
@@ -196,12 +230,40 @@ public class ProductService(
             Category? category = null;
             if (!string.IsNullOrWhiteSpace(row.Category))
             {
-                if (!categoryByName.TryGetValue(row.Category.Trim(), out category))
+                var rawCat = row.Category!.Trim();
+                if (rawCat.Contains('>'))
                 {
-                    var suggestion = SuggestCategory(row.Category!, allCategories);
+                    // Path mode — exact match against the normalised " > " path.
+                    byPath.TryGetValue(NormalizeCategoryPath(rawCat), out category);
+                }
+                else
+                {
+                    // Bare-name mode — succeed only when one category in the
+                    // system has this name. When two siblings or branches
+                    // share it, force the admin to qualify with the full path.
+                    var matches = byName[rawCat].ToList();
+                    if (matches.Count == 1)
+                    {
+                        category = matches[0];
+                    }
+                    else if (matches.Count > 1)
+                    {
+                        var pathsHint = string.Join(", ",
+                            matches.Select(m => $"\"{m.Path ?? m.Name}\""));
+                        rowErrors.Add(
+                            $"category \"{rawCat}\" is ambiguous — {matches.Count} categories share this name. " +
+                            $"Use the full path instead (one of: {pathsHint}).");
+                    }
+                }
+
+                if (category is null && rowErrors.Count == 0)
+                {
+                    // Truly not found — suggest a path or name based on what
+                    // the user typed.
+                    var suggestion = SuggestCategory(rawCat, allCategories);
                     rowErrors.Add(suggestion is null
-                        ? $"category \"{row.Category}\" not found"
-                        : $"category \"{row.Category}\" not found — did you mean \"{suggestion}\"?");
+                        ? $"category \"{rawCat}\" not found"
+                        : $"category \"{rawCat}\" not found — did you mean \"{suggestion}\"?");
                 }
             }
 
@@ -278,19 +340,46 @@ public class ProductService(
 
     private static string? SuggestCategory(string typo, IReadOnlyList<Category> all)
     {
-        // Scale the threshold with category-name length — distance 3 is a fair
-        // tolerance for "Beverages" but absurd for "Tea". Cap at 3 either way
-        // so we never offer wildly wrong suggestions.
+        // When the user typed a path-style value, compare against full paths so
+        // a typo like "Snacks > Swets" suggests "Snacks > Sweets". Otherwise
+        // compare against bare leaf names.
         var normalized = typo.Trim().ToLowerInvariant();
+        var isPath = normalized.Contains('>');
+
         var best = all
-            .Select(c => (c.Name, Distance: Levenshtein(normalized, c.Name.Trim().ToLowerInvariant())))
+            .Select(c =>
+            {
+                var candidate = isPath
+                    ? NormalizeCategoryPath(c.Path ?? c.Name).ToLowerInvariant()
+                    : c.Name.Trim().ToLowerInvariant();
+                return (Label: isPath ? (c.Path ?? c.Name) : c.Name,
+                        Distance: Levenshtein(
+                            isPath ? NormalizeCategoryPath(normalized) : normalized,
+                            candidate));
+            })
             .OrderBy(x => x.Distance)
             .FirstOrDefault();
-        if (best.Name is null) return null;
+        if (best.Label is null) return null;
 
-        var threshold = Math.Min(3, Math.Max(1, best.Name.Length / 2));
-        return best.Distance <= threshold ? best.Name : null;
+        // Scale the threshold with the candidate's length — distance 3 is a
+        // fair tolerance for "Beverages" but absurd for "Tea". Cap at 4 for
+        // paths since they're longer.
+        var cap = isPath ? 4 : 3;
+        var threshold = Math.Min(cap, Math.Max(1, best.Label.Length / 4));
+        return best.Distance <= threshold ? best.Label : null;
     }
+
+    /// Normalise a user-supplied category path into the canonical
+    /// " > "-joined form so lookups are insensitive to spacing variations.
+    /// Examples:
+    ///   "Snacks>Sweets"       → "Snacks > Sweets"
+    ///   " Snacks  > Sweets "  → "Snacks > Sweets"
+    ///   "Snacks  >  Sweets >" → "Snacks > Sweets"  (drops empty trailing)
+    private static string NormalizeCategoryPath(string path)
+        => string.Join(" > ",
+            path.Split('>', StringSplitOptions.None)
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrEmpty(s)));
 
     private static int Levenshtein(string a, string b)
     {
