@@ -77,6 +77,7 @@ builder.Services.AddHealthChecks()
     .AddCheck("api", () => HealthCheckResult.Healthy("API process is up."))
     .AddCheck<DbHealthCheck>("database");
 
+
 var app = builder.Build();
 
 // Swagger — always on in Development; controlled by Swagger:Enabled in other envs.

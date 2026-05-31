@@ -1,0 +1,211 @@
+/* ============================================================
+ * Thermal (3-inch / 80mm) receipt styles — used by
+ * PrintRequestThermal.tsx. Distinct from print.css (A4 picklist).
+ *
+ * On-screen the page renders inside a fixed-width preview frame so
+ * the admin can verify the layout BEFORE printing. The @page block
+ * kicks in at print time and lets the browser drop the surrounding
+ * UI chrome.
+ * ============================================================ */
+
+.thermal-page {
+  /* Inside this width the layout matches the actual printable area
+   * on most 80mm thermal printers (~72mm). */
+  width: 72mm;
+  margin: 0 auto;
+  padding: 4mm 0;
+  background: #fff;
+  color: #000;
+  font-family: 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+  font-size: 11pt;
+  line-height: 1.32;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Preview wrapper — light grey backdrop on screen only, so the
+ * 72mm strip stands out as a "receipt". @media print drops it. */
+.thermal-preview {
+  background: #e5e5e5;
+  min-height: 100vh;
+  padding: 16px 0;
+}
+
+.thermal-header {
+  text-align: center;
+  margin-bottom: 4mm;
+}
+.thermal-shop {
+  font-size: 14pt;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  margin-bottom: 1mm;
+}
+.thermal-contact {
+  font-size: 10pt;
+}
+.thermal-title {
+  font-size: 11pt;
+  font-weight: 700;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  margin-top: 2mm;
+}
+
+/* Meta block — date / code / status. Two columns, label/value pairs. */
+.thermal-meta {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 2mm;
+  row-gap: 0.5mm;
+  font-size: 10pt;
+  margin-bottom: 1mm;
+}
+.thermal-meta .label { font-weight: 600; }
+.thermal-meta .value { text-align: right; word-break: break-word; }
+.thermal-meta .value-strong { text-align: right; font-weight: 800; }
+
+/* Solid + dashed dividers — match the printed reference photo. */
+.thermal-rule        { border-top: 1px solid #000;     margin: 1.5mm 0; }
+.thermal-rule-dashed { border-top: 1px dashed #000;    margin: 1.5mm 0; }
+
+/* Items table — 4-column compact grid. Item column wraps; numeric
+ * columns are right-aligned and fixed-width. Numeric cells get a 2mm
+ * left padding so adjacent columns don't visually merge (without it
+ * "1 | 280.00" renders as "1280.00" on the 72mm strip).  */
+.thermal-items {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 10pt;
+}
+.thermal-items th {
+  text-align: left;
+  font-weight: 700;
+  padding: 1mm 0;
+  border-bottom: 1px solid #000;
+}
+.thermal-items th.num,
+.thermal-items td.num {
+  text-align: right;
+  white-space: nowrap;
+  padding-left: 2mm;
+}
+.thermal-items td {
+  padding: 0.8mm 0;
+  vertical-align: top;
+}
+.thermal-items .item-name {
+  font-weight: 700;
+}
+.thermal-items .item-sub {
+  font-size: 9pt;
+  color: #000;
+  opacity: 0.7;
+}
+/* Category "box" — dark band that mirrors the new-request-screen
+ * sub-cat heading. Full-width row, inverted colour (dark bg + light
+ * text) so it reads as the OUTER grouping layer at a glance. */
+.thermal-items .cat-row td {
+  padding: 1.5mm 1.5mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 10pt;
+  letter-spacing: 0.6px;
+  background: #000;
+  color: #fff;
+  /* Force a small gap above the next category band when several
+   * stack — avoids visually merging into one long block. */
+  border-top: 1mm solid #fff;
+}
+.thermal-items .cat-row:first-child td {
+  border-top: 0;
+}
+
+/* Weight strip — lighter inner heading inside each category box.
+ * Same visual hierarchy as the new-request-screen weight bar
+ * (yellow-tinted left edge, dotted underline). */
+.thermal-items .weight-row td {
+  padding: 1mm 0 0.6mm 0;
+  font-weight: 700;
+  font-size: 9.5pt;
+  letter-spacing: 0.3px;
+  border-bottom: 1px dashed #999;
+}
+.thermal-items .weight-row .weight-count {
+  font-weight: 600;
+  font-size: 9pt;
+  opacity: 0.7;
+  margin-left: 1.5mm;
+}
+
+/* Totals strip — Label + value pairs, label-bold, value bold-right. */
+.thermal-totals {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  font-size: 10pt;
+  row-gap: 0.5mm;
+  margin: 1mm 0;
+}
+.thermal-totals .v { text-align: right; font-weight: 700; }
+
+/* Grand total bar — slightly larger, between dashed rules. */
+.thermal-grand {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  font-size: 12pt;
+  font-weight: 800;
+  margin: 1mm 0;
+}
+
+.thermal-footer {
+  text-align: center;
+  font-size: 9pt;
+  margin-top: 2mm;
+}
+.thermal-footer .small { font-size: 8.5pt; opacity: 0.75; }
+
+/* Re-print button — visible on screen, hidden on print. */
+.thermal-actions {
+  text-align: center;
+  margin-top: 4mm;
+}
+.thermal-print-btn {
+  /* Brand gold gradient — matches MUI containedPrimary in theme.ts so
+   * the on-screen Print button feels native to the rest of the UI. */
+  background: linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%);
+  color: #1F1F1F;
+  border: 1px solid #C28A00;
+  padding: 8px 16px;
+  border-radius: 6px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.thermal-print-btn:hover {
+  background: linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%);
+}
+
+/* ============================================================
+ * Print-only rules — apply when window.print() fires.
+ * ============================================================ */
+@media print {
+  @page {
+    /* Most thermal drivers expose 80mm receipt as the page size.
+     * Width fixed; height "auto" lets the receipt grow to fit. */
+    size: 80mm auto;
+    margin: 2mm;
+  }
+  html, body {
+    background: #fff;
+    margin: 0;
+    padding: 0;
+  }
+  .thermal-preview {
+    background: #fff;
+    padding: 0;
+    min-height: 0;
+  }
+  .thermal-actions,
+  .thermal-print-btn {
+    display: none !important;
+  }
+}

@@ -1,3 +1,4 @@
+using System.Text.Json;
 using Dapper;
 using KovilpattiSnacks.Repository.Data;
 using KovilpattiSnacks.Repository.Entities;
@@ -17,22 +18,26 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
     }
 
     public async Task<(List<Product> Rows, long Total)> ListPagedAsync(
-        string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
+        string? search, int[]? categoryIds, string[]? types, int page, int pageSize, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
-        const string sqlList  = "SELECT * FROM fn_product_list_paged(@p_search, @p_category_id, @p_page, @p_page_size)";
-        const string sqlCount = "SELECT fn_product_count(@p_search, @p_category_id)";
+        const string sqlList  = "SELECT * FROM fn_product_list_paged(@p_search, @p_category_ids, @p_types, @p_page, @p_page_size)";
+        const string sqlCount = "SELECT fn_product_count(@p_search, @p_category_ids, @p_types)";
 
-        var rows = (await conn.QueryAsync<Product>(new CommandDefinition(
-            sqlList,
-            new { p_search = search, p_category_id = categoryId, p_page = page, p_page_size = pageSize },
-            cancellationToken: ct))).ToList();
+        // Npgsql converts a .NET array to the matching Postgres array type.
+        // Null → NULL → SP treats it as "no filter".
+        var args = new
+        {
+            p_search       = search,
+            p_category_ids = categoryIds,
+            p_types        = types,
+            p_page         = page,
+            p_page_size    = pageSize,
+        };
 
-        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(
-            sqlCount,
-            new { p_search = search, p_category_id = categoryId },
-            cancellationToken: ct));
+        var rows = (await conn.QueryAsync<Product>(new CommandDefinition(sqlList, args, cancellationToken: ct))).ToList();
+        var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, args, cancellationToken: ct));
 
         return (rows, total);
     }
@@ -57,7 +62,11 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql = "SELECT fn_product_next_code()";
-        return await conn.ExecuteScalarAsync<string>(new CommandDefinition(sql, cancellationToken: ct)) ?? "P001";
+        var code = await conn.ExecuteScalarAsync<string>(new CommandDefinition(sql, cancellationToken: ct));
+        if (string.IsNullOrEmpty(code))
+            throw new InvalidOperationException(
+                "fn_product_next_code() returned no value — check the SP definition.");
+        return code;
     }
 
     public async Task<Guid> CreateAsync(Product product, Guid userId, CancellationToken ct = default)
@@ -117,4 +126,36 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
         return await conn.ExecuteScalarAsync<bool>(
             new CommandDefinition(sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
+
+    public async Task<List<(Guid Id, string Code)>> CreateBulkAsync(
+        IReadOnlyList<Product> products, Guid userId, CancellationToken ct = default)
+    {
+        if (products.Count == 0) return new List<(Guid, string)>();
+
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+
+        // Serialize products as jsonb. SP's jsonb_array_elements iterates this
+        // and inserts each row, generating codes server-side via fn_product_next_code.
+        var payload = JsonSerializer.Serialize(products.Select(p => new
+        {
+            name           = p.Name,
+            category_id    = p.CategoryId,
+            type           = p.Type,
+            weight_value   = p.WeightValue,
+            weight_unit    = p.WeightUnit,
+            mrp            = p.Mrp,
+            purchase_price = p.PurchasePrice,
+            gst            = p.Gst,
+            active         = p.Active,
+        }));
+
+        const string sql = "SELECT * FROM fn_product_create_bulk(@p_products::jsonb, @p_user_id)";
+        var rows = await conn.QueryAsync<BulkCreatedRow>(new CommandDefinition(
+            sql, new { p_products = payload, p_user_id = userId }, cancellationToken: ct));
+
+        return rows.Select(r => (r.Id, r.Code)).ToList();
+    }
+
+    // Dapper maps SP columns "id"/"code" to these property names case-insensitively.
+    private sealed record BulkCreatedRow(Guid Id, string Code);
 }

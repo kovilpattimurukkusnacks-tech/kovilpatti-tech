@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 // LayoutDashboard kept for future Dashboard menu re-enable
 // import { LayoutDashboard, Package, Warehouse, LogOut } from 'lucide-react'
-import { Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight } from 'lucide-react'
+import { Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
@@ -10,6 +10,8 @@ const navItems = [
   // Hidden for now — uncomment to re-enable Dashboard
   // { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/products', label: 'Products', icon: Package },
+  { to: '/admin/requests', label: 'Stock Requests', icon: ClipboardList },
+  // Settings moved to the gear icon beside the Admin name at the bottom.
 ]
 
 const createAccountItems = [
@@ -58,7 +60,7 @@ export default function Sidebar({ onNavigate }: Props) {
             className={({ isActive }) =>
               `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
                 isActive
-                  ? 'bg-[#1F1F1F] text-[#FCD835] shadow-lg shadow-black/30'
+                  ? 'gold-gradient shadow-lg shadow-black/30'
                   : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
               }`
             }
@@ -74,7 +76,7 @@ export default function Sidebar({ onNavigate }: Props) {
           onClick={() => setCreateAccountOpen(open => !open)}
           className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
             isCreateAccountActive
-              ? 'bg-[#1F1F1F] text-[#FCD835] shadow-lg shadow-black/30'
+              ? 'gold-gradient shadow-lg shadow-black/30'
               : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
           }`}
         >
@@ -95,7 +97,7 @@ export default function Sidebar({ onNavigate }: Props) {
                 className={({ isActive }) =>
                   `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
                     isActive
-                      ? 'bg-[#1F1F1F] text-[#FCD835]'
+                      ? 'gold-gradient'
                       : 'text-[#1F1F1F]/85 hover:bg-[#1F1F1F]/10'
                   }`
                 }
@@ -110,17 +112,34 @@ export default function Sidebar({ onNavigate }: Props) {
 
       <div className="relative z-10 px-4 py-4 border-t-2 border-[#1F1F1F]/15">
         <div className="flex items-center gap-3 mb-3">
-          <div className="w-9 h-9 bg-[#1F1F1F] text-[#FCD835] rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-md shadow-black/30">
+          <div className="w-9 h-9 gold-gradient rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-md shadow-black/30">
             {currentUser?.fullName.charAt(0).toUpperCase() ?? 'A'}
           </div>
           <div className="text-sm flex-1 min-w-0">
             <div className="font-bold truncate text-[#1F1F1F] uppercase tracking-wide">{currentUser?.fullName ?? 'Admin'}</div>
             <div className="text-xs text-[#1F1F1F]/65 font-medium">Admin</div>
           </div>
+          {/* Settings — moved here from the nav list. Sits at the right corner
+              of the Admin name row. Highlights when on the settings page. */}
+          <NavLink
+            to="/admin/settings"
+            onClick={() => onNavigate?.()}
+            title="Settings"
+            aria-label="Settings"
+            className={({ isActive }) =>
+              `flex-shrink-0 p-2 rounded-lg transition ${
+                isActive
+                  ? 'gold-gradient'
+                  : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
+              }`
+            }
+          >
+            <Settings className="w-4 h-4" />
+          </NavLink>
         </div>
         <button
           onClick={handleLogout}
-          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-[#1F1F1F] hover:bg-[#1F1F1F] hover:text-[#FCD835] font-bold transition"
+          className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-[#1F1F1F] hover:gold-gradient font-bold transition"
         >
           <LogOut className="w-3.5 h-3.5" />
           Logout

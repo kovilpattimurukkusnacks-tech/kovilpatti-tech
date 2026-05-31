@@ -1,5 +1,6 @@
 using FluentValidation;
 using FluentValidation.Results;
+using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.Products;
 using KovilpattiSnacks.Business.Exceptions;
@@ -18,13 +19,19 @@ public class ProductService(
     IValidator<UpdateProductRequest> updateValidator
 ) : IProductService
 {
-    public async Task<PagedResult<ProductDto>> ListAsync(string? search, int? categoryId, int page, int pageSize, CancellationToken ct = default)
+    public async Task<PagedResult<ProductDto>> ListAsync(
+        string? search, int[]? categoryIds, string[]? types, int page, int pageSize, CancellationToken ct = default)
     {
         // Defensive clamp — controller already defaults, but a 0 page or pageSize would break LIMIT/OFFSET.
         var safePage     = page     < 1   ? 1   : page;
         var safePageSize = pageSize < 1   ? 10  : (pageSize > 200 ? 200 : pageSize);
 
-        var (rows, total) = await products.ListPagedAsync(search, categoryId, safePage, safePageSize, ct);
+        // Normalize empty arrays → null so the SP treats them as "no filter"
+        // (saves a needless cardinality check inside the SP).
+        var cats  = categoryIds is { Length: > 0 } ? categoryIds : null;
+        var typs  = types       is { Length: > 0 } ? types       : null;
+
+        var (rows, total) = await products.ListPagedAsync(search, cats, typs, safePage, safePageSize, ct);
         var items = rows.Select(MapToDto).ToList();
         return new PagedResult<ProductDto>(items, total, safePage, safePageSize);
     }
@@ -57,13 +64,11 @@ public class ProductService(
         var name        = request.Name.Trim();
         var type        = request.Type.Trim();
         var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
-        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
 
-        if (await VariantExistsAsync(newKey, excludeId: null, ct))
-            throw new ValidationException(new[] {
-                new ValidationFailure(nameof(request.Name),
-                    "Another product with the same name, type, weight and category already exists.")
-            });
+        // Variant tuple uniqueness (name + category + type + weight) was
+        // removed per client #8 (28-May-2026). Admin can now create rows
+        // that look identical on those fields; the global UNIQUE on code
+        // still guarantees the SKU code is distinct.
 
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
@@ -101,13 +106,9 @@ public class ProductService(
         var name        = request.Name.Trim();
         var type        = request.Type.Trim();
         var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
-        var newKey      = VariantKey(name, request.CategoryId, type, request.WeightValue, weightUnit);
 
-        if (await VariantExistsAsync(newKey, excludeId: id, ct))
-            throw new ValidationException(new[] {
-                new ValidationFailure(nameof(request.Name),
-                    "Another product with the same name, type, weight and category already exists.")
-            });
+        // Variant tuple uniqueness dropped per client #8 (28-May-2026) —
+        // see CreateAsync for the rationale.
 
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
@@ -145,11 +146,15 @@ public class ProductService(
     }
 
     // Bulk import — strict validation; if any row has a hard error, nothing is
-    // inserted. Rows whose (name + type + weight + category) already exists are
-    // silently skipped (returned in the result, not treated as errors). Rows
-    // within the same file that collide on the variant key are also skipped
-    // after the first one wins. For unknown categories we surface a "did you
-    // mean" hint based on Levenshtein distance — never auto-mapped.
+    // inserted. Variant-tuple dedup (both cross-DB and same-file) was removed
+    // per client #8 (28-May-2026): identical-looking rows are allowed, and
+    // importing the same row twice creates two products. For unknown
+    // categories we surface a "did you mean" hint based on Levenshtein
+    // distance — never auto-mapped.
+    //
+    // Atomicity: validated rows are inserted via fn_product_create_bulk in a
+    // SINGLE SP call. The SP runs in one transaction — any insert failure
+    // rolls back the whole batch (no partial commits).
     public async Task<ImportProductsResult> ImportAsync(Stream fileStream, string fileName, CancellationToken ct = default)
     {
         var userId = currentUser.UserId
@@ -166,10 +171,46 @@ public class ProductService(
             return new ImportProductsResult(0, 0, [], []);
 
         var allCategories  = await categories.ListAsync(ct);
-        var categoryByName = allCategories.ToDictionary(c => c.Name.Trim(), c => c, StringComparer.OrdinalIgnoreCase);
-        var existingKeys = (await products.ListAsync(null, null, ct))
-            .Select(p => VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g"))
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
+
+        // Hard short-circuit: when there are ZERO categories in the system,
+        // every row would fail with "category not found" and the admin gets
+        // 50 identical error lines telling them nothing actionable. Fail
+        // once with a clear, top-level message instead.
+        if (allCategories.Count == 0)
+        {
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure("file",
+                    "No categories exist yet. Create at least one category on the Categories page before importing products. " +
+                    "Every product must belong to a category — the import can't auto-create them.")
+            });
+        }
+
+        // Two lookups so the Excel can write either the bare leaf name (when
+        // it's unique system-wide) OR the full breadcrumb path (always
+        // unambiguous). Path uses " > " as the separator — same shape the
+        // categories tree SP returns on c.Path.
+        //
+        //   "Snacks > Sweets > 100g"  → unambiguous match via byPath
+        //   "100g"                    → matched via byName when only one
+        //                               category named "100g" exists; row
+        //                               errors with a "use full path" hint
+        //                               otherwise.
+        var byPath = new Dictionary<string, Category>(StringComparer.OrdinalIgnoreCase);
+        foreach (var c in allCategories)
+        {
+            // Cat.Path is " > "-joined from root. Fall back to bare Name when
+            // the SP didn't populate Path (defensive — shouldn't happen post #1).
+            var key = NormalizeCategoryPath(c.Path ?? c.Name);
+            byPath[key] = c;
+        }
+        var byName = allCategories
+            .ToLookup(c => c.Name.Trim(), StringComparer.OrdinalIgnoreCase);
+
+        // Variant-key dedup (both cross-DB and same-file) was removed per
+        // client #8. `skipped` is still tracked because the result type
+        // expects the list; today it's only populated for things like
+        // unknown-but-suggested categories (errors path).
 
         var errors = new List<ImportProductError>();
         var skipped = new List<ImportProductSkipped>();
@@ -189,12 +230,40 @@ public class ProductService(
             Category? category = null;
             if (!string.IsNullOrWhiteSpace(row.Category))
             {
-                if (!categoryByName.TryGetValue(row.Category.Trim(), out category))
+                var rawCat = row.Category!.Trim();
+                if (rawCat.Contains('>'))
                 {
-                    var suggestion = SuggestCategory(row.Category!, allCategories);
+                    // Path mode — exact match against the normalised " > " path.
+                    byPath.TryGetValue(NormalizeCategoryPath(rawCat), out category);
+                }
+                else
+                {
+                    // Bare-name mode — succeed only when one category in the
+                    // system has this name. When two siblings or branches
+                    // share it, force the admin to qualify with the full path.
+                    var matches = byName[rawCat].ToList();
+                    if (matches.Count == 1)
+                    {
+                        category = matches[0];
+                    }
+                    else if (matches.Count > 1)
+                    {
+                        var pathsHint = string.Join(", ",
+                            matches.Select(m => $"\"{m.Path ?? m.Name}\""));
+                        rowErrors.Add(
+                            $"category \"{rawCat}\" is ambiguous — {matches.Count} categories share this name. " +
+                            $"Use the full path instead (one of: {pathsHint}).");
+                    }
+                }
+
+                if (category is null && rowErrors.Count == 0)
+                {
+                    // Truly not found — suggest a path or name based on what
+                    // the user typed.
+                    var suggestion = SuggestCategory(rawCat, allCategories);
                     rowErrors.Add(suggestion is null
-                        ? $"category \"{row.Category}\" not found"
-                        : $"category \"{row.Category}\" not found — did you mean \"{suggestion}\"?");
+                        ? $"category \"{rawCat}\" not found"
+                        : $"category \"{rawCat}\" not found — did you mean \"{suggestion}\"?");
                 }
             }
 
@@ -222,18 +291,13 @@ public class ProductService(
                 continue;
             }
 
-            // Hard errors check passed — now soft-skip duplicates by composite key.
-            // Add the new key to the set so a duplicate row later in the same
-            // file also gets reported as a skip (instead of double-inserting).
             var rowName = row.Name!.Trim();
             var rowType = row.Type!.Trim();
-            var rowKey  = VariantKey(rowName, category!.Id, rowType, weightValue, weightUnit);
-            if (!existingKeys.Add(rowKey))
-            {
-                skipped.Add(new ImportProductSkipped(row.RowNumber, rowName,
-                    "same name, type, weight & category already exists"));
-                continue;
-            }
+
+            // Variant dedup removed (client #8). Same row repeated in the
+            // file => two products; same variant already in DB => another
+            // product alongside the existing one. Code is still globally
+            // unique (server-assigned by the bulk SP).
 
             validated.Add(new Product
             {
@@ -252,46 +316,11 @@ public class ProductService(
         if (errors.Count > 0)
             return new ImportProductsResult(rawRows.Count, 0, [], errors);
 
-        var imported = 0;
-        foreach (var p in validated)
-        {
-            p.Code = await products.NextCodeAsync(ct);
-            await products.CreateAsync(p, userId, ct);
-            imported++;
-        }
+        // Single SP call inserts every validated row atomically, generating
+        // codes server-side. Replaces N × NextCode + N × Create round-trips.
+        var inserted = await products.CreateBulkAsync(validated, userId, ct);
 
-        return new ImportProductsResult(rawRows.Count, imported, skipped, []);
-    }
-
-    // Variant key = case-insensitive (name, category, type, weight). Two products
-    // sharing this key are treated as the same SKU. NULL weight_value is its own
-    // bucket (different from "0" or "10g"). Unit is normalized to lowercase.
-    //
-    // Weight is normalized with "0.###" so "10", "10.0", and "10.000" all hash
-    // the same — Npgsql preserves the numeric(10,3) scale on read, but the
-    // Excel parser doesn't, so direct ToString() would mismatch.
-    private static string VariantKey(string name, int categoryId, string type, decimal? weightValue, string weightUnit)
-    {
-        var n = (name ?? "").Trim().ToLowerInvariant();
-        var t = (type ?? "").Trim().ToLowerInvariant();
-        var u = (weightUnit ?? "g").Trim().ToLowerInvariant();
-        var w = weightValue.HasValue
-            ? weightValue.Value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)
-            : "∅";
-        return $"{n}|{categoryId}|{t}|{w}|{u}";
-    }
-
-    private async Task<bool> VariantExistsAsync(string key, Guid? excludeId, CancellationToken ct)
-    {
-        var all = await products.ListAsync(null, null, ct);
-        foreach (var p in all)
-        {
-            if (excludeId.HasValue && p.Id == excludeId.Value) continue;
-            var existingKey = VariantKey(p.Name, p.CategoryId, p.Type, p.WeightValue, p.WeightUnit ?? "g");
-            if (string.Equals(existingKey, key, StringComparison.OrdinalIgnoreCase))
-                return true;
-        }
-        return false;
+        return new ImportProductsResult(rawRows.Count, inserted.Count, skipped, []);
     }
 
     private static bool TryParseDecimal(string? raw, out decimal value)
@@ -311,13 +340,46 @@ public class ProductService(
 
     private static string? SuggestCategory(string typo, IReadOnlyList<Category> all)
     {
-        // Suggest only if the closest existing category is reasonably near (<= 3 edits).
+        // When the user typed a path-style value, compare against full paths so
+        // a typo like "Snacks > Swets" suggests "Snacks > Sweets". Otherwise
+        // compare against bare leaf names.
+        var normalized = typo.Trim().ToLowerInvariant();
+        var isPath = normalized.Contains('>');
+
         var best = all
-            .Select(c => (c.Name, Distance: Levenshtein(typo.Trim().ToLowerInvariant(), c.Name.Trim().ToLowerInvariant())))
+            .Select(c =>
+            {
+                var candidate = isPath
+                    ? NormalizeCategoryPath(c.Path ?? c.Name).ToLowerInvariant()
+                    : c.Name.Trim().ToLowerInvariant();
+                return (Label: isPath ? (c.Path ?? c.Name) : c.Name,
+                        Distance: Levenshtein(
+                            isPath ? NormalizeCategoryPath(normalized) : normalized,
+                            candidate));
+            })
             .OrderBy(x => x.Distance)
             .FirstOrDefault();
-        return best.Distance <= 3 ? best.Name : null;
+        if (best.Label is null) return null;
+
+        // Scale the threshold with the candidate's length — distance 3 is a
+        // fair tolerance for "Beverages" but absurd for "Tea". Cap at 4 for
+        // paths since they're longer.
+        var cap = isPath ? 4 : 3;
+        var threshold = Math.Min(cap, Math.Max(1, best.Label.Length / 4));
+        return best.Distance <= threshold ? best.Label : null;
     }
+
+    /// Normalise a user-supplied category path into the canonical
+    /// " > "-joined form so lookups are insensitive to spacing variations.
+    /// Examples:
+    ///   "Snacks>Sweets"       → "Snacks > Sweets"
+    ///   " Snacks  > Sweets "  → "Snacks > Sweets"
+    ///   "Snacks  >  Sweets >" → "Snacks > Sweets"  (drops empty trailing)
+    private static string NormalizeCategoryPath(string path)
+        => string.Join(" > ",
+            path.Split('>', StringSplitOptions.None)
+                .Select(s => s.Trim())
+                .Where(s => !string.IsNullOrEmpty(s)));
 
     private static int Levenshtein(string a, string b)
     {
@@ -341,7 +403,7 @@ public class ProductService(
 
     private ProductDto MapToDto(Product p)
     {
-        var hidePurchase = string.Equals(currentUser.Role, "ShopUser", StringComparison.OrdinalIgnoreCase);
+        var hidePurchase = string.Equals(currentUser.Role, RoleNames.ShopUser, StringComparison.OrdinalIgnoreCase);
         return new ProductDto(
             Id:            p.Id,
             Code:          p.Code,

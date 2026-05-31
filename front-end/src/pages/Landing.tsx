@@ -3,6 +3,7 @@ import { Navigate, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
+import { ApiError } from '../api/errors'
 import './Landing.css'
 
 export default function Landing() {
@@ -23,11 +24,16 @@ export default function Landing() {
     setSubmitting(true)
     try {
       const user = await login(username, password)
-      if (!user) {
-        setError('Invalid credentials')
-        return
-      }
       navigate(roleHomePath(user.role))
+    } catch (err) {
+      // Distinguish the failure modes so the user gets an honest message:
+      //   401 → wrong credentials   429 → rate-limited (BE message)
+      //   other ApiError → BE message   non-ApiError → network/unreachable
+      if (err instanceof ApiError) {
+        setError(err.status === 401 ? 'Invalid username or password.' : err.message)
+      } else {
+        setError('Could not reach the server. Check your connection and try again.')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -35,23 +41,22 @@ export default function Landing() {
 
   return (
     <div className="relative min-h-screen flex flex-col">
-      <header className="relative z-10 px-6 sm:px-8 py-5 flex items-center justify-between gap-3">
+      <header className="relative z-10 px-6 sm:px-8 py-5 flex items-center gap-3">
+        {/* Logo on its own — the emblem already spells out the brand, so
+            the redundant text title that lived here was dropped. */}
         <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="h-12 sm:h-14 w-auto" />
-        <div className="landing-header-badge px-4 py-2 rounded-lg hidden sm:block">
-          <div className="text-xs text-[#FCD835] font-bold uppercase tracking-widest">Inventory Management System</div>
-        </div>
       </header>
 
       <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
         <div className="max-w-md w-full">
-          <div className="landing-welcome-card text-center mb-6 px-6 py-8 rounded-2xl bg-white">
+          <div className="landing-welcome-card text-center mb-6 px-6 py-8 rounded-2xl bg-[#FFFBE6]">
             <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="mx-auto w-56 sm:w-64 h-auto mb-4" />
             <p className="text-[#1F1F1F] text-base font-bold uppercase tracking-widest">Welcome — sign in to continue</p>
           </div>
 
           <form
             onSubmit={handleSubmit}
-            className="landing-welcome-card bg-white rounded-2xl p-6 sm:p-8 space-y-4"
+            className="landing-welcome-card bg-[#FFFBE6] rounded-2xl p-6 sm:p-8 space-y-4"
             noValidate
           >
             <div>
@@ -101,7 +106,7 @@ export default function Landing() {
             <button
               type="submit"
               disabled={!username || !password || submitting}
-              className="landing-login-submit w-full bg-[#1F1F1F] hover:bg-[#0A0A0A] disabled:bg-gray-300 disabled:text-gray-500 text-[#FCD835] py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition"
+              className="landing-login-submit w-full gold-gradient gold-gradient-hover-target disabled:bg-gray-300 disabled:text-gray-500 py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition"
             >
               {submitting ? 'Signing in…' : 'Sign In'}
             </button>
