@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Edit2, Trash2, X, Warehouse } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -98,8 +98,6 @@ export default function Inventories() {
     {
       field: 'actions', headerName: 'Actions', width: 120, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
-      cellClassName: 'col-pin-right',
-      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', inventory: row })}>
@@ -204,6 +202,10 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
   const [contactPersonName, setContactPersonName] = useState('')
   const [active, setActive] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  // Focus Name on open — beats MUI Dialog's default focus-trap landing on
+  // the close-X. setTimeout lets the dialog transition + focus trap finish
+  // before our .focus() takes over.
+  const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -214,6 +216,8 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
     setContactPersonName(inventory?.contactPersonName ?? '')
     setActive(inventory?.active ?? true)
     setErr(null)
+    const t = setTimeout(() => nameRef.current?.focus(), 50)
+    return () => clearTimeout(t)
   }, [open, inventory])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -262,7 +266,7 @@ function InventoryFormDialog({ open, inventory, submitting, submitError, onClose
               <span><b>Code:</b> {inventory.code}</span>
             </Box>
           )}
-          <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
+          <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} inputRef={nameRef} />
           <TextField label="Address" value={address} onChange={e => setAddress(e.target.value)} required size="small" multiline minRows={2} disabled={submitting} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
             <TextField
