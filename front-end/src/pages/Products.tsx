@@ -137,8 +137,6 @@ export default function Products() {
     {
       field: 'actions', headerName: 'Actions', width: 120, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
-      cellClassName: 'col-pin-right',
-      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', product: row })}>
@@ -338,6 +336,11 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  // MUI Dialog's focus trap auto-focuses the first tabbable child on open,
+  // which is the close-X in the title bar — not the Name field. We grab the
+  // input ref + .focus() it after the dialog has finished transitioning so
+  // the cursor lands in Name as soon as the dialog appears.
+  const nameRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -350,6 +353,10 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
     setErr(null)
+    // 50 ms gives the Dialog's transition + focus trap time to finish,
+    // so our .focus() wins the final placement.
+    const t = setTimeout(() => nameRef.current?.focus(), 50)
+    return () => clearTimeout(t)
   }, [open, product, categories])
 
   // Controlled-input filter for numeric fields:
@@ -440,7 +447,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               <span><b>Code:</b> {product.code}</span>
             </Box>
           )}
-          <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} />
+          <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} inputRef={nameRef} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
             {/* Categories are nested (client #1). Server returns rows in tree
                 order (root-first, depth-grouped); we indent each MenuItem by

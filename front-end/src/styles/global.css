@@ -101,14 +101,21 @@ h1 { font-weight: 700; }
   color: #1F1F1F;
 }
 
-.data-page-grid .MuiDataGrid-columnHeaders {
-  background-color: #FCD835;
+/* DataGrid v9 header band — same pale cream as the body rows so the
+ * whole table reads as one continuous surface. Bold uppercase text +
+ * a thin dark divider underneath does the visual separation, no fill
+ * contrast needed. ARIA-role selector keeps us safe across MUI renames. */
+.data-page-grid [role="row"]:has([role="columnheader"]),
+.data-page-grid [role="columnheader"] {
+  background-color: #FFFBE6 !important;
   color: #1F1F1F;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-size: 0.7rem;
-  border-bottom: 2px solid #1F1F1F;
+}
+.data-page-grid [role="row"]:has([role="columnheader"]) {
+  border-bottom: 1px solid rgba(31, 31, 31, 0.25);
 }
 
 /* Cream-tinted rows — matches Products + request-list pages so every
@@ -149,12 +156,14 @@ h1 { font-weight: 700; }
   box-shadow: -4px 0 8px -2px rgba(0, 0, 0, 0.08);
 }
 
+/* Cream-tinted to match the rest of the row (no more white sliver under
+ * the Actions column). */
 .MuiDataGrid-cell.col-pin-right {
-  background-color: #FFFFFF;
+  background-color: #FFFBE6;
 }
 
 .MuiDataGrid-row:hover .MuiDataGrid-cell.col-pin-right {
-  background-color: #FFF8DC;
+  background-color: #FFF4B8;
 }
 
 .MuiDataGrid-columnHeader.col-pin-right {
