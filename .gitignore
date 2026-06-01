@@ -37,8 +37,8 @@ Desktop.ini
 ./dist/
 ./build/
 
-# One-shot DB scripts — local-dev seeds, resets, and migrations that should
-# never be checked into the canonical schema folder. Canonical SQL
-# (phase{N}_init / phase{N}_procedures + idempotent addendums) stays tracked
-# under DB/phaseN/.
+# Local-dev seeds, resets, and ad-hoc throwaway helpers — never tracked.
+# Canonical schema lives under DB/phaseN/, and upgrade migrations live under
+# DB/migrations/ (both tracked). Anything that should travel with a git pull
+# (UAT / prod / new dev machine) goes there, NOT here.
 DB/One shot scripts/

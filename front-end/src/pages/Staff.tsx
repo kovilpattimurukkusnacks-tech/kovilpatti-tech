@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Edit2, Trash2, X, User as UserIcon, KeyRound, Eye, EyeOff } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -129,8 +129,6 @@ export default function Staff() {
     {
       field: 'actions', headerName: 'Actions', width: 160, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
-      cellClassName: 'col-pin-right',
-      headerClassName: 'col-pin-right',
       renderCell: ({ row }) => (
         <Box>
           <IconButton size="small" title="Reset password" onClick={() => setResetTarget(row)}>
@@ -260,6 +258,9 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
   const [inventoryId, setInventoryId] = useState('')
   const [active, setActive] = useState(true)
   const [err, setErr] = useState<string | null>(null)
+  // Focus Username on open (Full Name on edit — username is read-only then).
+  // Beats MUI Dialog's default focus trap landing on the close-X.
+  const firstFieldRef = useRef<HTMLInputElement>(null)
 
   useEffect(() => {
     if (!open) return
@@ -275,6 +276,8 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
     setInventoryId(user?.inventoryId ?? (inventories[0]?.id ?? ''))
     setActive(user?.active ?? true)
     setErr(null)
+    const t = setTimeout(() => firstFieldRef.current?.focus(), 50)
+    return () => clearTimeout(t)
   }, [open, user, shops, inventories])
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -339,7 +342,7 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
 
           {!isEdit && (
             <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-              <TextField label="Username" value={username} onChange={e => setUsername(e.target.value)} required size="small" disabled={submitting} />
+              <TextField label="Username" value={username} onChange={e => setUsername(e.target.value)} required size="small" disabled={submitting} inputRef={firstFieldRef} />
               <TextField
                 label="Password"
                 type={showPassword ? 'text' : 'password'}
@@ -370,6 +373,7 @@ function StaffFormDialog({ open, user, shops, inventories, submitting, submitErr
           <TextField
             label="Full Name"
             value={fullName}
+            inputRef={isEdit ? firstFieldRef : undefined}
             onChange={e => setFullName(
               e.target.value.replace(/[^A-Za-z\s.'\-]/g, '').slice(0, 60)
             )}

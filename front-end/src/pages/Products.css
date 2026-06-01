@@ -17,14 +17,20 @@
   color: #1F1F1F;
 }
 
-.products-grid .MuiDataGrid-columnHeaders {
-  background-color: #FCD835;
+/* DataGrid v9 header band — same pale cream as body rows so the table
+ * reads as one surface. Bold uppercase + thin divider does the
+ * separation; no bright fill. */
+.products-grid [role="row"]:has([role="columnheader"]),
+.products-grid [role="columnheader"] {
+  background-color: #FFFBE6 !important;
   color: #1F1F1F;
   font-weight: 700;
   text-transform: uppercase;
   letter-spacing: 0.05em;
   font-size: 0.7rem;
-  border-bottom: 2px solid #1F1F1F;
+}
+.products-grid [role="row"]:has([role="columnheader"]) {
+  border-bottom: 1px solid rgba(31, 31, 31, 0.25);
 }
 
 /* Cream-tinted rows by default — same warm backdrop the request list
