@@ -105,7 +105,7 @@ LANGUAGE sql STABLE AS $$
               FROM   stock_request_items it
               JOIN   products p ON p.id = it.product_id
               WHERE  it.request_id = r.id
-                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
             )
           )
   ),
@@ -126,7 +126,7 @@ LANGUAGE sql STABLE AS $$
       AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
       AND (
             NOT EXISTS (SELECT 1 FROM cat_closure)
-            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+            OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
           )
   )
   SELECT
@@ -209,7 +209,7 @@ LANGUAGE sql STABLE AS $$
               FROM   stock_request_items it
               JOIN   products p ON p.id = it.product_id
               WHERE  it.request_id = r.id
-                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
             )
           )
   ),
@@ -302,7 +302,7 @@ LANGUAGE sql STABLE AS $$
               FROM   stock_request_items it
               JOIN   products p ON p.id = it.product_id
               WHERE  it.request_id = r.id
-                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
             )
           )
   ),
@@ -322,7 +322,7 @@ LANGUAGE sql STABLE AS $$
               FROM   stock_request_items it
               JOIN   products p ON p.id = it.product_id
               WHERE  it.request_id = r.id
-                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
             )
           )
   ),
@@ -333,7 +333,7 @@ LANGUAGE sql STABLE AS $$
     LEFT JOIN products p        ON p.id  = it.product_id
     WHERE (
       NOT EXISTS (SELECT 1 FROM cat_closure)
-      OR p.category_id = ANY((SELECT ids FROM cat_closure))
+      OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
     )
     GROUP BY o.shop_id
   )
@@ -433,7 +433,7 @@ LANGUAGE sql STABLE AS $$
       AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
       AND (
             NOT EXISTS (SELECT 1 FROM cat_closure)
-            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+            OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
           )
   )
   SELECT
@@ -519,7 +519,7 @@ LANGUAGE sql STABLE AS $$
       AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
       AND (
             NOT EXISTS (SELECT 1 FROM cat_closure)
-            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+            OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
           )
   )
   SELECT
@@ -620,7 +620,7 @@ LANGUAGE sql STABLE AS $$
     AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
     AND (
           NOT EXISTS (SELECT 1 FROM cat_closure)
-          OR p.category_id = ANY((SELECT ids FROM cat_closure))
+          OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
         )
   ORDER BY a.edited_at DESC;
 $$;
