@@ -33,9 +33,9 @@ Kovilpatti snacks Inventory/
 ├── .gitignore
 │
 ├── DB/                                  Postgres schema + stored functions
-│   ├── phase1_init.sql                  Schema — 5 tables, audit columns, user_role enum, is_deleted flags
-│   ├── phase1_procedures.sql            All stored functions (auth + CRUD for every entity + categories)
-│   └── migration_add_is_deleted.sql     One-shot migration for older DBs that pre-date is_deleted
+│   ├── phase1/                          Phase 1 schema + SPs (auth, master data)
+│   ├── phase2/                          Phase 2 schema + SPs (stock-request workflow)
+│   └── phase3/                          Phase 3 SPs (read-only accounts reporting)
 │
 ├── Backend/                             .NET 9 solution
 │   ├── KovilpattiSnacks.sln
@@ -135,6 +135,8 @@ VITE_API_URL=http://localhost:5219
 | `GET POST PUT DELETE` | `/api/users` | Admin only |
 | `PUT` | `/api/users/{id}/password` | Admin only |
 | `GET` | `/api/categories` | any authed (read-only — categories managed via SQL for Phase 1) |
+| `GET` | `/api/accounts/{summary,trend,by-shop,by-category,top-products,adjustments,in-transit}` | Admin (Phase 3 reporting) |
+| `GET` | `/api/accounts/export/{by-shop,by-category,top-products,adjustments}` | Admin (Phase 3 CSV export, UTF-8 BOM) |
 | `GET` | `/health` | anonymous (readiness check, pings DB) |
 
 JWT lifetime is 1 hour. The token carries `userId`, `role`, and either `shopId` or `inventoryId` (depending on role). Every write operation stamps `created_by` / `updated_by` from the JWT.

@@ -10,7 +10,14 @@ using Microsoft.OpenApi.Models;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(opts =>
+{
+    // Comma-separated query arrays for endpoints that use them (currently
+    // Accounts — ?shopIds=uuid,uuid&catIds=1,2,3). Default binder expects
+    // repeated keys, but the API contract uses commas. Provider only kicks
+    // in for Guid[] / int[], so unrelated controllers are unaffected.
+    opts.ModelBinderProviders.Insert(0, new KovilpattiSnacks.API.Middleware.CommaSeparatedArrayModelBinderProvider());
+});
 
 // Register Business → Repository (chained inside AddBusiness)
 builder.Services.AddBusiness(builder.Configuration);
