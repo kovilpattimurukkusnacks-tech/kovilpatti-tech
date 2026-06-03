@@ -1,11 +1,10 @@
 import { useMemo } from 'react'
 import {
-  Autocomplete, Box, Button, Card, CardContent, Chip, MenuItem, TextField,
+  Autocomplete, Box, Button, Card, CardContent, Chip, TextField,
 } from '@mui/material'
 import { useCategories } from '../../hooks/useCategories'
-import { useInventories } from '../../hooks/useInventories'
 import { useShops } from '../../hooks/useShops'
-import type { AccountsFilters, AccountsGrouping } from '../../api/accounts/types'
+import type { AccountsFilters } from '../../api/accounts/types'
 
 type Props = {
   filters: AccountsFilters
@@ -61,28 +60,22 @@ const PRESETS: Preset[] = [
   { key: 'last-month', label: 'Last month',  from: istFirstOfPrevMonth,            to: istLastOfPrevMonth },
 ]
 
-const GROUPINGS: AccountsGrouping[] = ['day', 'week', 'month']
-
 /**
  * Date-range + multi-select filter bar above the dashboard. Filter state
  * lives in the URL; this component just renders + emits changes. Presets
- * shift only the date range — other filters (shop / inventory / category)
- * are preserved.
+ * shift only the date range — other filters (shop / category) are preserved.
  */
 export default function AccountsFilterBar({ filters, onChange }: Props) {
   const { data: shopsData }       = useShops()
-  const { data: inventoriesData } = useInventories()
   const { data: categoriesData }  = useCategories()
 
   const shops       = shopsData ?? []
-  const inventories = inventoriesData ?? []
   const categories  = useMemo(() => (categoriesData ?? []).filter(c => !c.parentId || true), [categoriesData])
   // ^ keep all categories (root + descendants) — the BE expands selected ids
   // into their full subtree, so a user picking "Biscuits" includes everything
   // under it without us having to dedupe here.
 
   const selectedShops      = shops.filter(s => filters.shopIds?.includes(s.id))
-  const selectedInventories = inventories.filter(i => filters.inventoryIds?.includes(i.id))
   const selectedCategories = categories.filter(c => filters.categoryIds?.includes(c.id))
 
   const applyPreset = (p: Preset) => onChange({ ...filters, from: p.from(), to: p.to() })
@@ -104,7 +97,7 @@ export default function AccountsFilterBar({ filters, onChange }: Props) {
           ))}
         </Box>
 
-        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(6, 1fr)' }, gap: 1.5 }}>
+        <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' }, gap: 1.5 }}>
           <TextField
             type="date"
             size="small"
@@ -121,16 +114,6 @@ export default function AccountsFilterBar({ filters, onChange }: Props) {
             onChange={e => onChange({ ...filters, to: e.target.value })}
             slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: filters.from } }}
           />
-          <TextField
-            select
-            size="small"
-            label="Group by"
-            value={filters.grouping ?? 'day'}
-            onChange={e => onChange({ ...filters, grouping: e.target.value as AccountsGrouping })}
-          >
-            {GROUPINGS.map(g => <MenuItem key={g} value={g}>{g}</MenuItem>)}
-          </TextField>
-
           <Autocomplete
             multiple
             size="small"
@@ -140,22 +123,6 @@ export default function AccountsFilterBar({ filters, onChange }: Props) {
             isOptionEqualToValue={(a, b) => a.id === b.id}
             onChange={(_, vals) => onChange({ ...filters, shopIds: vals.length ? vals.map(v => v.id) : undefined })}
             renderInput={(params) => <TextField {...params} label="Shops" />}
-            renderValue={(value, getItemProps) =>
-              value.map((option, index) => {
-                const { key, ...itemProps } = getItemProps({ index })
-                return <Chip key={key} size="small" label={option.code} {...itemProps} />
-              })
-            }
-          />
-          <Autocomplete
-            multiple
-            size="small"
-            options={inventories}
-            value={selectedInventories}
-            getOptionLabel={(o) => `${o.code} — ${o.name}`}
-            isOptionEqualToValue={(a, b) => a.id === b.id}
-            onChange={(_, vals) => onChange({ ...filters, inventoryIds: vals.length ? vals.map(v => v.id) : undefined })}
-            renderInput={(params) => <TextField {...params} label="Godowns" />}
             renderValue={(value, getItemProps) =>
               value.map((option, index) => {
                 const { key, ...itemProps } = getItemProps({ index })

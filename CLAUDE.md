@@ -78,6 +78,10 @@ Kovilpatti-Prod/
 │   │   ├── phase2_init.sql          stock_requests + stock_request_items + qty_audits
 │   │   └── phase2_procedures.sql    all request SPs (create, dispatch, receive, return, etc.)
 │   │
+│   ├── phase3/                      ← canonical Phase 3 schema (TRACKED)
+│   │   ├── phase3_init.sql          placeholder (no new tables in v1)
+│   │   └── phase3_procedures.sql    read-only accounts reporting SPs (fn_accounts_*)
+│   │
 │   └── One shot scripts/            ← GIT-IGNORED — local seeds, resets, migrations
 │       ├── phase1_seed_kovilpatti_demo.sql
 │       ├── phase1_seed_bulk.sql                   500 inventories + 1000 shops + 2000 products
@@ -259,6 +263,7 @@ Each route is gated by a `<PrintGate>` that drops the layout chrome. The "Printe
 | Lock toggle | `request_lock_enabled` setting — when OFF, ignore the cutoff | ✅ BE + FE |
 | Print redesign | A4 + thermal both use a centred brand header, 2-col dense items, money/quantity strip with inlined timestamp | ✅ |
 | Brand gold gradient | Sitewide replacement of solid-black primary surfaces with `GOLD_GRADIENT` | ✅ |
+| Accounts dashboard (Phase 3) | Admin `/admin/accounts` — date-ranged stock-movement value at MRP (default range: current IST month). KPI strip + by-shop / by-category / top-products tables + adjustments log + in-transit strip + CSV export per table. Anchored on `received_at` (Orders) / `accepted_at` (Returns); adjustments posted cash-basis on `edited_at`. New `DB/phase3/` folder; SPs are SELECT-only. Stale/unknown shop+category filters in the URL self-heal. (The trend chart, day/week/month grouping, and Godowns filter were dropped during UI simplification for the non-technical audience; the backend trend SP/endpoint remain but are unused.) | ✅ |
 
 ---
 
@@ -322,4 +327,4 @@ DB/One shot scripts/phase2_seed_max_catalogue.sql
 
 ---
 
-Last updated: 30-May-2026.
+Last updated: 01-Jun-2026.

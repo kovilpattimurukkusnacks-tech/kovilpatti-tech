@@ -84,6 +84,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   ),
   -- Requests that match the (shop / inventory / category-via-items) filter
   -- and are in a terminal state contributing to the books.
@@ -186,6 +191,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   ),
   -- All matching finalised rows tagged with their IST bucket-start date.
   -- p_grouping is one of 'day','week','month' — caller-validated at the BE.
@@ -283,6 +293,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   ),
   -- Order rows in range (per-shop dispatched qty sum is computed from items
   -- to honour the COALESCE(dispatched_qty, requested_qty) rule).
@@ -401,6 +416,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   ),
   -- Per-category tree (id → root-rooted path) for the path column.
   tree AS (
@@ -421,9 +441,10 @@ LANGUAGE sql STABLE AS $$
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END                                                                             AS signed_amount
-    FROM stock_requests r, range g
+    FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
+    , range g
     WHERE r.is_deleted = false
       AND (
             (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
@@ -437,7 +458,7 @@ LANGUAGE sql STABLE AS $$
           )
   )
   SELECT
-    c.id                                  AS category_id,
+    c.category_id                         AS category_id,
     t.path                                AS category_path,
     SUM(c.signed_qty)::bigint             AS quantity,
     SUM(c.signed_amount)::numeric(14,2)   AS amount
@@ -491,6 +512,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   ),
   contrib AS (
     SELECT
@@ -507,9 +533,10 @@ LANGUAGE sql STABLE AS $$
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END AS signed_amount
-    FROM stock_requests r, range g
+    FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
+    , range g
     WHERE r.is_deleted = false
       AND (
             (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
@@ -588,6 +615,11 @@ LANGUAGE sql STABLE AS $$
       SELECT id FROM walk
     ) t
     WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+    -- Emit a row ONLY when ids were actually collected. Without this,
+    -- array_agg over an empty input still returns one (NULL) row, so the
+    -- downstream `NOT EXISTS (SELECT 1 FROM cat_closure)` "no filter" guard
+    -- would always be false and silently filter out every request.
+    HAVING count(*) > 0
   )
   SELECT
     a.id                                                           AS audit_id,
@@ -608,12 +640,13 @@ LANGUAGE sql STABLE AS $$
     a.reason,
     a.edited_by                                                    AS edited_by_id,
     u.full_name                                                    AS edited_by_name
-  FROM stock_request_qty_audits a, range g
+  FROM stock_request_qty_audits a
   JOIN stock_request_items it ON it.id = a.request_item_id
   JOIN stock_requests       r  ON r.id  = a.request_id
   JOIN shops                s  ON s.id  = r.shop_id
   JOIN products             p  ON p.id  = it.product_id
   LEFT JOIN users           u  ON u.id  = a.edited_by
+  , range g
   WHERE r.is_deleted = false
     AND a.edited_at >= g.lo AND a.edited_at < g.hi
     AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))

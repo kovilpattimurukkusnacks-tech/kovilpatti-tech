@@ -29,7 +29,7 @@ public class CommaSeparatedArrayModelBinder : IModelBinder
 
         // Join in case the value arrived in multiple entries — supports both
         // ?ids=a,b and ?ids=a&ids=b transparently.
-        var raw = string.Join(',', valueProviderResult.Values);
+        var raw = string.Join(',', valueProviderResult.Values.ToArray());
         if (string.IsNullOrWhiteSpace(raw))
         {
             bindingContext.Result = ModelBindingResult.Success(null);
