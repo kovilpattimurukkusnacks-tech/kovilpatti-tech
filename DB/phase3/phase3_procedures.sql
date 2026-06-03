@@ -1,0 +1,673 @@
+-- ============================================================
+-- Kovilpatti Snacks — Phase 3 PROCEDURES (reporting stored functions)
+--
+-- Run AFTER phase1 + phase2 procedures.
+-- Idempotent: every function uses CREATE OR REPLACE (with DROP first when
+-- the RETURNS TABLE shape might evolve across edits).
+--
+-- READ-ONLY GUARANTEE: every fn_accounts_* body is SELECT/WITH/RETURN QUERY
+-- only — no INSERT/UPDATE/DELETE/MERGE. The spec requires this; CI greps
+-- this file for those keywords inside fn_accounts_* bodies.
+--
+-- TIMEZONE POLICY: each function accepts IST calendar dates (p_from, p_to)
+-- and internally builds a half-open UTC range
+--    [p_from 00:00 IST, (p_to + 1) 00:00 IST)
+-- via   `(p_from::timestamp AT TIME ZONE 'Asia/Kolkata')`
+-- so a row finalised at 23:59 IST on the last day of the range is included
+-- and a row finalised at 00:00 IST on the next day is excluded.
+--
+-- ANCHOR DATE:
+--   • Orders:  received_at  (status = 'Received')
+--   • Returns: accepted_at  (status = 'Accepted')
+-- All other statuses are excluded from the main reports. Dispatched-not-yet-
+-- received Orders are surfaced separately by fn_accounts_in_transit.
+--
+-- ADJUSTMENTS (qty audits): anchored on edited_at (cash-basis). Each audit
+-- row's monetary impact uses the line's UNIT_PRICE SNAPSHOT (not the
+-- product's current MRP) so historical deltas are stable.
+--
+-- CATEGORIES (id = int, nested): p_cat_ids is int[]. When non-empty the
+-- function expands each id to "self + all descendants" via a recursive CTE
+-- before filtering products. NULL or empty array = no category filter.
+-- ============================================================
+--
+-- HOW TO RUN
+--   Supabase: paste in SQL Editor → Run.
+--   Local PG: psql -U postgres -d sks_inventory -f phase3/phase3_procedures.sql
+-- ============================================================
+
+BEGIN;
+
+-- ============================================================
+-- 1. fn_accounts_summary
+--    Single-row KPI aggregate for the top of the dashboard.
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_summary(date, date, uuid[], uuid[], int[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_summary(
+  p_from        date,
+  p_to          date,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL
+)
+RETURNS TABLE (
+  dispatched_amount        numeric,
+  dispatched_request_count bigint,
+  returns_amount           numeric,
+  returns_request_count    bigint,
+  net_amount               numeric,
+  active_shop_count        bigint,
+  adjustments_amount       numeric,
+  adjustments_count        bigint
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  -- IST → UTC half-open range used by every anchor comparison below.
+  range AS (
+    SELECT (p_from::timestamp        AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp    AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  -- Closure of any selected category ids: self + all descendants.
+  -- Empty / NULL filter => NULL (signals "no filter" downstream).
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  ),
+  -- Requests that match the (shop / inventory / category-via-items) filter
+  -- and are in a terminal state contributing to the books.
+  finalised AS (
+    SELECT r.id, r.request_type, r.status, r.shop_id, r.total_amount,
+           COALESCE(r.received_at, r.accepted_at) AS anchor_at
+    FROM stock_requests r, range g
+    WHERE r.is_deleted = false
+      AND (
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+         OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
+      )
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR EXISTS (
+              SELECT 1
+              FROM   stock_request_items it
+              JOIN   products p ON p.id = it.product_id
+              WHERE  it.request_id = r.id
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+            )
+          )
+  ),
+  -- Qty audits anchored on edited_at, same shop/inventory/category filter
+  -- applied through the parent request + line item + product.
+  adjustments AS (
+    SELECT a.id, a.request_id, a.request_item_id,
+           a.old_qty, a.new_qty, it.unit_price,
+           (COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0)) * it.unit_price AS delta_amount
+    FROM stock_request_qty_audits a
+    JOIN stock_request_items       it ON it.id = a.request_item_id
+    JOIN stock_requests            r  ON r.id  = a.request_id
+    JOIN products                  p  ON p.id  = it.product_id
+    , range g
+    WHERE a.edited_at >= g.lo AND a.edited_at < g.hi
+      AND r.is_deleted = false
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+          )
+  )
+  SELECT
+    COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)::numeric(14,2)             AS dispatched_amount,
+    COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Order'), 0)::bigint                                    AS dispatched_request_count,
+    COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)::numeric(14,2)             AS returns_amount,
+    COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Return'), 0)::bigint                                   AS returns_request_count,
+    (
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
+    - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
+    )::numeric(14,2)                                                                                         AS net_amount,
+    COALESCE(COUNT(DISTINCT f.shop_id), 0)::bigint                                                           AS active_shop_count,
+    (SELECT COALESCE(SUM(delta_amount), 0)::numeric(14,2) FROM adjustments)                                  AS adjustments_amount,
+    (SELECT COALESCE(COUNT(*), 0)::bigint                FROM adjustments)                                   AS adjustments_count
+  FROM finalised f;
+$$;
+
+
+-- ============================================================
+-- 2. fn_accounts_trend
+--    Per-bucket aggregate for the trend chart. Buckets are IST calendar
+--    day/week/month. Empty buckets appear with zeroes via generate_series.
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_trend(date, date, varchar, uuid[], uuid[], int[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_trend(
+  p_from        date,
+  p_to          date,
+  p_grouping    varchar,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL
+)
+RETURNS TABLE (
+  bucket_start       date,
+  dispatched_amount  numeric,
+  returns_amount     numeric,
+  net_amount         numeric
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  range AS (
+    SELECT (p_from::timestamp     AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  ),
+  -- All matching finalised rows tagged with their IST bucket-start date.
+  -- p_grouping is one of 'day','week','month' — caller-validated at the BE.
+  finalised AS (
+    SELECT r.id, r.request_type, r.total_amount,
+           (date_trunc(p_grouping,
+              (COALESCE(r.received_at, r.accepted_at) AT TIME ZONE 'Asia/Kolkata')
+           ))::date AS bucket_start
+    FROM stock_requests r, range g
+    WHERE r.is_deleted = false
+      AND (
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+         OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
+      )
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR EXISTS (
+              SELECT 1
+              FROM   stock_request_items it
+              JOIN   products p ON p.id = it.product_id
+              WHERE  it.request_id = r.id
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+            )
+          )
+  ),
+  -- Full bucket series so empty buckets appear with zero (no gaps).
+  -- Generated in IST so the buckets line up with the finalised rows.
+  series AS (
+    SELECT (date_trunc(p_grouping, gs))::date AS bucket_start
+    FROM generate_series(
+      date_trunc(p_grouping, p_from::timestamp),
+      date_trunc(p_grouping, p_to::timestamp),
+      ('1 ' || p_grouping)::interval
+    ) gs
+  )
+  SELECT
+    s.bucket_start,
+    COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)::numeric(14,2) AS dispatched_amount,
+    COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)::numeric(14,2) AS returns_amount,
+    (
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
+    - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
+    )::numeric(14,2) AS net_amount
+  FROM series s
+  LEFT JOIN finalised f ON f.bucket_start = s.bucket_start
+  GROUP BY s.bucket_start
+  ORDER BY s.bucket_start;
+$$;
+
+
+-- ============================================================
+-- 3. fn_accounts_by_shop
+--    Per-shop breakdown. dispatched_qty falls back to requested_qty when
+--    dispatched_qty IS NULL (matches spec wording).
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_by_shop(date, date, uuid[], uuid[], int[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_by_shop(
+  p_from        date,
+  p_to          date,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL
+)
+RETURNS TABLE (
+  shop_id               uuid,
+  shop_code             varchar,
+  shop_name             varchar,
+  order_request_count   bigint,
+  return_request_count  bigint,
+  dispatched_qty        bigint,
+  dispatched_amount     numeric,
+  returns_amount        numeric,
+  net_amount            numeric
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  range AS (
+    SELECT (p_from::timestamp     AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  ),
+  -- Order rows in range (per-shop dispatched qty sum is computed from items
+  -- to honour the COALESCE(dispatched_qty, requested_qty) rule).
+  order_rows AS (
+    SELECT r.id, r.shop_id, r.total_amount
+    FROM stock_requests r, range g
+    WHERE r.is_deleted = false
+      AND r.request_type = 'Order'
+      AND r.status       = 'Received'
+      AND r.received_at >= g.lo AND r.received_at < g.hi
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR EXISTS (
+              SELECT 1
+              FROM   stock_request_items it
+              JOIN   products p ON p.id = it.product_id
+              WHERE  it.request_id = r.id
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+            )
+          )
+  ),
+  return_rows AS (
+    SELECT r.id, r.shop_id, r.total_amount
+    FROM stock_requests r, range g
+    WHERE r.is_deleted = false
+      AND r.request_type = 'Return'
+      AND r.status       = 'Accepted'
+      AND r.accepted_at >= g.lo AND r.accepted_at < g.hi
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR EXISTS (
+              SELECT 1
+              FROM   stock_request_items it
+              JOIN   products p ON p.id = it.product_id
+              WHERE  it.request_id = r.id
+                AND  p.category_id = ANY((SELECT ids FROM cat_closure))
+            )
+          )
+  ),
+  order_qty AS (
+    SELECT o.shop_id, SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint AS qty
+    FROM order_rows o
+    JOIN stock_request_items it ON it.request_id = o.id
+    LEFT JOIN products p        ON p.id  = it.product_id
+    WHERE (
+      NOT EXISTS (SELECT 1 FROM cat_closure)
+      OR p.category_id = ANY((SELECT ids FROM cat_closure))
+    )
+    GROUP BY o.shop_id
+  )
+  SELECT
+    s.id   AS shop_id,
+    s.code AS shop_code,
+    s.name AS shop_name,
+    COALESCE((SELECT COUNT(*) FROM order_rows  o WHERE o.shop_id = s.id), 0)::bigint                AS order_request_count,
+    COALESCE((SELECT COUNT(*) FROM return_rows r WHERE r.shop_id = s.id), 0)::bigint                AS return_request_count,
+    COALESCE((SELECT qty     FROM order_qty   oq WHERE oq.shop_id = s.id), 0)::bigint               AS dispatched_qty,
+    COALESCE((SELECT SUM(total_amount) FROM order_rows  o WHERE o.shop_id = s.id), 0)::numeric(14,2) AS dispatched_amount,
+    COALESCE((SELECT SUM(total_amount) FROM return_rows r WHERE r.shop_id = s.id), 0)::numeric(14,2) AS returns_amount,
+    (
+      COALESCE((SELECT SUM(total_amount) FROM order_rows  o WHERE o.shop_id = s.id), 0)
+    - COALESCE((SELECT SUM(total_amount) FROM return_rows r WHERE r.shop_id = s.id), 0)
+    )::numeric(14,2) AS net_amount
+  FROM shops s
+  WHERE s.is_deleted = false
+    AND (
+         EXISTS (SELECT 1 FROM order_rows  o WHERE o.shop_id = s.id)
+      OR EXISTS (SELECT 1 FROM return_rows r WHERE r.shop_id = s.id)
+    )
+  ORDER BY net_amount DESC, s.code;
+$$;
+
+
+-- ============================================================
+-- 4. fn_accounts_by_category
+--    Per-leaf-category breakdown (one row per category referenced by the
+--    filtered requests). category_path uses the same ' > ' separator as
+--    fn_category_tree so the FE doesn't need to rebuild it.
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_by_category(date, date, uuid[], uuid[], int[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_by_category(
+  p_from        date,
+  p_to          date,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL
+)
+RETURNS TABLE (
+  category_id    int,
+  category_path  varchar,
+  quantity       bigint,
+  amount         numeric
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  range AS (
+    SELECT (p_from::timestamp     AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  ),
+  -- Per-category tree (id → root-rooted path) for the path column.
+  tree AS (
+    SELECT * FROM fn_category_tree()
+  ),
+  -- Items belonging to finalised requests (Orders contribute dispatched qty
+  -- × unit_price; Returns contribute -1 × dispatched_qty × unit_price so
+  -- the category amount reflects Net for that category, matching the page-
+  -- level Net KPI).
+  contrib AS (
+    SELECT
+      p.category_id,
+      CASE WHEN r.request_type = 'Order'
+           THEN COALESCE(it.dispatched_qty, it.requested_qty)
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
+      END                                                                             AS signed_qty,
+      CASE WHEN r.request_type = 'Order'
+           THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+      END                                                                             AS signed_amount
+    FROM stock_requests r, range g
+    JOIN stock_request_items it ON it.request_id = r.id
+    JOIN products            p  ON p.id          = it.product_id
+    WHERE r.is_deleted = false
+      AND (
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+         OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
+      )
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+          )
+  )
+  SELECT
+    c.id                                  AS category_id,
+    t.path                                AS category_path,
+    SUM(c.signed_qty)::bigint             AS quantity,
+    SUM(c.signed_amount)::numeric(14,2)   AS amount
+  FROM contrib c
+  JOIN tree t ON t.id = c.category_id
+  GROUP BY c.category_id, t.path
+  ORDER BY amount DESC, t.path;
+$$;
+
+
+-- ============================================================
+-- 5. fn_accounts_top_products
+--    Top-N products by net amount (Orders − Returns) in the range.
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_top_products(date, date, uuid[], uuid[], int[], int);
+
+CREATE OR REPLACE FUNCTION fn_accounts_top_products(
+  p_from        date,
+  p_to          date,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL,
+  p_limit       int     DEFAULT 10
+)
+RETURNS TABLE (
+  product_id    uuid,
+  product_code  varchar,
+  product_name  varchar,
+  weight_value  numeric,
+  weight_unit   varchar,
+  quantity      bigint,
+  amount        numeric
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  range AS (
+    SELECT (p_from::timestamp     AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  ),
+  contrib AS (
+    SELECT
+      p.id            AS product_id,
+      p.code          AS product_code,
+      p.name          AS product_name,
+      p.weight_value,
+      p.weight_unit,
+      CASE WHEN r.request_type = 'Order'
+           THEN COALESCE(it.dispatched_qty, it.requested_qty)
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
+      END AS signed_qty,
+      CASE WHEN r.request_type = 'Order'
+           THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+      END AS signed_amount
+    FROM stock_requests r, range g
+    JOIN stock_request_items it ON it.request_id = r.id
+    JOIN products            p  ON p.id          = it.product_id
+    WHERE r.is_deleted = false
+      AND (
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+         OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
+      )
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR p.category_id = ANY((SELECT ids FROM cat_closure))
+          )
+  )
+  SELECT
+    product_id, product_code, product_name, weight_value, weight_unit,
+    SUM(signed_qty)::bigint           AS quantity,
+    SUM(signed_amount)::numeric(14,2) AS amount
+  FROM contrib
+  GROUP BY product_id, product_code, product_name, weight_value, weight_unit
+  ORDER BY amount DESC, product_code
+  LIMIT GREATEST(COALESCE(p_limit, 10), 1);
+$$;
+
+
+-- ============================================================
+-- 6. fn_accounts_adjustments
+--    Audit-log rows (qty edits) anchored on edited_at, with derived
+--    delta_qty / delta_amount (uses the line's UNIT_PRICE snapshot, not the
+--    current product MRP — so the historical delta is stable).
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_adjustments(date, date, uuid[], uuid[], int[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_adjustments(
+  p_from        date,
+  p_to          date,
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL,
+  p_cat_ids     int[]   DEFAULT NULL
+)
+RETURNS TABLE (
+  audit_id        uuid,
+  edited_at       timestamptz,
+  request_id      uuid,
+  request_code    varchar,
+  shop_id         uuid,
+  shop_name       varchar,
+  product_id      uuid,
+  product_name    varchar,
+  weight_value    numeric,
+  weight_unit     varchar,
+  old_qty         int,
+  new_qty         int,
+  delta_qty       int,
+  unit_price      numeric,
+  delta_amount    numeric,
+  reason          varchar,
+  edited_by_id    uuid,
+  edited_by_name  varchar
+)
+LANGUAGE sql STABLE AS $$
+  WITH
+  range AS (
+    SELECT (p_from::timestamp     AT TIME ZONE 'Asia/Kolkata') AS lo,
+           ((p_to + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') AS hi
+  ),
+  cat_closure AS (
+    SELECT array_agg(id)::int[] AS ids
+    FROM (
+      WITH RECURSIVE walk AS (
+        SELECT c.id FROM categories c
+         WHERE c.is_deleted = false AND c.id = ANY(p_cat_ids)
+        UNION
+        SELECT c.id FROM categories c
+        JOIN   walk w ON c.parent_id = w.id
+         WHERE c.is_deleted = false
+      )
+      SELECT id FROM walk
+    ) t
+    WHERE p_cat_ids IS NOT NULL AND cardinality(p_cat_ids) > 0
+  )
+  SELECT
+    a.id                                                           AS audit_id,
+    a.edited_at,
+    a.request_id,
+    r.code                                                         AS request_code,
+    r.shop_id,
+    s.name                                                         AS shop_name,
+    p.id                                                           AS product_id,
+    p.name                                                         AS product_name,
+    it.weight_value,
+    it.weight_unit,
+    a.old_qty,
+    a.new_qty,
+    (COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0))                AS delta_qty,
+    it.unit_price,
+    ((COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0)) * it.unit_price)::numeric(14,2) AS delta_amount,
+    a.reason,
+    a.edited_by                                                    AS edited_by_id,
+    u.full_name                                                    AS edited_by_name
+  FROM stock_request_qty_audits a, range g
+  JOIN stock_request_items it ON it.id = a.request_item_id
+  JOIN stock_requests       r  ON r.id  = a.request_id
+  JOIN shops                s  ON s.id  = r.shop_id
+  JOIN products             p  ON p.id  = it.product_id
+  LEFT JOIN users           u  ON u.id  = a.edited_by
+  WHERE r.is_deleted = false
+    AND a.edited_at >= g.lo AND a.edited_at < g.hi
+    AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+    AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+    AND (
+          NOT EXISTS (SELECT 1 FROM cat_closure)
+          OR p.category_id = ANY((SELECT ids FROM cat_closure))
+        )
+  ORDER BY a.edited_at DESC;
+$$;
+
+
+-- ============================================================
+-- 7. fn_accounts_in_transit
+--    Single-row summary of Orders that have been dispatched but not yet
+--    received. INDEPENDENT of the date range — the strip is always "right
+--    now" — but honours the shop / inventory filters so an admin viewing a
+--    single shop sees only that shop's stuck dispatches.
+-- ============================================================
+DROP FUNCTION IF EXISTS fn_accounts_in_transit(uuid[], uuid[]);
+
+CREATE OR REPLACE FUNCTION fn_accounts_in_transit(
+  p_shop_ids    uuid[]  DEFAULT NULL,
+  p_inv_ids     uuid[]  DEFAULT NULL
+)
+RETURNS TABLE (
+  request_count        bigint,
+  total_amount         numeric,
+  oldest_dispatched_at timestamptz
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    COUNT(*)::bigint                              AS request_count,
+    COALESCE(SUM(r.total_amount), 0)::numeric(14,2) AS total_amount,
+    MIN(r.dispatched_at)                          AS oldest_dispatched_at
+  FROM stock_requests r
+  WHERE r.is_deleted   = false
+    AND r.request_type = 'Order'
+    AND r.status       = 'Dispatched'
+    AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+    AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids));
+$$;
+
+
+COMMIT;
+
+-- ============================================================
+-- VERIFY
+-- ------------------------------------------------------------
+-- SELECT * FROM fn_accounts_summary    ('2026-05-01','2026-05-31', NULL, NULL, NULL);
+-- SELECT * FROM fn_accounts_trend      ('2026-05-25','2026-05-31', 'day',  NULL, NULL, NULL);
+-- SELECT * FROM fn_accounts_by_shop    ('2026-05-01','2026-05-31', NULL, NULL, NULL);
+-- SELECT * FROM fn_accounts_by_category('2026-05-01','2026-05-31', NULL, NULL, NULL);
+-- SELECT * FROM fn_accounts_top_products('2026-05-01','2026-05-31', NULL, NULL, NULL, 10);
+-- SELECT * FROM fn_accounts_adjustments('2026-05-01','2026-05-31', NULL, NULL, NULL);
+-- SELECT * FROM fn_accounts_in_transit (NULL, NULL);
+-- ============================================================
