@@ -13,33 +13,53 @@ type Props = {
 }
 
 /**
- * Per-shop breakdown. Default sort = Net descending. Clicking a row jumps
- * to the AdminRequests page filtered to that shop + the current date
- * range — the natural drill-down for "which requests made up this row?".
+ * Per-shop breakdown. Default sort = shop name (alphabetical). Clicking a
+ * row jumps to the AdminRequests page filtered to that shop + the current
+ * date range — the natural drill-down for "which requests made up this row?".
+ *
+ * Numeric columns use fixed widths (no flex) so a narrow viewport overflows
+ * into the DataGrid's horizontal scrollbar instead of squishing the cells;
+ * only the Shop name column flexes.
  */
 export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
   const navigate = useNavigate()
 
   const columns: GridColDef<AccountsShopRowDto>[] = [
     { field: 'shopCode',  headerName: 'Code',  width: 90 },
-    { field: 'shopName',  headerName: 'Shop',  flex: 1.2, minWidth: 180 },
-    { field: 'orderRequestCount',  headerName: 'Orders',  type: 'number', width: 90 },
-    { field: 'returnRequestCount', headerName: 'Returns', type: 'number', width: 90 },
-    { field: 'dispatchedQty',      headerName: 'Disp Qty', type: 'number', width: 100 },
+    { field: 'shopName',  headerName: 'Shop',  flex: 1, minWidth: 160 },
+    { field: 'orderRequestCount',  headerName: 'Orders',   type: 'number', width: 85 },
+    { field: 'returnRequestCount', headerName: 'Returns',  type: 'number', width: 85 },
+    { field: 'requestedQty',       headerName: 'Req Qty',  type: 'number', width: 95 },
+    { field: 'dispatchedQty',      headerName: 'Disp Qty', type: 'number', width: 95 },
+    { field: 'returnedQty',        headerName: 'Returned Qty', type: 'number', width: 115 },
+    {
+      field: 'requestedAmount',
+      headerName: 'Requested (MRP)',
+      type: 'number',
+      width: 150,
+      valueFormatter: (value) => formatINR(value as number),
+    },
     {
       field: 'dispatchedAmount',
       headerName: 'Dispatched (MRP)',
       type: 'number',
-      width: 160,
+      width: 155,
       valueFormatter: (value) => formatINR(value as number),
     },
     {
       field: 'returnsAmount',
       headerName: 'Returns (MRP)',
       type: 'number',
-      width: 140,
+      width: 135,
       valueFormatter: (value) => formatINR(value as number),
       cellClassName: 'returns-cell',
+    },
+    {
+      field: 'adjustmentsAmount',
+      headerName: 'Adjustments (MRP)',
+      type: 'number',
+      width: 160,
+      valueFormatter: (value) => formatINR(value as number),
     },
     {
       field: 'netAmount',
@@ -69,15 +89,17 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
         </Box>
         <Box sx={{ '& .net-cell': { fontWeight: 700 }, '& .returns-cell': { color: '#C62828' } }}>
           <DataGrid
+            className="data-page-grid"
             rows={rows ?? []}
             columns={columns}
             getRowId={(r) => r.shopId}
             loading={loading}
             disableRowSelectionOnClick
+            disableColumnMenu
             density="compact"
             autoHeight
             initialState={{
-              sorting: { sortModel: [{ field: 'netAmount', sort: 'desc' }] },
+              sorting: { sortModel: [{ field: 'shopName', sort: 'asc' }] },
               pagination: { paginationModel: { pageSize: 25 } },
             }}
             pageSizeOptions={[10, 25, 50, 100]}

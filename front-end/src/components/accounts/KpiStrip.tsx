@@ -1,5 +1,5 @@
 import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
-import { ArrowDownLeft, ArrowUpRight, Pencil, TrendingUp } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ClipboardList, TrendingUp } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import type { AccountsSummaryDto } from '../../api/accounts/types'
@@ -10,10 +10,16 @@ type Props = {
 }
 
 /**
- * 4-card KPI strip at the top of the Accounts dashboard. The Net card uses
- * the gold gradient to draw the eye; the rest are cream surfaces matching
- * the rest of the app. Every rupee label carries "(at MRP)" so consumers
- * don't mistake it for revenue.
+ * 4-card KPI strip at the top of the Accounts dashboard, in reading order
+ * Requested → Dispatched → Returns → Net, where Net = Dispatched − Returns
+ * so the strip visibly adds up. The Net card uses the gold gradient to draw
+ * the eye; the rest are cream surfaces matching the rest of the app. Every
+ * rupee label carries "(at MRP)" so consumers don't mistake it for revenue.
+ *
+ * Deliberately NO Adjustments card here: qty edits update the live
+ * Dispatched figure directly, so a peer-level Adjustments number reads as
+ * "money to add" and double-counts. The edits total + log live on the
+ * Adjustments log table instead.
  */
 export default function KpiStrip({ data, loading }: Props) {
   return (
@@ -24,6 +30,13 @@ export default function KpiStrip({ data, loading }: Props) {
         gap: 2,
       }}
     >
+      <KpiCard
+        label="Requested (at MRP)"
+        value={data?.requestedAmount}
+        secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
+        icon={<ClipboardList size={18} />}
+        loading={loading}
+      />
       <KpiCard
         label="Dispatched (at MRP)"
         value={data?.dispatchedAmount}
@@ -46,13 +59,6 @@ export default function KpiStrip({ data, loading }: Props) {
         icon={<TrendingUp size={18} />}
         loading={loading}
         accent="net"
-      />
-      <KpiCard
-        label="Adjustments (at MRP)"
-        value={data?.adjustmentsAmount}
-        secondary={data ? `${data.adjustmentsCount} edit${data.adjustmentsCount === 1 ? '' : 's'}` : undefined}
-        icon={<Pencil size={18} />}
-        loading={loading}
       />
     </Box>
   )

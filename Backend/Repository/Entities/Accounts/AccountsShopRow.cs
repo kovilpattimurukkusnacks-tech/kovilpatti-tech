@@ -8,8 +8,12 @@ public class AccountsShopRow
     public string  Shop_Name            { get; set; } = default!;
     public long    Order_Request_Count  { get; set; }
     public long    Return_Request_Count { get; set; }
+    public long    Requested_Qty        { get; set; }
     public long    Dispatched_Qty       { get; set; }
+    public long    Returned_Qty         { get; set; }
+    public decimal Requested_Amount     { get; set; }
     public decimal Dispatched_Amount    { get; set; }
     public decimal Returns_Amount       { get; set; }
+    public decimal Adjustments_Amount   { get; set; }
     public decimal Net_Amount           { get; set; }
 }

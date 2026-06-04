@@ -1,8 +1,10 @@
-import { useCallback, useEffect, useMemo } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { Alert, Box, Stack } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
-import { istToday } from '../../components/DateRangeFilter'
+import { istFirstOfThisMonth, istToday } from '../../utils/istDate'
+import { dateRangeLabel } from '../../components/DateRangeFilter'
+import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import AccountsFilterBar from '../../components/accounts/AccountsFilterBar'
 import KpiStrip from '../../components/accounts/KpiStrip'
 import InTransitStrip from '../../components/accounts/InTransitStrip'
@@ -22,27 +24,15 @@ import {
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit } from '../../api/accounts/types'
 
 /**
- * First day of the current IST calendar month, as YYYY-MM-DD. Built from the
- * IST calendar parts directly (not via a local-time Date) so it is correct
- * regardless of the machine's own timezone — same IST convention the rest of
- * the app uses (see DateRangeFilter.istToday).
- */
-function istFirstOfThisMonth(): string {
-  const parts = new Intl.DateTimeFormat('en-CA', {
-    timeZone: 'Asia/Kolkata', year: 'numeric', month: '2-digit',
-  }).formatToParts(new Date())
-  const y = parts.find(p => p.type === 'year')!.value
-  const m = parts.find(p => p.type === 'month')!.value
-  return `${y}-${m}-01`
-}
-
-/**
  * Phase 3 Accounts dashboard. Admin-only (route gate + BE re-check). Filter
  * state lives in the URL so a date-pinned link is shareable and a refresh
  * does not lose the filter. Same pattern as AdminRequests.
  */
 export default function AdminAccounts() {
   const [params, setParams] = useSearchParams()
+  // Collapsible filter panel — collapsed by default, same as the
+  // stock-request list pages. Transient UI state, not part of the URL.
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   // The shop / category lists drive the filter pickers AND let us drop stale
   // ids (see below). React Query dedupes — the filter bar reads the same
@@ -105,11 +95,23 @@ export default function AdminAccounts() {
     }, { replace: true })
   }, [params, shopsData, categoriesData, filters, setParams])
 
-  const setFilters = useCallback((next: AccountsFilters) => {
+  // Which quick-preset button the user clicked (drives the gold highlight).
+  // URL state so it survives refresh and the filter panel's unmountOnExit.
+  const activePresetKey = params.get('preset')
+
+  /**
+   * presetKey: string = a preset button was clicked, null = manual date edit
+   * (clears the highlight), undefined = unrelated change (shop / limit) —
+   * leave the preset as-is.
+   */
+  const setFilters = useCallback((next: AccountsFilters, presetKey?: string | null) => {
     setParams(prev => {
       const out = new URLSearchParams(prev)
       out.set('from', next.from)
       out.set('to',   next.to)
+      if (presetKey !== undefined) {
+        if (presetKey) out.set('preset', presetKey); else out.delete('preset')
+      }
       if (next.grouping && next.grouping !== 'day') out.set('grouping', next.grouping); else out.delete('grouping')
       if (next.shopIds      && next.shopIds.length)      out.set('shopIds',      next.shopIds.join(','));      else out.delete('shopIds')
       if (next.categoryIds  && next.categoryIds.length)  out.set('categoryIds',  next.categoryIds.join(','));  else out.delete('categoryIds')
@@ -121,6 +123,22 @@ export default function AdminAccounts() {
   const setTopProductsLimit = useCallback((n: AccountsTopProductsLimit) => {
     setFilters({ ...filters, limit: n })
   }, [filters, setFilters])
+
+  // Active-filter pills shown while the panel is collapsed. The date pill has
+  // no ✕ — the range always applies (defaults to this month) and is changed
+  // via the expanded panel. Shop pills show the NAME and their ✕ removes
+  // just that shop. Same pattern as AdminRequests.
+  const activePills: FilterPill[] = [
+    { key: 'date', label: dateRangeLabel(filters.from, filters.to) },
+    ...(filters.shopIds ?? []).map(id => ({
+      key: `shop-${id}`,
+      label: shopsData?.find(s => s.id === id)?.name ?? id,
+      onRemove: () => {
+        const rest = (filters.shopIds ?? []).filter(x => x !== id)
+        setFilters({ ...filters, shopIds: rest.length ? rest : undefined })
+      },
+    })),
+  ]
 
   // Queries — every section drives its own request so a single slow SP
   // doesn't block the rest of the page from rendering.
@@ -144,7 +162,9 @@ export default function AdminAccounts() {
       />
 
       <Stack spacing={2} sx={{ mt: 2 }}>
-        <AccountsFilterBar filters={filters} onChange={setFilters} />
+        <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
+          <AccountsFilterBar filters={filters} activePresetKey={activePresetKey} onChange={setFilters} />
+        </FilterPanel>
 
         {firstError && (
           <Alert severity="error" sx={{ borderRadius: 2 }}>
@@ -176,6 +196,7 @@ export default function AdminAccounts() {
           rows={adjustments.data}
           loading={adjustments.isLoading}
           filters={filters}
+          summary={summary.data}
         />
       </Stack>
     </Box>

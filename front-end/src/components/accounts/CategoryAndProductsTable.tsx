@@ -124,27 +124,32 @@ export default function CategoryAndProductsTable({
         <Box sx={{ '& .amount-cell': { fontWeight: 700 } }}>
           {tab === 'category' ? (
             <DataGrid
+              className="data-page-grid"
               rows={categoryRows ?? []}
               columns={catCols}
               getRowId={(r) => r.categoryId}
               loading={loadingCategories}
               disableRowSelectionOnClick
+              disableColumnMenu
               density="compact"
               autoHeight
               pageSizeOptions={[10, 25, 50]}
               initialState={{
-                sorting: { sortModel: [{ field: 'amount', sort: 'desc' }] },
+                // Alphabetical by path so related categories group together.
+                sorting: { sortModel: [{ field: 'categoryPath', sort: 'asc' }] },
                 pagination: { paginationModel: { pageSize: 25 } },
               }}
               sx={{ border: 'none' }}
             />
           ) : (
             <DataGrid
+              className="data-page-grid"
               rows={topProductRows ?? []}
               columns={prodCols}
               getRowId={(r) => r.productId}
               loading={loadingProducts}
               disableRowSelectionOnClick
+              disableColumnMenu
               density="compact"
               autoHeight
               pageSizeOptions={[10, 25, 50]}

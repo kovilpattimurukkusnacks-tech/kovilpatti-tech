@@ -52,6 +52,7 @@ CREATE OR REPLACE FUNCTION fn_accounts_summary(
   p_cat_ids     int[]   DEFAULT NULL
 )
 RETURNS TABLE (
+  requested_amount         numeric,
   dispatched_amount        numeric,
   dispatched_request_count bigint,
   returns_amount           numeric,
@@ -133,16 +134,40 @@ LANGUAGE sql STABLE AS $$
             NOT EXISTS (SELECT 1 FROM cat_closure)
             OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
           )
+  ),
+  -- Live item-level money. NOT r.total_amount — that column is frozen at
+  -- submit time as Σ requested_qty × unit_price, so it can't show the
+  -- requested-vs-dispatched gap and never moves on a post-completion qty
+  -- edit. These sums use the items' current qtys (same convention as
+  -- fn_accounts_by_category / fn_accounts_top_products), so an admin edit
+  -- moves Dispatched — and therefore Net — immediately. The category filter
+  -- applies per item, matching those breakdowns.
+  item_sums AS (
+    SELECT
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
+                        THEN it.requested_qty * it.unit_price END), 0)                            AS requested_amount,
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
+                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
+      COALESCE(SUM(CASE WHEN f.request_type = 'Return'
+                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount
+    FROM finalised f
+    JOIN stock_request_items it ON it.request_id = f.id
+    LEFT JOIN products        p ON p.id          = it.product_id
+    WHERE (
+      NOT EXISTS (SELECT 1 FROM cat_closure)
+      OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
+    )
   )
   SELECT
-    COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)::numeric(14,2)             AS dispatched_amount,
+    (SELECT s.requested_amount  FROM item_sums s)::numeric(14,2)                                             AS requested_amount,
+    (SELECT s.dispatched_amount FROM item_sums s)::numeric(14,2)                                             AS dispatched_amount,
     COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Order'), 0)::bigint                                    AS dispatched_request_count,
-    COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)::numeric(14,2)             AS returns_amount,
+    (SELECT s.returns_amount    FROM item_sums s)::numeric(14,2)                                             AS returns_amount,
     COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Return'), 0)::bigint                                   AS returns_request_count,
-    (
-      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
-    - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
-    )::numeric(14,2)                                                                                         AS net_amount,
+    -- Net = live Dispatched − live Returns. Adjustments are NOT added: the
+    -- live dispatched figure already reflects every qty edit, so folding the
+    -- audit deltas in again would double-count them.
+    (SELECT s.dispatched_amount - s.returns_amount FROM item_sums s)::numeric(14,2)                          AS net_amount,
     COALESCE(COUNT(DISTINCT f.shop_id), 0)::bigint                                                           AS active_shop_count,
     (SELECT COALESCE(SUM(delta_amount), 0)::numeric(14,2) FROM adjustments)                                  AS adjustments_amount,
     (SELECT COALESCE(COUNT(*), 0)::bigint                FROM adjustments)                                   AS adjustments_count
@@ -268,9 +293,13 @@ RETURNS TABLE (
   shop_name             varchar,
   order_request_count   bigint,
   return_request_count  bigint,
+  requested_qty         bigint,
   dispatched_qty        bigint,
+  returned_qty          bigint,
+  requested_amount      numeric,
   dispatched_amount     numeric,
   returns_amount        numeric,
+  adjustments_amount    numeric,
   net_amount            numeric
 )
 LANGUAGE sql STABLE AS $$
@@ -341,8 +370,17 @@ LANGUAGE sql STABLE AS $$
             )
           )
   ),
-  order_qty AS (
-    SELECT o.shop_id, SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint AS qty
+  -- Live item-level sums per shop. NOT r.total_amount — that column is
+  -- frozen at submit time (Σ requested_qty × unit_price); the items' current
+  -- qtys make Requested vs Dispatched comparable and let a post-completion
+  -- qty edit move the row immediately. Category filter applies per item,
+  -- matching fn_accounts_by_category.
+  order_sums AS (
+    SELECT o.shop_id,
+           SUM(it.requested_qty)::bigint                                          AS requested_qty,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint             AS dispatched_qty,
+           SUM(it.requested_qty * it.unit_price)                                  AS requested_amount,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)     AS dispatched_amount
     FROM order_rows o
     JOIN stock_request_items it ON it.request_id = o.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -351,27 +389,71 @@ LANGUAGE sql STABLE AS $$
       OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
     )
     GROUP BY o.shop_id
+  ),
+  -- dispatched_qty is reused as accepted-qty on Returns (Phase 2 convention).
+  return_sums AS (
+    SELECT rr.shop_id,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint             AS returned_qty,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)     AS returns_amount
+    FROM return_rows rr
+    JOIN stock_request_items it ON it.request_id = rr.id
+    LEFT JOIN products p        ON p.id  = it.product_id
+    WHERE (
+      NOT EXISTS (SELECT 1 FROM cat_closure)
+      OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
+    )
+    GROUP BY rr.shop_id
+  ),
+  -- Informational per-shop edit total — same edited_at anchor + filters as
+  -- fn_accounts_summary's adjustments CTE so Σ(by-shop) = KPI Adjustments.
+  -- NOT folded into net_amount: the live dispatched/returns sums above
+  -- already reflect every qty edit.
+  shop_adjustments AS (
+    SELECT r.shop_id,
+           SUM((COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0)) * it.unit_price)   AS adjustments_amount
+    FROM stock_request_qty_audits a
+    JOIN stock_request_items       it ON it.id = a.request_item_id
+    JOIN stock_requests            r  ON r.id  = a.request_id
+    JOIN products                  p  ON p.id  = it.product_id
+    , range g
+    WHERE a.edited_at >= g.lo AND a.edited_at < g.hi
+      AND r.is_deleted = false
+      AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
+      AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids))
+      AND (
+            NOT EXISTS (SELECT 1 FROM cat_closure)
+            OR p.category_id = ANY((SELECT ids FROM cat_closure)::int[])
+          )
+    GROUP BY r.shop_id
   )
   SELECT
     s.id   AS shop_id,
     s.code AS shop_code,
     s.name AS shop_name,
-    COALESCE((SELECT COUNT(*) FROM order_rows  o WHERE o.shop_id = s.id), 0)::bigint                AS order_request_count,
-    COALESCE((SELECT COUNT(*) FROM return_rows r WHERE r.shop_id = s.id), 0)::bigint                AS return_request_count,
-    COALESCE((SELECT qty     FROM order_qty   oq WHERE oq.shop_id = s.id), 0)::bigint               AS dispatched_qty,
-    COALESCE((SELECT SUM(total_amount) FROM order_rows  o WHERE o.shop_id = s.id), 0)::numeric(14,2) AS dispatched_amount,
-    COALESCE((SELECT SUM(total_amount) FROM return_rows r WHERE r.shop_id = s.id), 0)::numeric(14,2) AS returns_amount,
+    COALESCE((SELECT COUNT(*) FROM order_rows  o WHERE o.shop_id = s.id), 0)::bigint                  AS order_request_count,
+    COALESCE((SELECT COUNT(*) FROM return_rows rr WHERE rr.shop_id = s.id), 0)::bigint                AS return_request_count,
+    COALESCE((SELECT os.requested_qty      FROM order_sums  os WHERE os.shop_id = s.id), 0)::bigint   AS requested_qty,
+    COALESCE((SELECT os.dispatched_qty     FROM order_sums  os WHERE os.shop_id = s.id), 0)::bigint   AS dispatched_qty,
+    COALESCE((SELECT rs.returned_qty       FROM return_sums rs WHERE rs.shop_id = s.id), 0)::bigint   AS returned_qty,
+    COALESCE((SELECT os.requested_amount   FROM order_sums  os WHERE os.shop_id = s.id), 0)::numeric(14,2) AS requested_amount,
+    COALESCE((SELECT os.dispatched_amount  FROM order_sums  os WHERE os.shop_id = s.id), 0)::numeric(14,2) AS dispatched_amount,
+    COALESCE((SELECT rs.returns_amount     FROM return_sums rs WHERE rs.shop_id = s.id), 0)::numeric(14,2) AS returns_amount,
+    COALESCE((SELECT sa.adjustments_amount FROM shop_adjustments sa WHERE sa.shop_id = s.id), 0)::numeric(14,2) AS adjustments_amount,
     (
-      COALESCE((SELECT SUM(total_amount) FROM order_rows  o WHERE o.shop_id = s.id), 0)
-    - COALESCE((SELECT SUM(total_amount) FROM return_rows r WHERE r.shop_id = s.id), 0)
+      COALESCE((SELECT os.dispatched_amount FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    - COALESCE((SELECT rs.returns_amount    FROM return_sums rs WHERE rs.shop_id = s.id), 0)
     )::numeric(14,2) AS net_amount
   FROM shops s
   WHERE s.is_deleted = false
     AND (
          EXISTS (SELECT 1 FROM order_rows  o WHERE o.shop_id = s.id)
-      OR EXISTS (SELECT 1 FROM return_rows r WHERE r.shop_id = s.id)
+      OR EXISTS (SELECT 1 FROM return_rows rr WHERE rr.shop_id = s.id)
+      -- A shop whose only activity in range is a qty edit on an older
+      -- request must still appear, or Σ(by-shop adjustments) ≠ KPI.
+      OR EXISTS (SELECT 1 FROM shop_adjustments sa WHERE sa.shop_id = s.id)
     )
-  ORDER BY net_amount DESC, s.code;
+  -- Alphabetical — matches the grid's default sort and the CSV row order.
+  ORDER BY s.name, s.code;
 $$;
 
 

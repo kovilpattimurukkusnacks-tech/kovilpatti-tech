@@ -7,6 +7,7 @@ namespace KovilpattiSnacks.Business.DTOs.Accounts;
 /// </summary>
 
 public record AccountsSummaryDto(
+    decimal RequestedAmount,
     decimal DispatchedAmount,
     long    DispatchedRequestCount,
     decimal ReturnsAmount,
@@ -30,9 +31,15 @@ public record AccountsShopRowDto(
     string  ShopName,
     long    OrderRequestCount,
     long    ReturnRequestCount,
+    long    RequestedQty,
     long    DispatchedQty,
+    long    ReturnedQty,
+    decimal RequestedAmount,
     decimal DispatchedAmount,
     decimal ReturnsAmount,
+    /// Informational — edits posted in range; NOT folded into NetAmount
+    /// (the live DispatchedAmount already reflects them).
+    decimal AdjustmentsAmount,
     decimal NetAmount
 );
 

@@ -5,6 +5,7 @@ namespace KovilpattiSnacks.Repository.Entities.Accounts;
 /// them to the SP's snake_case columns.
 public class AccountsSummary
 {
+    public decimal Requested_Amount         { get; set; }
     public decimal Dispatched_Amount        { get; set; }
     public long    Dispatched_Request_Count { get; set; }
     public decimal Returns_Amount           { get; set; }

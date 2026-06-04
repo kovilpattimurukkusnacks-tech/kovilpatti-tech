@@ -21,6 +21,7 @@ public class AccountsService(
             filters.From!.Value, filters.To!.Value,
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return new AccountsSummaryDto(
+            e.Requested_Amount,
             e.Dispatched_Amount, e.Dispatched_Request_Count,
             e.Returns_Amount,    e.Returns_Request_Count,
             e.Net_Amount,        e.Active_Shop_Count,
@@ -47,7 +48,9 @@ public class AccountsService(
         return rows.Select(r => new AccountsShopRowDto(
             r.Shop_Id, r.Shop_Code, r.Shop_Name,
             r.Order_Request_Count, r.Return_Request_Count,
-            r.Dispatched_Qty, r.Dispatched_Amount, r.Returns_Amount, r.Net_Amount)).ToList();
+            r.Requested_Qty, r.Dispatched_Qty, r.Returned_Qty,
+            r.Requested_Amount, r.Dispatched_Amount, r.Returns_Amount,
+            r.Adjustments_Amount, r.Net_Amount)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsCategoryRowDto>> GetByCategoryAsync(AccountsFilters filters, CancellationToken ct = default)

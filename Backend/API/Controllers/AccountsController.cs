@@ -62,9 +62,13 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
             new("Shop Name",            r => r.ShopName),
             new("Order Requests",       r => AccountsCsvWriter.FormatInt(r.OrderRequestCount)),
             new("Return Requests",      r => AccountsCsvWriter.FormatInt(r.ReturnRequestCount)),
+            new("Requested Qty",        r => AccountsCsvWriter.FormatInt(r.RequestedQty)),
             new("Dispatched Qty",       r => AccountsCsvWriter.FormatInt(r.DispatchedQty)),
+            new("Returned Qty",         r => AccountsCsvWriter.FormatInt(r.ReturnedQty)),
+            new("Requested (MRP ₹)",    r => AccountsCsvWriter.FormatAmount(r.RequestedAmount)),
             new("Dispatched (MRP ₹)",   r => AccountsCsvWriter.FormatAmount(r.DispatchedAmount)),
             new("Returns (MRP ₹)",      r => AccountsCsvWriter.FormatAmount(r.ReturnsAmount)),
+            new("Adjustments (MRP ₹)",  r => AccountsCsvWriter.FormatAmount(r.AdjustmentsAmount)),
             new("Net (MRP ₹)",          r => AccountsCsvWriter.FormatAmount(r.NetAmount)),
         };
         return CsvResult("by-shop", filters, rows, cols);
@@ -116,9 +120,9 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
                                             : string.Empty),
             new("Old Qty",              r => AccountsCsvWriter.FormatIntOrEmpty(r.OldQty)),
             new("New Qty",              r => AccountsCsvWriter.FormatIntOrEmpty(r.NewQty)),
-            new("Δ Qty",                r => r.DeltaQty.ToString(CultureInfo.InvariantCulture)),
+            new("Qty",                  r => r.DeltaQty.ToString(CultureInfo.InvariantCulture)),
             new("Unit Price (MRP ₹)",   r => AccountsCsvWriter.FormatAmount(r.UnitPrice)),
-            new("Δ Amount (MRP ₹)",     r => AccountsCsvWriter.FormatAmount(r.DeltaAmount)),
+            new("Amount (MRP ₹)",       r => AccountsCsvWriter.FormatAmount(r.DeltaAmount)),
             new("Reason",               r => r.Reason ?? string.Empty),
             new("Edited By",            r => r.EditedByName ?? string.Empty),
         };

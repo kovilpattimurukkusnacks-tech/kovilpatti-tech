@@ -31,12 +31,19 @@ export type AccountsFilters = {
 }
 
 export type AccountsSummaryDto = {
+  /** Σ requested_qty × unit_price over received-in-range Orders. */
+  requestedAmount:        number
+  /** Live: Σ COALESCE(dispatched_qty, requested_qty) × unit_price — a
+   *  post-completion qty edit moves this (and Net) immediately. */
   dispatchedAmount:       number
   dispatchedRequestCount: number
   returnsAmount:          number
   returnsRequestCount:    number
+  /** Dispatched − Returns. Adjustments are NOT added — the live dispatched
+   *  figure already reflects every qty edit. */
   netAmount:              number
   activeShopCount:        number
+  /** Informational: edits whose edited_at falls in range. */
   adjustmentsAmount:      number
   adjustmentsCount:       number
 }
@@ -54,9 +61,15 @@ export type AccountsShopRowDto = {
   shopName:             string
   orderRequestCount:    number
   returnRequestCount:   number
+  requestedQty:         number
   dispatchedQty:        number
+  /** Accepted qty on Returns (dispatched_qty column reused). */
+  returnedQty:          number
+  requestedAmount:      number
   dispatchedAmount:     number
   returnsAmount:        number
+  /** Informational — NOT folded into netAmount (see AccountsSummaryDto). */
+  adjustmentsAmount:    number
   netAmount:            number
 }
 

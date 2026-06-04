@@ -2,7 +2,7 @@ import { Box, Button, Card, CardContent, Link as MuiLink, Typography } from '@mu
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import type { AccountsAdjustmentRowDto, AccountsFilters } from '../../api/accounts/types'
+import type { AccountsAdjustmentRowDto, AccountsFilters, AccountsSummaryDto } from '../../api/accounts/types'
 import { accountsExport } from '../../api/accounts/api'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -11,15 +11,22 @@ type Props = {
   rows: AccountsAdjustmentRowDto[] | undefined
   loading: boolean
   filters: AccountsFilters
+  /** Page-level summary — supplies the edits total for the header line.
+   *  Already fetched by AdminAccounts; no extra request. */
+  summary: AccountsSummaryDto | undefined
 }
 
 /**
- * Audit log of qty edits. Posted on `edited_at` (cash-basis) so a row here
- * may correct an Order received weeks ago — the request code links back to
- * the originating request. Δ ₹ uses the line's `unit_price` snapshot, not
+ * Audit log of qty edits, anchored on `edited_at` — a row here may correct
+ * an Order received weeks ago; the request code links back to the
+ * originating request. Amounts use the line's `unit_price` snapshot, not
  * the product's current MRP, so historical economics stay stable.
+ *
+ * This table is also the home of the edits TOTAL (header line). There is
+ * deliberately no Adjustments KPI card: edits already flow into the live
+ * Dispatched/Net figures, so a peer-level card reads as money to add.
  */
-export default function AdjustmentsLogTable({ rows, loading, filters }: Props) {
+export default function AdjustmentsLogTable({ rows, loading, filters, summary }: Props) {
   const cols: GridColDef<AccountsAdjustmentRowDto>[] = [
     {
       field: 'editedAt',
@@ -60,12 +67,12 @@ export default function AdjustmentsLogTable({ rows, loading, filters }: Props) {
       sortable: false,
       valueGetter: (_v, row) => `${row.oldQty ?? '—'} → ${row.newQty ?? '—'}`,
     },
-    { field: 'deltaQty', headerName: 'Δ Qty', type: 'number', width: 90 },
+    { field: 'deltaQty', headerName: 'Qty', type: 'number', width: 90 },
     {
       field: 'deltaAmount',
-      headerName: 'Δ Amount (MRP)',
+      headerName: 'Amount (MRP)',
       type: 'number',
-      width: 160,
+      width: 150,
       valueFormatter: (value) => formatINR(value as number),
       cellClassName: (params) => (params.value as number) < 0 ? 'delta-neg' : (params.value as number) > 0 ? 'delta-pos' : '',
     },
@@ -80,7 +87,9 @@ export default function AdjustmentsLogTable({ rows, loading, filters }: Props) {
           <Box>
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Adjustments log</Typography>
             <Typography variant="caption" sx={{ color: '#1F1F1F99' }}>
-              Posted on the audit row's <code>edited_at</code> (cash-basis); past period totals stay frozen.
+              {summary
+                ? <>{summary.adjustmentsCount} edit{summary.adjustmentsCount === 1 ? '' : 's'} · net effect <strong>{formatINR(summary.adjustmentsAmount)}</strong> — already included in the totals above</>
+                : 'Qty edits in this period — already included in the totals above'}
             </Typography>
           </Box>
           <Button
@@ -99,11 +108,13 @@ export default function AdjustmentsLogTable({ rows, loading, filters }: Props) {
           '& .delta-neg': { color: '#C62828', fontWeight: 700 },
         }}>
           <DataGrid
+            className="data-page-grid"
             rows={rows ?? []}
             columns={cols}
             getRowId={(r) => r.auditId}
             loading={loading}
             disableRowSelectionOnClick
+            disableColumnMenu
             density="compact"
             autoHeight
             initialState={{
