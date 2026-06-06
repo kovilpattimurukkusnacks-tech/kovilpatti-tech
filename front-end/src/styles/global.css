@@ -118,6 +118,24 @@ h1 { font-weight: 700; }
   border-bottom: 1px solid rgba(31, 31, 31, 0.25);
 }
 
+/* Header sort arrow (and column menu icon) — force dark icon on a
+ * transparent button so it doesn't render as a white pill on the cream
+ * header band. Broad selectors on purpose: MUI v9 renamed several
+ * DataGrid icon-button classes. */
+.data-page-grid .MuiDataGrid-sortIcon,
+.data-page-grid .MuiDataGrid-menuIconButton svg,
+.data-page-grid [role="columnheader"] .MuiSvgIcon-root {
+  color: #1F1F1F !important;
+  fill: #1F1F1F !important;
+}
+.data-page-grid [role="columnheader"] button {
+  background-color: transparent !important;
+  box-shadow: none !important;
+}
+.data-page-grid [role="columnheader"] button:hover {
+  background-color: rgba(31, 31, 31, 0.08) !important;
+}
+
 /* Cream-tinted rows — matches Products + request-list pages so every
  * data-page table shares the same warm backdrop. */
 .data-page-grid .MuiDataGrid-row {

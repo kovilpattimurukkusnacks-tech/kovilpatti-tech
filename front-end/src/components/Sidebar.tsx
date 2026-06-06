@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
 // LayoutDashboard kept for future Dashboard menu re-enable
 // import { LayoutDashboard, Package, Warehouse, LogOut } from 'lucide-react'
-import { Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings } from 'lucide-react'
+import { Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
@@ -11,6 +11,10 @@ const navItems = [
   // { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
   { to: '/admin/products', label: 'Products', icon: Package },
   { to: '/admin/requests', label: 'Stock Requests', icon: ClipboardList },
+  // Accounts dashboard (Phase 3). Read-only stock-movement value at MRP,
+  // by date range. Admin-only — only ever rendered inside the /admin route
+  // group so a role check here would be redundant.
+  { to: '/admin/accounts', label: 'Accounts', icon: Receipt },
   // Settings moved to the gear icon beside the Admin name at the bottom.
 ]
 

@@ -1,0 +1,26 @@
+namespace KovilpattiSnacks.Repository.Entities.Accounts;
+
+/// One qty-audit row from fn_accounts_adjustments. Delta_Amount uses the
+/// line's UNIT_PRICE snapshot (not the product's current MRP) so historical
+/// economics are stable.
+public class AccountsAdjustmentRow
+{
+    public Guid           Audit_Id        { get; set; }
+    public DateTimeOffset Edited_At       { get; set; }
+    public Guid           Request_Id      { get; set; }
+    public string         Request_Code    { get; set; } = default!;
+    public Guid           Shop_Id         { get; set; }
+    public string         Shop_Name       { get; set; } = default!;
+    public Guid           Product_Id      { get; set; }
+    public string         Product_Name    { get; set; } = default!;
+    public decimal?       Weight_Value    { get; set; }
+    public string?        Weight_Unit     { get; set; }
+    public int?           Old_Qty         { get; set; }
+    public int?           New_Qty         { get; set; }
+    public int            Delta_Qty       { get; set; }
+    public decimal        Unit_Price      { get; set; }
+    public decimal        Delta_Amount    { get; set; }
+    public string?        Reason          { get; set; }
+    public Guid?          Edited_By_Id    { get; set; }
+    public string?        Edited_By_Name  { get; set; }
+}

@@ -41,6 +41,9 @@ public static class DependencyInjection
         services.AddScoped<IAppSettingRepository, AppSettingRepository>();
         services.AddScoped<IStockRequestRepository, StockRequestRepository>();
 
+        // Phase 3 — accounts reporting (read-only)
+        services.AddScoped<IAccountsRepository, AccountsRepository>();
+
         return services;
     }
 }

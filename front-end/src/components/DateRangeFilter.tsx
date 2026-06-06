@@ -1,10 +1,13 @@
-import { Box, Button, TextField } from '@mui/material'
+import { Box, Button } from '@mui/material'
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+import { DatePicker } from '@mui/x-date-pickers/DatePicker'
+import dayjs from 'dayjs'
+import { istToday } from '../utils/istDate'
 
-/** YYYY-MM-DD for the current IST calendar day. Used as the default range. */
-export function istToday(): string {
-  // en-CA formats as YYYY-MM-DD; timeZone pins it to the IST calendar day.
-  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Kolkata' })
-}
+// Re-export so existing `import { istToday } from '…/DateRangeFilter'` sites
+// keep working — the single implementation lives in utils/istDate.ts.
+export { istToday } from '../utils/istDate'
 
 /** "27 May" from a YYYY-MM-DD string (built from parts → no timezone shift). */
 function fmtDayMonth(ymd: string): string {
@@ -42,6 +45,10 @@ type Props = {
  * From–To date range filter used on the stock-request list pages. Filters on
  * submitted_at (IST). Empty strings = no bound. The parent owns the state and
  * decides the default (today/today on these pages).
+ *
+ * MUI DatePickers (not native type="date" inputs) so the display format is
+ * DD/MM/YYYY on every machine — native inputs follow the OS locale, which is
+ * exactly the ambiguity the client flagged. Values stay YYYY-MM-DD / ''.
  */
 export default function DateRangeFilter({ from, to, onChange, hideLabel }: Props) {
   const today = istToday()
@@ -51,26 +58,32 @@ export default function DateRangeFilter({ from, to, onChange, hideLabel }: Props
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
       {!hideLabel && <Box sx={{ fontSize: 12, fontWeight: 600, color: '#1F1F1F99' }}>Date:</Box>}
-      <TextField
-        type="date"
-        size="small"
-        label="From"
-        value={from}
-        onChange={e => onChange(e.target.value, to)}
-        // Can't pick a From later than To.
-        slotProps={{ inputLabel: { shrink: true }, htmlInput: { max: to || undefined } }}
-        sx={{ width: 150 }}
-      />
-      <TextField
-        type="date"
-        size="small"
-        label="To"
-        value={to}
-        onChange={e => onChange(from, e.target.value)}
-        // Can't pick a To earlier than From.
-        slotProps={{ inputLabel: { shrink: true }, htmlInput: { min: from || undefined } }}
-        sx={{ width: 150 }}
-      />
+      <LocalizationProvider dateAdapter={AdapterDayjs}>
+        <DatePicker
+          label="From"
+          format="DD/MM/YYYY"
+          value={from ? dayjs(from) : null}
+          // Can't pick a From later than To.
+          maxDate={to ? dayjs(to) : undefined}
+          onChange={(v) => {
+            if (v === null) onChange('', to)            // cleared = no bound
+            else if (v.isValid()) onChange(v.format('YYYY-MM-DD'), to)
+          }}
+          slotProps={{ textField: { size: 'small', sx: { width: 170 } } }}
+        />
+        <DatePicker
+          label="To"
+          format="DD/MM/YYYY"
+          value={to ? dayjs(to) : null}
+          // Can't pick a To earlier than From.
+          minDate={from ? dayjs(from) : undefined}
+          onChange={(v) => {
+            if (v === null) onChange(from, '')
+            else if (v.isValid()) onChange(from, v.format('YYYY-MM-DD'))
+          }}
+          slotProps={{ textField: { size: 'small', sx: { width: 170 } } }}
+        />
+      </LocalizationProvider>
       {!isToday && (
         <Button
           size="small"
