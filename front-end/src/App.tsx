@@ -22,6 +22,7 @@ import ShopRequestDetail from './pages/shop/ShopRequestDetail'
 import AdminRequests from './pages/admin/AdminRequests'
 import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
+import AdminAccounts from './pages/admin/AdminAccounts'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
 import PrintCumulative from './pages/print/PrintCumulative'
@@ -67,6 +68,7 @@ const router = createBrowserRouter(
         <Route path="requests" element={<AdminRequests />} />
         <Route path="requests/:id" element={<AdminRequestDetail />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
+        <Route path="accounts" element={<AdminAccounts />} />
         <Route path="settings" element={<AdminSettings />} />
       </Route>
 

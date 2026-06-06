@@ -49,6 +49,9 @@ public static class DependencyInjection
         services.AddScoped<IAppSettingService, AppSettingService>();
         services.AddScoped<IStockRequestService, StockRequestService>();
 
+        // Phase 3 — accounts reporting (read-only)
+        services.AddScoped<IAccountsService, AccountsService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");
