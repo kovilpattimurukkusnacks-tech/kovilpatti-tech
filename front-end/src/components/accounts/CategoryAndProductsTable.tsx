@@ -76,7 +76,7 @@ export default function CategoryAndProductsTable({
   ]
 
   return (
-    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }}>
+    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', background: '#FFFBE6' }}>
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
           <Tabs
@@ -139,7 +139,7 @@ export default function CategoryAndProductsTable({
                 sorting: { sortModel: [{ field: 'categoryPath', sort: 'asc' }] },
                 pagination: { paginationModel: { pageSize: 25 } },
               }}
-              sx={{ border: 'none' }}
+              sx={{ border: 'none', backgroundColor: 'transparent' }}
             />
           ) : (
             <DataGrid
@@ -157,7 +157,7 @@ export default function CategoryAndProductsTable({
                 sorting: { sortModel: [{ field: 'amount', sort: 'desc' }] },
                 pagination: { paginationModel: { pageSize: 25 } },
               }}
-              sx={{ border: 'none' }}
+              sx={{ border: 'none', backgroundColor: 'transparent' }}
             />
           )}
         </Box>

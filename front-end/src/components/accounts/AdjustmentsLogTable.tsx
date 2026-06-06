@@ -1,7 +1,7 @@
 import { Box, Button, Card, CardContent, Link as MuiLink, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import type { AccountsAdjustmentRowDto, AccountsFilters, AccountsSummaryDto } from '../../api/accounts/types'
 import { accountsExport } from '../../api/accounts/api'
 import { formatINR } from '../../utils/format'
@@ -27,6 +27,8 @@ type Props = {
  * Dispatched/Net figures, so a peer-level card reads as money to add.
  */
 export default function AdjustmentsLogTable({ rows, loading, filters, summary }: Props) {
+  const navigate = useNavigate()
+
   const cols: GridColDef<AccountsAdjustmentRowDto>[] = [
     {
       field: 'editedAt',
@@ -81,7 +83,7 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
   ]
 
   return (
-    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }}>
+    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', background: '#FFFBE6' }}>
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
           <Box>
@@ -122,7 +124,12 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
               pagination: { paginationModel: { pageSize: 25 } },
             }}
             pageSizeOptions={[10, 25, 50, 100]}
-            sx={{ border: 'none' }}
+            onRowClick={(p) => navigate(`/admin/requests/${p.row.requestId}`)}
+            sx={{
+              border: 'none',
+              backgroundColor: 'transparent',
+              '& .MuiDataGrid-row': { cursor: 'pointer' },
+            }}
           />
         </Box>
       </CardContent>

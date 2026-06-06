@@ -72,7 +72,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
   ]
 
   return (
-    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }}>
+    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', background: '#FFFBE6' }}>
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1.5 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>By shop</Typography>
@@ -113,6 +113,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
             }}
             sx={{
               border: 'none',
+              backgroundColor: 'transparent',
               '& .MuiDataGrid-row': { cursor: 'pointer' },
             }}
           />

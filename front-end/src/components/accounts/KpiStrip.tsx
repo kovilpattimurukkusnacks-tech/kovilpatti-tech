@@ -18,8 +18,10 @@ type Props = {
  *
  * Deliberately NO Adjustments card here: qty edits update the live
  * Dispatched figure directly, so a peer-level Adjustments number reads as
- * "money to add" and double-counts. The edits total + log live on the
- * Adjustments log table instead.
+ * "money to add" and double-counts. It also uses a different date anchor
+ * (edited_at vs received_at), so it never reconciles against the
+ * Requested→Dispatched gap — confusing next to them. The edits total + log
+ * live on the Adjustments log table instead. (Tried 06-Jun-2026, removed.)
  */
 export default function KpiStrip({ data, loading }: Props) {
   return (
