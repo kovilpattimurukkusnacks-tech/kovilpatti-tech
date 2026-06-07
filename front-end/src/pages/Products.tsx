@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon, Tag } from 'lucide-react'
+import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon, Tag, CornerDownRight } from 'lucide-react'
 import {
   Alert, Badge, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, MenuItem, Paper, TextField,
@@ -24,6 +24,7 @@ type FormMode =
   | { kind: 'edit'; product: ProductDto }
 
 type FormValues = {
+  code: string         // blank → BE keeps existing on edit, auto-generates on create
   name: string
   categoryId: number
   type: string
@@ -72,6 +73,11 @@ export default function Products() {
 
   const handleSave = async (values: FormValues) => {
     const weightValue = values.weightValue.trim() ? Number(values.weightValue) : null
+    // Blank code → omit the field entirely so the BE branch fires cleanly
+    // (create: auto-generate; edit: keep existing). Sending `undefined`
+    // through JSON would serialize the key and confuse the validator.
+    const trimmedCode = values.code.trim()
+    const code = trimmedCode ? { code: trimmedCode } : {}
     const common = {
       name: values.name,
       categoryId: values.categoryId,
@@ -83,10 +89,10 @@ export default function Products() {
     }
 
     if (formMode.kind === 'edit') {
-      const req: UpdateProductRequest = { ...common, active: values.active }
+      const req: UpdateProductRequest = { ...code, ...common, active: values.active }
       await update.mutateAsync({ id: formMode.product.id, req })
     } else if (formMode.kind === 'create') {
-      const req: CreateProductRequest = { ...common, active: values.active }
+      const req: CreateProductRequest = { ...code, ...common, active: values.active }
       await create.mutateAsync(req)
     }
     closeForm()
@@ -327,6 +333,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   onSave: (values: FormValues) => Promise<void>
 }) {
   const isEdit = !!product
+  const [code, setCode] = useState('')
   const [name, setName] = useState('')
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [type, setType] = useState('pack')
@@ -335,6 +342,18 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
+
+  // Direct child count per category — used by the dropdown to show a chip
+  // next to parent rows, mirroring the Manage Categories table. Built once
+  // per `categories` change, not on every render.
+  const childCountByParent = useMemo(() => {
+    const map = new Map<number, number>()
+    for (const c of categories) {
+      if (c.parentId == null) continue
+      map.set(c.parentId, (map.get(c.parentId) ?? 0) + 1)
+    }
+    return map
+  }, [categories])
   const [err, setErr] = useState<string | null>(null)
   // MUI Dialog's focus trap auto-focuses the first tabbable child on open,
   // which is the close-X in the title bar — not the Name field. We grab the
@@ -344,6 +363,9 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
 
   useEffect(() => {
     if (!open) return
+    // On Edit, prefill with the current code so the admin sees what's there
+    // and can change it. On Create, leave blank — BE auto-generates if so.
+    setCode(product?.code ?? '')
     setName(product?.name ?? '')
     setCategoryId(product?.categoryId ?? (categories[0]?.id ?? ''))
     setType(product?.type ?? 'pack')
@@ -408,6 +430,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
 
     try {
       await onSave({
+        code: code.trim(),
         name: name.trim(),
         categoryId,
         type: type.trim(),
@@ -442,31 +465,82 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
       </DialogTitle>
       <form onSubmit={handleSubmit}>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {isEdit && product && (
-            <Box sx={{ display: 'flex', justifyContent: 'center', gap: 2, fontSize: 13, color: '#64748b' }}>
-              <span><b>Code:</b> {product.code}</span>
-            </Box>
-          )}
-          <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} inputRef={nameRef} />
-          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            {/* Categories are nested (client #1). Server returns rows in tree
-                order (root-first, depth-grouped); we indent each MenuItem by
-                its depth and show only the leaf name so the visual hierarchy
-                reads cleanly. Same-named leaves under different parents stay
-                disambiguated by their indentation context. */}
-            <TextField select label="Category" value={categoryId} onChange={e => setCategoryId(Number(e.target.value))} size="small" required disabled={submitting}>
-              {categories.map(c => (
+          {/* Row 1 — Name + Code paired.
+              Name leads the form (primary identifier) and carries the
+              autofocus ref. Code (07-Jun-2026, client #10) is editable in
+              both modes: blank on Create → BE auto-generates (P001…); blank
+              on Edit → BE keeps the existing code. No length cap (DB column
+              is `text`, validator unbounded). */}
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 2 }}>
+            <TextField label="Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} inputRef={nameRef} />
+            <TextField
+              label="Code"
+              value={code}
+              onChange={e => setCode(e.target.value)}
+              size="small"
+              disabled={submitting}
+              helperText={isEdit ? 'Blank = keep current' : 'Blank = auto-generate (P001…)'}
+            />
+          </Box>
+
+          {/* Row 2 — Category, full width.
+              Nested taxonomy (client #1) — the breadcrumb path can be long
+              (e.g. "Biscuits > Big Biscuit > Britannia"), so it owns the
+              whole row to stay readable. Closed Select renders the full
+              path via renderValue; dropdown items render tree-style with
+              a CornerDownRight glyph + depth-scaled indent + child-count
+              chip, mirroring the Manage Categories tree UI. */}
+          <TextField
+            select
+            label="Category"
+            value={categoryId}
+            onChange={e => setCategoryId(Number(e.target.value))}
+            size="small"
+            required
+            disabled={submitting}
+            fullWidth
+            slotProps={{
+              select: {
+                renderValue: (value) => {
+                  const sel = categories.find(c => c.id === value)
+                  return sel ? (sel.path ?? sel.name) : ''
+                },
+              },
+            }}
+          >
+            {categories.map(c => {
+              const childCount = childCountByParent.get(c.id) ?? 0
+              return (
                 <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
-                  {c.name}
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                    {c.depth > 0 && (
+                      <CornerDownRight
+                        className="w-3.5 h-3.5"
+                        style={{ color: 'rgba(31,31,31,0.55)', flexShrink: 0 }}
+                      />
+                    )}
+                    <span>{c.name}</span>
+                    {childCount > 0 && (
+                      <Chip
+                        label={childCount}
+                        size="small"
+                        variant="outlined"
+                        sx={{ ml: 0.5, height: 18, fontSize: 10, fontWeight: 700, color: '#1F1F1F99', borderColor: 'rgba(31,31,31,0.2)' }}
+                      />
+                    )}
+                  </Box>
                 </MenuItem>
-              ))}
-            </TextField>
+              )
+            })}
+          </TextField>
+
+          {/* Row 3 — Type + Net Weight + Unit on one row.
+              Type and Unit are short selects; Weight gets the widest cell. */}
+          <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr 0.7fr', gap: 2 }}>
             <TextField select label="Type" value={type} onChange={e => setType(e.target.value)} required size="small" disabled={submitting}>
               <MenuItem value="pack">Pack</MenuItem>
               <MenuItem value="jar">Jar</MenuItem>
             </TextField>
-          </Box>
-          <Box sx={{ display: 'flex', gap: 1 }}>
             <TextField
               label="Net Weight"
               type="number"
@@ -478,7 +552,6 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               onChange={numericInput(setWeightValue, { max: 99999.999, decimals: 3 })}
               onKeyDown={blockNonNumericKeys}
               size="small"
-              sx={{ flex: 2 }}
               placeholder="100"
               disabled={submitting}
             />
@@ -488,13 +561,14 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               value={weightUnit}
               onChange={e => setWeightUnit(e.target.value as 'g' | 'kg')}
               size="small"
-              sx={{ flex: 1, minWidth: 90 }}
               disabled={submitting}
             >
               <MenuItem value="g">g</MenuItem>
               <MenuItem value="kg">kg</MenuItem>
             </TextField>
           </Box>
+
+          {/* Row 4 — MRP + Purchase Price (equal-width pair). */}
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
             <TextField
               label="MRP (₹)"

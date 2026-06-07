@@ -10,5 +10,9 @@ public record UpdateProductRequest(
     decimal PurchasePrice,
     // Optional. Hidden in the FE form for now — left as-is if omitted.
     decimal? Gst,
-    bool Active
+    bool Active,
+    // Optional. Null / blank → service keeps the existing code. Non-blank →
+    // service re-codes the product after a uniqueness check against OTHER
+    // rows. Editable as of 07-Jun-2026 (client #10).
+    string? Code = null
 ) : IProductPayload;
