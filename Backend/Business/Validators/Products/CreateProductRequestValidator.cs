@@ -27,7 +27,8 @@ public class CreateProductRequestValidator : ProductPayloadValidator<CreateProdu
 {
     public CreateProductRequestValidator()
     {
-        // Only payload-specific rule. The 7 shared rules come from the base.
-        RuleFor(x => x.Code).MaximumLength(20);
+        // Code is intentionally unbounded (07-Jun-2026, client #10) — admin
+        // uses descriptive codes that exceed the original 20-char cap.
+        // The 7 shared rules come from the base; no payload-specific ones.
     }
 }

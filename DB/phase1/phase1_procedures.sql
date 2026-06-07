@@ -300,7 +300,11 @@ $$;
 DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
 DROP FUNCTION IF EXISTS fn_product_get(uuid);
 DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
+-- fn_product_update signature changed twice — first gained `gst`, then
+-- `code` (07-Jun-2026, client #10). CREATE OR REPLACE can't change arg
+-- lists so we drop every prior shape. IF EXISTS keeps each safe.
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
 
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search      varchar DEFAULT NULL,
@@ -418,6 +422,7 @@ $$;
 
 CREATE OR REPLACE FUNCTION fn_product_update(
   p_id             uuid,
+  p_code           varchar,
   p_name           varchar,
   p_category_id    int,
   p_type           varchar,
@@ -432,8 +437,13 @@ CREATE OR REPLACE FUNCTION fn_product_update(
 RETURNS boolean
 LANGUAGE plpgsql AS $$
 BEGIN
+  -- Code is editable as of 07-Jun-2026 (client #10). Uniqueness is guarded
+  -- by the UNIQUE constraint on products.code — service does a pre-check
+  -- against OTHER rows for a clean error; this insert/update still trips
+  -- the constraint if a concurrent writer collides.
   UPDATE products
-  SET name           = p_name,
+  SET code           = p_code,
+      name           = p_name,
       category_id    = p_category_id,
       type           = p_type,
       weight_value   = p_weight_value,

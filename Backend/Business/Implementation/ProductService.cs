@@ -103,6 +103,21 @@ public class ProductService(
             !await categories.ExistsAsync(request.CategoryId, ct))
             throw new NotFoundException($"Category '{request.CategoryId}' not found.");
 
+        // Code is editable as of 07-Jun-2026 (client #10). Treat null/blank
+        // as "keep existing"; non-blank as a re-code request. We only run
+        // the uniqueness check when the code actually changed — the BE
+        // doesn't have an "exists by code excluding id" SP and adding one
+        // just to skip this short-circuit would be more code for the same
+        // result.
+        var code = string.IsNullOrWhiteSpace(request.Code)
+            ? existing.Code
+            : request.Code.Trim();
+        if (code != existing.Code && await products.ExistsByCodeAsync(code, ct))
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure(nameof(request.Code), $"Code '{code}' already exists.")
+            });
+
         var name        = request.Name.Trim();
         var type        = request.Type.Trim();
         var weightUnit  = (request.WeightUnit ?? "g").Trim().ToLowerInvariant();
@@ -116,7 +131,7 @@ public class ProductService(
         var updated = new Product
         {
             Id             = id,
-            Code           = existing.Code,
+            Code           = code,
             Name           = name,
             CategoryId     = request.CategoryId,
             Type           = type,
