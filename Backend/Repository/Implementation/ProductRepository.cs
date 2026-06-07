@@ -97,15 +97,18 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
     public async Task<bool> UpdateAsync(Product product, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
+        // p_code is the 2nd arg (07-Jun-2026, client #10) — service decides
+        // whether it's the existing or a new value.
         const string sql = @"
             SELECT fn_product_update(
-                @p_id, @p_name, @p_category_id, @p_type,
+                @p_id, @p_code, @p_name, @p_category_id, @p_type,
                 @p_weight_value, @p_weight_unit, @p_mrp, @p_purchase_price,
                 @p_gst, @p_active, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
         {
             p_id             = product.Id,
+            p_code           = product.Code,
             p_name           = product.Name,
             p_category_id    = product.CategoryId,
             p_type           = product.Type,

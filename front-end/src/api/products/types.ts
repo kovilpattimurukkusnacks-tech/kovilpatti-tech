@@ -29,6 +29,7 @@ export type CreateProductRequest = {
 }
 
 export type UpdateProductRequest = {
+  code?: string                       // optional — omit/blank → BE keeps existing code
   name: string
   categoryId: number
   type: string

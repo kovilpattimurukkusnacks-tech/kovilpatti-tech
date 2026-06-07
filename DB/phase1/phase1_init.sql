@@ -195,7 +195,9 @@ CREATE TRIGGER trg_categories_no_cycle
 -- ------------------------------------------------------------
 CREATE TABLE products (
   id             uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
-  code           varchar(20)   UNIQUE NOT NULL,
+  -- Length-uncapped on purpose (07-Jun-2026, client #10) — admin sets these
+  -- manually and may use long descriptive codes. UNIQUE constraint preserved.
+  code           text          UNIQUE NOT NULL,
   name           varchar(120)  NOT NULL,
   category_id    int           NOT NULL REFERENCES categories(id) ON DELETE RESTRICT,
   type           varchar(20)   NOT NULL,
