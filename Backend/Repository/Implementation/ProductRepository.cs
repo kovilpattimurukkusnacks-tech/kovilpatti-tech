@@ -138,9 +138,12 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
         // Serialize products as jsonb. SP's jsonb_array_elements iterates this
-        // and inserts each row, generating codes server-side via fn_product_next_code.
+        // and inserts each row. Code is optional per row (13-Jun-2026,
+        // client #10) — blank/null → SP falls back to fn_product_next_code()
+        // via COALESCE; non-blank → SP uses the admin-provided value.
         var payload = JsonSerializer.Serialize(products.Select(p => new
         {
+            code           = p.Code,
             name           = p.Name,
             category_id    = p.CategoryId,
             type           = p.Type,

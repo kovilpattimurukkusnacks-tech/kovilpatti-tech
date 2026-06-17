@@ -695,11 +695,13 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
                 Upload a <b>.xlsx</b> or <b>.csv</b> file with the columns:
               </p>
               <Box component="code" sx={{ display: 'block', p: 1.5, bgcolor: '#FFF8DC', borderRadius: 1, border: '1px solid #1F1F1F', fontSize: 12 }}>
-                name, category, type, weight_value, weight_unit, mrp, purchase_price, active
+                name, category, type, weight_value, weight_unit, mrp, purchase_price, active, code
               </Box>
               <p style={{ marginTop: 8, color: '#1F1F1F99' }}>
                 <b>category</b> must match an existing category name. Rows where the same
                 <b> name + type + weight + category</b> already exists are skipped — different sizes/variants are kept.
+                <b> code</b> is optional — leave the cell blank to auto-generate (P001…); fill it in to set
+                your own value. Codes must be unique across the catalog and within the file.
                 If any row has a hard error, no products are imported.
               </p>
             </Box>
