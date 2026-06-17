@@ -187,6 +187,17 @@ public class ProductService(
 
         var allCategories  = await categories.ListAsync(ct);
 
+        // Code uniqueness check (13-Jun-2026, client #10) — mirrors the
+        // editable code feature on Create/Edit. Build a HashSet of existing
+        // product codes once so each row is an O(1) lookup instead of an
+        // N+1 round-trip. Same-file dup is tracked in a second HashSet that
+        // we populate as we iterate.
+        var existingProducts = await products.ListAsync(null, null, ct);
+        var existingCodes = new HashSet<string>(
+            existingProducts.Select(p => p.Code),
+            StringComparer.Ordinal);
+        var fileCodes = new HashSet<string>(StringComparer.Ordinal);
+
         // Hard short-circuit: when there are ZERO categories in the system,
         // every row would fail with "category not found" and the admin gets
         // 50 identical error lines telling them nothing actionable. Fail
@@ -300,6 +311,17 @@ public class ProductService(
 
             var active = ParseActive(row.Active);
 
+            // Code (optional). Blank → SP auto-generates. Non-blank →
+            // validate against existing DB codes AND within-file duplicates.
+            var rowCode = row.Code?.Trim() ?? string.Empty;
+            if (rowCode.Length > 0)
+            {
+                if (existingCodes.Contains(rowCode))
+                    rowErrors.Add($"code \"{rowCode}\" already exists in the catalog");
+                else if (!fileCodes.Add(rowCode))
+                    rowErrors.Add($"code \"{rowCode}\" is duplicated within this file");
+            }
+
             if (rowErrors.Count > 0)
             {
                 errors.Add(new ImportProductError(row.RowNumber, string.Join("; ", rowErrors)));
@@ -311,11 +333,13 @@ public class ProductService(
 
             // Variant dedup removed (client #8). Same row repeated in the
             // file => two products; same variant already in DB => another
-            // product alongside the existing one. Code is still globally
-            // unique (server-assigned by the bulk SP).
+            // product alongside the existing one. Code uniqueness is now
+            // checked above when admin provides one explicitly — blank
+            // codes still get server-assigned by the bulk SP.
 
             validated.Add(new Product
             {
+                Code           = rowCode,    // empty → SP auto-generates via COALESCE
                 Name           = rowName,
                 CategoryId     = category!.Id,
                 Type           = rowType,
