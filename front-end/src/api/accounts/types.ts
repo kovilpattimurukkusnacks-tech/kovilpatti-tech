@@ -71,6 +71,14 @@ export type AccountsShopRowDto = {
   /** Informational — NOT folded into netAmount (see AccountsSummaryDto). */
   adjustmentsAmount:    number
   netAmount:            number
+  /** 17-Jun-2026 (client #12): net cost of dispatched goods at current
+   *  products.purchase_price. NOT displayed in the on-screen ShopBreakdownTable —
+   *  surfaced only in the by-shop Excel export. */
+  purchaseAmount:       number
+  /** Profit and loss are mutually exclusive — exactly one is non-zero per row
+   *  (Indian P&L pair convention). Excel-export-only. */
+  profit:               number
+  loss:                 number
 }
 
 /** Signed Quantity / Amount — Returns subtract so category Net matches
@@ -80,6 +88,14 @@ export type AccountsCategoryRowDto = {
   categoryPath: string
   quantity:     number
   amount:       number
+  /** 17-Jun-2026 (client #12): net cost of dispatched goods at current
+   *  products.purchase_price. NOT displayed in the on-screen
+   *  CategoryAndProductsTable — surfaced only in the by-category Excel export. */
+  purchaseAmount: number
+  /** Profit and loss are mutually exclusive — exactly one is non-zero per row
+   *  (Indian P&L pair convention). Excel-export-only. */
+  profit:       number
+  loss:         number
 }
 
 /** Same signed semantics as the category breakdown. */

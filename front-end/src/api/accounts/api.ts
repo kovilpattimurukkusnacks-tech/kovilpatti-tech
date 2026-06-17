@@ -37,14 +37,16 @@ export const accountsApi = {
   inTransit:   (f: AccountsFilters) => apiClient.get<AccountsInTransitDto>          (`/api/accounts/in-transit${toQuery(f)}`),
 }
 
-// ──────── CSV exports ────────
+// ──────── XLSX exports ────────
 //
-// Exports stream a file from the BE. We attach the Authorization header
-// inline via fetch + blob (rather than a plain <a href>) because the JWT
-// is in localStorage, not a cookie — the browser doesn't send it on a
-// naked navigation. Once we have the blob we trigger the download via a
-// hidden <a download>. Memory cost is bounded — a single CSV table for
-// any realistic date range is well under a megabyte.
+// Exports stream a native .xlsx workbook from the BE (client #11,
+// 13-Jun-2026 — replaces the prior CSV-with-BOM approach). We attach the
+// Authorization header inline via fetch + blob (rather than a plain
+// <a href>) because the JWT is in localStorage, not a cookie — the
+// browser doesn't send it on a naked navigation. Once we have the blob
+// we trigger the download via a hidden <a download>. Memory cost is
+// bounded — a single Accounts sheet for any realistic date range stays
+// well under a few megabytes.
 
 async function streamDownload(path: string, filename: string): Promise<void> {
   const token = tokenStore.get()
@@ -69,7 +71,7 @@ async function streamDownload(path: string, filename: string): Promise<void> {
 }
 
 function exportFilename(slug: string, f: AccountsFilters): string {
-  return `accounts-${slug}_${f.from}_to_${f.to}.csv`
+  return `accounts-${slug}_${f.from}_to_${f.to}.xlsx`
 }
 
 export const accountsExport = {
