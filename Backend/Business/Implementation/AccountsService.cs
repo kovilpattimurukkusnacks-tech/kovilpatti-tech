@@ -50,7 +50,8 @@ public class AccountsService(
             r.Order_Request_Count, r.Return_Request_Count,
             r.Requested_Qty, r.Dispatched_Qty, r.Returned_Qty,
             r.Requested_Amount, r.Dispatched_Amount, r.Returns_Amount,
-            r.Adjustments_Amount, r.Net_Amount)).ToList();
+            r.Adjustments_Amount, r.Net_Amount,
+            r.Purchase_Amount, r.Profit, r.Loss)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsCategoryRowDto>> GetByCategoryAsync(AccountsFilters filters, CancellationToken ct = default)
@@ -60,7 +61,8 @@ public class AccountsService(
             filters.From!.Value, filters.To!.Value,
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return rows.Select(r => new AccountsCategoryRowDto(
-            r.Category_Id, r.Category_Path, r.Quantity, r.Amount)).ToList();
+            r.Category_Id, r.Category_Path, r.Quantity, r.Amount,
+            r.Purchase_Amount, r.Profit, r.Loss)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsProductRowDto>> GetTopProductsAsync(AccountsFilters filters, CancellationToken ct = default)

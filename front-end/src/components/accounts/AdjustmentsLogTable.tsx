@@ -102,7 +102,7 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
             disabled={loading || !rows || rows.length === 0}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
-            Export CSV
+            Export Excel
           </Button>
         </Box>
         <Box sx={{

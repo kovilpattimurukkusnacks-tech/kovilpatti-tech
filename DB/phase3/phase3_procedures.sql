@@ -278,6 +278,9 @@ $$;
 --    Per-shop breakdown. dispatched_qty falls back to requested_qty when
 --    dispatched_qty IS NULL (matches spec wording).
 -- ============================================================
+-- Old signature (pre-profit/loss columns) — drop both variants safely so
+-- a re-run after the 17-Jun-2026 addendum doesn't error on the return-type
+-- change. The new signature appends purchase_amount + profit + loss.
 DROP FUNCTION IF EXISTS fn_accounts_by_shop(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_by_shop(
@@ -300,7 +303,16 @@ RETURNS TABLE (
   dispatched_amount     numeric,
   returns_amount        numeric,
   adjustments_amount    numeric,
-  net_amount            numeric
+  net_amount            numeric,
+  -- 17-Jun-2026 (client #12): cost-side metrics for the Excel export.
+  -- purchase_amount = net dispatched cost at current products.purchase_price
+  --                   (Orders Σ dispatched × cost − Returns Σ returned × cost).
+  -- profit / loss are mutually exclusive (one is always 0) — the standard
+  -- Indian retail P&L pair: net_amount - purchase_amount > 0 → profit,
+  -- otherwise the absolute gap goes into loss.
+  purchase_amount       numeric,
+  profit                numeric,
+  loss                  numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -377,10 +389,16 @@ LANGUAGE sql STABLE AS $$
   -- matching fn_accounts_by_category.
   order_sums AS (
     SELECT o.shop_id,
-           SUM(it.requested_qty)::bigint                                          AS requested_qty,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint             AS dispatched_qty,
-           SUM(it.requested_qty * it.unit_price)                                  AS requested_amount,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)     AS dispatched_amount
+           SUM(it.requested_qty)::bigint                                                      AS requested_qty,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint                         AS dispatched_qty,
+           SUM(it.requested_qty * it.unit_price)                                              AS requested_amount,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)                 AS dispatched_amount,
+           -- Cost side of dispatched goods at current products.purchase_price.
+           -- COALESCE handles products with no purchase_price set yet (treat
+           -- as 0 cost so the row still totals). Documented limitation: this
+           -- value can shift retroactively if the admin later edits a
+           -- product's purchase_price — acceptable for now per client #12.
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS dispatched_cost
     FROM order_rows o
     JOIN stock_request_items it ON it.request_id = o.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -393,8 +411,11 @@ LANGUAGE sql STABLE AS $$
   -- dispatched_qty is reused as accepted-qty on Returns (Phase 2 convention).
   return_sums AS (
     SELECT rr.shop_id,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint             AS returned_qty,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)     AS returns_amount
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint                         AS returned_qty,
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)                 AS returns_amount,
+           -- Cost recovered when stock comes back via a Return — subtracted
+           -- from dispatched_cost in the final SELECT to get net cost.
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS returns_cost
     FROM return_rows rr
     JOIN stock_request_items it ON it.request_id = rr.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -442,7 +463,31 @@ LANGUAGE sql STABLE AS $$
     (
       COALESCE((SELECT os.dispatched_amount FROM order_sums  os WHERE os.shop_id = s.id), 0)
     - COALESCE((SELECT rs.returns_amount    FROM return_sums rs WHERE rs.shop_id = s.id), 0)
-    )::numeric(14,2) AS net_amount
+    )::numeric(14,2) AS net_amount,
+    -- Net cost of goods that left the godown for this shop in the range
+    -- (dispatched cost minus returned cost). Pair with net_amount above
+    -- to derive Profit / Loss.
+    (
+      COALESCE((SELECT os.dispatched_cost FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    - COALESCE((SELECT rs.returns_cost    FROM return_sums rs WHERE rs.shop_id = s.id), 0)
+    )::numeric(14,2) AS purchase_amount,
+    -- P&L pair (Indian retail convention). Exactly one of profit / loss is
+    -- non-zero per row; the other is 0. Computed inline so the SP stays a
+    -- single-SELECT shape — easier to read than a wrapping subquery.
+    GREATEST(
+      0,
+      COALESCE((SELECT os.dispatched_amount FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    - COALESCE((SELECT rs.returns_amount    FROM return_sums rs WHERE rs.shop_id = s.id), 0)
+    - COALESCE((SELECT os.dispatched_cost   FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    + COALESCE((SELECT rs.returns_cost      FROM return_sums rs WHERE rs.shop_id = s.id), 0)
+    )::numeric(14,2) AS profit,
+    GREATEST(
+      0,
+      COALESCE((SELECT os.dispatched_cost   FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    - COALESCE((SELECT rs.returns_cost      FROM return_sums rs WHERE rs.shop_id = s.id), 0)
+    - COALESCE((SELECT os.dispatched_amount FROM order_sums  os WHERE os.shop_id = s.id), 0)
+    + COALESCE((SELECT rs.returns_amount    FROM return_sums rs WHERE rs.shop_id = s.id), 0)
+    )::numeric(14,2) AS loss
   FROM shops s
   WHERE s.is_deleted = false
     AND (
@@ -463,6 +508,8 @@ $$;
 --    filtered requests). category_path uses the same ' > ' separator as
 --    fn_category_tree so the FE doesn't need to rebuild it.
 -- ============================================================
+-- Old signature (pre-profit/loss columns) — drop so the return-type change
+-- can land. The new signature appends purchase_amount + profit + loss.
 DROP FUNCTION IF EXISTS fn_accounts_by_category(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_by_category(
@@ -476,7 +523,13 @@ RETURNS TABLE (
   category_id    int,
   category_path  varchar,
   quantity       bigint,
-  amount         numeric
+  amount         numeric,
+  -- 17-Jun-2026 (client #12): cost-side metrics, mirroring fn_accounts_by_shop.
+  -- purchase_amount uses current products.purchase_price; profit / loss are
+  -- the Indian retail P&L pair (exactly one is non-zero per row).
+  purchase_amount numeric,
+  profit          numeric,
+  loss            numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -511,18 +564,24 @@ LANGUAGE sql STABLE AS $$
   -- Items belonging to finalised requests (Orders contribute dispatched qty
   -- × unit_price; Returns contribute -1 × dispatched_qty × unit_price so
   -- the category amount reflects Net for that category, matching the page-
-  -- level Net KPI).
+  -- level Net KPI). signed_cost mirrors signed_amount but at current
+  -- products.purchase_price — used for the by-category Excel-only profit /
+  -- loss columns.
   contrib AS (
     SELECT
       p.category_id,
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
-      END                                                                             AS signed_qty,
+      END                                                                                     AS signed_qty,
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
-      END                                                                             AS signed_amount
+      END                                                                                     AS signed_amount,
+      CASE WHEN r.request_type = 'Order'
+           THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
+      END                                                                                     AS signed_cost
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
@@ -540,10 +599,14 @@ LANGUAGE sql STABLE AS $$
           )
   )
   SELECT
-    c.category_id                         AS category_id,
-    t.path                                AS category_path,
-    SUM(c.signed_qty)::bigint             AS quantity,
-    SUM(c.signed_amount)::numeric(14,2)   AS amount
+    c.category_id                                              AS category_id,
+    t.path                                                     AS category_path,
+    SUM(c.signed_qty)::bigint                                  AS quantity,
+    SUM(c.signed_amount)::numeric(14,2)                        AS amount,
+    SUM(c.signed_cost)::numeric(14,2)                          AS purchase_amount,
+    -- P&L pair — exactly one is non-zero per row.
+    GREATEST(0, SUM(c.signed_amount) - SUM(c.signed_cost))::numeric(14,2) AS profit,
+    GREATEST(0, SUM(c.signed_cost)   - SUM(c.signed_amount))::numeric(14,2) AS loss
   FROM contrib c
   JOIN tree t ON t.id = c.category_id
   GROUP BY c.category_id, t.path

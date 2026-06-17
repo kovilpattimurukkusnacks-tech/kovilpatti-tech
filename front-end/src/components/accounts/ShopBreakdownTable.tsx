@@ -84,7 +84,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
             disabled={loading || !rows || rows.length === 0}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
-            Export CSV
+            Export Excel
           </Button>
         </Box>
         <Box sx={{ '& .net-cell': { fontWeight: 700 }, '& .returns-cell': { color: '#C62828' } }}>
