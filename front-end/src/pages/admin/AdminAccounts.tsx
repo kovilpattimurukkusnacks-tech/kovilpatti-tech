@@ -127,7 +127,9 @@ export default function AdminAccounts() {
   // Active-filter pills shown while the panel is collapsed. The date pill has
   // no ✕ — the range always applies (defaults to this month) and is changed
   // via the expanded panel. Shop pills show the NAME and their ✕ removes
-  // just that shop. Same pattern as AdminRequests.
+  // just that shop. Category filter is intentionally NOT a global pill —
+  // it lives inside the By-Category / Top-Products table and only scopes
+  // those two queries (see scopedFilters / nonCategoryFilters below).
   const activePills: FilterPill[] = [
     { key: 'date', label: dateRangeLabel(filters.from, filters.to) },
     ...(filters.shopIds ?? []).map(id => ({
@@ -140,14 +142,23 @@ export default function AdminAccounts() {
     })),
   ]
 
+  // Category filter is intentionally local to the By-Category / Top-Products
+  // table — strip it from the filter object handed to the other 4 queries
+  // so the KPIs / Shop breakdown / Adjustments log reflect the whole
+  // catalogue regardless of what the table is filtered to.
+  const nonCategoryFilters = useMemo(
+    () => ({ ...filters, categoryIds: undefined }),
+    [filters],
+  )
+
   // Queries — every section drives its own request so a single slow SP
   // doesn't block the rest of the page from rendering.
-  const summary     = useAccountsSummary(filters)
-  const inTransit   = useAccountsInTransit(filters)
-  const byShop      = useAccountsByShop(filters)
+  const summary     = useAccountsSummary(nonCategoryFilters)
+  const inTransit   = useAccountsInTransit(nonCategoryFilters)
+  const byShop      = useAccountsByShop(nonCategoryFilters)
   const byCategory  = useAccountsByCategory(filters)
   const topProducts = useAccountsTopProducts(filters)
-  const adjustments = useAccountsAdjustments(filters)
+  const adjustments = useAccountsAdjustments(nonCategoryFilters)
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
@@ -190,6 +201,11 @@ export default function AdminAccounts() {
           filters={filters}
           topProductsLimit={(filters.limit ?? 10) as AccountsTopProductsLimit}
           onTopProductsLimitChange={setTopProductsLimit}
+          categories={categoriesData ?? []}
+          selectedCategoryIds={filters.categoryIds ?? []}
+          onCategoryIdsChange={(ids) =>
+            setFilters({ ...filters, categoryIds: ids.length ? ids : undefined })
+          }
         />
 
         <AdjustmentsLogTable

@@ -40,7 +40,13 @@ public record AccountsShopRowDto(
     /// Informational — edits posted in range; NOT folded into NetAmount
     /// (the live DispatchedAmount already reflects them).
     decimal AdjustmentsAmount,
-    decimal NetAmount
+    decimal NetAmount,
+    /// 17-Jun-2026 (client #12): net cost of dispatched goods at current
+    /// products.purchase_price (Orders cost − Returns cost). Profit/Loss
+    /// is the P&L pair against NetAmount — exactly one is non-zero.
+    decimal PurchaseAmount,
+    decimal Profit,
+    decimal Loss
 );
 
 /// Signed quantity / amount — Returns subtract so category Net reflects
@@ -49,7 +55,14 @@ public record AccountsCategoryRowDto(
     int     CategoryId,
     string  CategoryPath,
     long    Quantity,
-    decimal Amount
+    decimal Amount,
+    /// 17-Jun-2026 (client #12): net cost of dispatched goods at current
+    /// products.purchase_price. Profit/Loss is the P&L pair against Amount —
+    /// exactly one is non-zero. Excel-export-only (not shown in the
+    /// CategoryAndProductsTable grid).
+    decimal PurchaseAmount,
+    decimal Profit,
+    decimal Loss
 );
 
 /// Signed quantity / amount, same semantics as the category breakdown.
