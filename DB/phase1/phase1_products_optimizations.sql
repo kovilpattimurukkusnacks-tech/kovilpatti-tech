@@ -138,17 +138,21 @@ $$;
 -- 3. fn_product_create_bulk — atomic bulk insert for imports
 --
 -- p_products is a jsonb array of objects with keys:
---   name, category_id, type, weight_value, weight_unit,
+--   code (optional), name, category_id, type, weight_value, weight_unit,
 --   mrp, purchase_price, gst, active
 --
--- Codes are generated server-side via fn_product_next_code (sequence-backed,
--- so every row gets a fresh distinct code even in a single INSERT).
+-- Code resolution (13-Jun-2026, client #10):
+--   • Non-blank `code` in the payload → admin's value is used.
+--   • Blank / missing `code`           → fn_product_next_code() generates
+--                                        a fresh sequence-backed P### code.
+-- BE-side uniqueness checks happen before this SP runs; the column's UNIQUE
+-- constraint is the last line of defense (e.g., concurrent writers).
 --
 -- Returns (id, code) per inserted row so the BE can correlate.
 --
 -- Atomicity: the whole INSERT runs inside whatever transaction calls this
--- SP. If any row violates a constraint (e.g., variant uniqueness), the
--- entire batch rolls back.
+-- SP. If any row violates a constraint (e.g., code uniqueness), the entire
+-- batch rolls back.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_product_create_bulk(
   p_products jsonb,
@@ -164,7 +168,7 @@ BEGIN
     gst, active, created_by, updated_by
   )
   SELECT
-    fn_product_next_code(),
+    COALESCE(NULLIF(p->>'code', ''), fn_product_next_code()),
     (p->>'name')::varchar,
     (p->>'category_id')::int,
     (p->>'type')::varchar,

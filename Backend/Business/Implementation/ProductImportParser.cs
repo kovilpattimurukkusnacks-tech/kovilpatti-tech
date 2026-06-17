@@ -13,10 +13,14 @@ internal static class ProductImportParser
         string? WeightUnit,
         string? Mrp,
         string? PurchasePrice,
-        string? Active);
+        string? Active,
+        // Optional. Blank → BE auto-generates (P001…). Non-blank → admin's
+        // own code is used. Added 13-Jun-2026 (client #10) to mirror the
+        // editable code feature on Create/Edit dialogs.
+        string? Code);
 
     private static readonly string[] ExpectedHeaders =
-        ["name", "category", "type", "weight_value", "weight_unit", "mrp", "purchase_price", "active"];
+        ["name", "category", "type", "weight_value", "weight_unit", "mrp", "purchase_price", "active", "code"];
 
     private static readonly string[] RequiredHeaders =
         ["name", "category", "type", "mrp", "purchase_price"];
@@ -74,7 +78,8 @@ internal static class ProductImportParser
                 Get("weight_unit"),
                 Get("mrp"),
                 Get("purchase_price"),
-                Get("active")));
+                Get("active"),
+                Get("code")));
         }
         return rows;
     }
@@ -118,7 +123,8 @@ internal static class ProductImportParser
                 Get("weight_unit"),
                 Get("mrp"),
                 Get("purchase_price"),
-                Get("active")));
+                Get("active"),
+                Get("code")));
         }
         return rows;
     }
