@@ -464,7 +464,10 @@ export default function InventoryRequestDetail() {
   )
 
   return (
-    <Box sx={{ pb: canEditQty ? 12 : 4 }}>
+    // pb leaves room for one of two fixed bottom bars: the dispatch bar
+    // (pre-finalise, canEditQty) OR the summary bar (post-finalise,
+    // 19-Jun-2026, client #14). Either way needs the same clearance.
+    <Box sx={{ pb: 12 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} — ${isReturn ? 'review & accept return' : 'pack & dispatch'}`}
@@ -590,11 +593,30 @@ export default function InventoryRequestDetail() {
         {grouped.map(cg => renderCatGroup(cg))}
       </Box>
 
-      {/* Summary panel — overall totals broken out for clarity.
-          Pre-dispatch editing flow keeps live numbers in the sticky bottom bar. */}
-      <Box sx={{ mb: 2 }}>
-        <RequestSummary request={request} />
-      </Box>
+      {/* Fixed summary bar — same shape as the New Stock Request cart bar.
+          19-Jun-2026 (client #14). Hidden when canEditQty is true because
+          the pre-dispatch dispatch bar below already serves the same
+          screen real estate (with live draft totals + Finalise button) —
+          two stacked fixed bars would overlap. */}
+      {!canEditQty && (
+        <Paper
+          elevation={6}
+          sx={{
+            position: 'fixed',
+            bottom: 0,
+            left: { xs: 0, lg: 256 /* sidebar width */ },
+            right: 0,
+            zIndex: 20,
+            borderRadius: 0,
+            borderTop: '2px solid #1F1F1F',
+            bgcolor: '#FFFFFF',
+            px: { xs: 2, sm: 3 },
+            py: 1.5,
+          }}
+        >
+          <RequestSummary request={request} variant="footer" />
+        </Paper>
+      )}
 
       {request.notes && (
         <Paper elevation={0} sx={{ p: 1.5, mb: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px dashed #1F1F1F' }}>

@@ -205,7 +205,9 @@ export default function ShopRequestDetail() {
   )
 
   return (
-    <Box sx={{ pb: 4 }}>
+    // pb leaves room for the fixed summary bar at the bottom (19-Jun-2026,
+    // client #14) — same approach as the New Stock Request cart bar.
+    <Box sx={{ pb: 12 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} → ${request.inventoryCode} ${request.inventoryName}`}
@@ -321,10 +323,28 @@ export default function ShopRequestDetail() {
         {grouped.map(cg => renderCatGroup(cg))}
       </Box>
 
-      {/* Summary panel — overall totals broken out for clarity. */}
-      <Box sx={{ mb: 2 }}>
-        <RequestSummary request={request} />
-      </Box>
+      {/* Fixed summary bar — same pattern as the New Stock Request cart
+          bar (sidebar-aware left offset, full-bleed right, elevation 6 for
+          shadow). 19-Jun-2026 (client #14): totals stay anchored at the
+          bottom edge regardless of scroll position. Outer Box has pb:12
+          to keep page content from sliding underneath. */}
+      <Paper
+        elevation={6}
+        sx={{
+          position: 'fixed',
+          bottom: 0,
+          left: { xs: 0, lg: 256 /* sidebar width */ },
+          right: 0,
+          zIndex: 20,
+          borderRadius: 0,
+          borderTop: '2px solid #1F1F1F',
+          bgcolor: '#FFFFFF',
+          px: { xs: 2, sm: 3 },
+          py: 1.5,
+        }}
+      >
+        <RequestSummary request={request} variant="footer" />
+      </Paper>
 
       {/* Notes */}
       {request.notes && (

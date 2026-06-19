@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react'
-import { Box, Button, Card, CardContent, CircularProgress, Link as MuiLink, Typography } from '@mui/material'
+import { Box, Button, Card, CardContent, Chip, CircularProgress, Link as MuiLink, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -66,17 +66,38 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
     {
       field: 'requestCode',
       headerName: 'Request',
-      width: 110,
+      // Wider in 'all' view to leave room for the Return chip when the
+      // row's request_type is Return. Other views don't need the chip
+      // (Returns view → every row is Return; Dispatched view → every
+      // row is Order), so the column stays narrow there.
+      width: view === 'all' ? 180 : 110,
       renderCell: (params) => (
-        <MuiLink
-          component={Link}
-          to={`/admin/requests/${params.row.requestId}`}
-          underline="hover"
-          sx={{ fontWeight: 700, color: '#1F1F1F' }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          {params.value as string}
-        </MuiLink>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexWrap: 'wrap' }}>
+          <MuiLink
+            component={Link}
+            to={`/admin/requests/${params.row.requestId}`}
+            underline="hover"
+            sx={{ fontWeight: 700, color: '#1F1F1F' }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {params.value as string}
+          </MuiLink>
+          {view === 'all' && params.row.requestType === 'Return' && (
+            <Chip
+              label="Return"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C62828',
+                color: '#C62828',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+          )}
+        </Box>
       ),
     },
     { field: 'shopName',     headerName: 'Shop',    flex: 1, minWidth: 140 },
