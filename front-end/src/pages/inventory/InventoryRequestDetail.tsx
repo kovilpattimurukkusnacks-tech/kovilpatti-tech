@@ -464,10 +464,11 @@ export default function InventoryRequestDetail() {
   )
 
   return (
-    // pb leaves room for one of two fixed bottom bars: the dispatch bar
-    // (pre-finalise, canEditQty) OR the summary bar (post-finalise,
-    // 19-Jun-2026, client #14). Either way needs the same clearance.
-    <Box sx={{ pb: 12 }}>
+    // pb leaves room for one of two fixed bottom bars + breathing space
+    // above so action buttons don't sit flush against the footer:
+    // dispatch bar (pre-finalise, canEditQty) OR summary bar (post-finalise,
+    // 19-Jun-2026, client #14). Same clearance for either.
+    <Box sx={{ pb: 16 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} — ${isReturn ? 'review & accept return' : 'pack & dispatch'}`}
