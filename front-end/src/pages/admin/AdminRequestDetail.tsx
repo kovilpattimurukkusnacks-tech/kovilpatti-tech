@@ -220,9 +220,10 @@ export default function AdminRequestDetail() {
   )
 
   return (
-    // pb leaves room for the fixed summary bar at the bottom (19-Jun-2026,
-    // client #14) — same approach as the New Stock Request cart bar.
-    <Box sx={{ pb: 12 }}>
+    // pb leaves room for the fixed summary bar at the bottom + extra
+    // breathing space above it so action buttons don't sit flush against
+    // the footer (19-Jun-2026, client #14).
+    <Box sx={{ pb: 16 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} → ${request.inventoryCode} ${request.inventoryName}`}
