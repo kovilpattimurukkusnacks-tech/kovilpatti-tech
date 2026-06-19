@@ -63,27 +63,42 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<IActionResult> ExportByShop([FromQuery] AccountsFilters filters, CancellationToken ct)
     {
         var rows = await accounts.GetByShopAsync(filters, ct);
+        var view = NormalizeView(filters.View);
+        // 19-Jun-2026 (client #13): drop columns server-side so the exported
+        // file matches the FE's active view-mode (Requested / Dispatched /
+        // Returns / All). Always keep identity columns (Shop Code / Name).
         var cols = new List<AccountsXlsxWriter.Column<AccountsShopRowDto>>
         {
             new("Shop Code",            r => r.ShopCode),
             new("Shop Name",            r => r.ShopName),
-            new("Order Requests",       r => r.OrderRequestCount,  AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Return Requests",      r => r.ReturnRequestCount, AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Requested Qty",        r => r.RequestedQty,       AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Dispatched Qty",       r => r.DispatchedQty,      AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Returned Qty",         r => r.ReturnedQty,        AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Requested (MRP)",      r => r.RequestedAmount,    AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Dispatched (MRP)",     r => r.DispatchedAmount,   AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Returns (MRP)",        r => r.ReturnsAmount,      AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Adjustments (MRP)",    r => r.AdjustmentsAmount,  AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Net (MRP)",            r => r.NetAmount,          AccountsXlsxWriter.ColumnFormat.Currency),
-            // 17-Jun-2026 (client #12): cost-side columns after Net.
-            // Profit / Loss are mutually exclusive — exactly one is non-zero
-            // per row (Indian P&L pair convention).
-            new("Purchase Amount",      r => r.PurchaseAmount,     AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Profit",               r => r.Profit,             AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Loss",                 r => r.Loss,               AccountsXlsxWriter.ColumnFormat.Currency),
         };
+        if (view is "all" or "requested" or "dispatched")
+            cols.Add(new("Order Requests",   r => r.OrderRequestCount,  AccountsXlsxWriter.ColumnFormat.Integer));
+        if (view is "all" or "returns")
+            cols.Add(new("Return Requests",  r => r.ReturnRequestCount, AccountsXlsxWriter.ColumnFormat.Integer));
+        if (view is "all" or "requested")
+            cols.Add(new("Requested Qty",    r => r.RequestedQty,       AccountsXlsxWriter.ColumnFormat.Integer));
+        if (view is "all" or "dispatched")
+            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,      AccountsXlsxWriter.ColumnFormat.Integer));
+        if (view is "all" or "returns")
+            cols.Add(new("Returned Qty",     r => r.ReturnedQty,        AccountsXlsxWriter.ColumnFormat.Integer));
+        if (view is "all" or "requested")
+            cols.Add(new("Requested (MRP)",  r => r.RequestedAmount,    AccountsXlsxWriter.ColumnFormat.Currency));
+        if (view is "all" or "dispatched")
+            cols.Add(new("Dispatched (MRP)", r => r.DispatchedAmount,   AccountsXlsxWriter.ColumnFormat.Currency));
+        if (view is "all" or "returns")
+            cols.Add(new("Returns (MRP)",    r => r.ReturnsAmount,      AccountsXlsxWriter.ColumnFormat.Currency));
+        if (view is "all" or "dispatched")
+            cols.Add(new("Adjustments (MRP)",r => r.AdjustmentsAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
+        if (view == "all")
+            cols.Add(new("Net (MRP)",        r => r.NetAmount,          AccountsXlsxWriter.ColumnFormat.Currency));
+        // Cost-side metrics — only meaningful when dispatched goods are in scope.
+        if (view is "all" or "dispatched")
+        {
+            cols.Add(new("Purchase Amount", r => r.PurchaseAmount,      AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Profit",          r => r.Profit,              AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Loss",            r => r.Loss,                AccountsXlsxWriter.ColumnFormat.Currency));
+        }
         return XlsxResult("by-shop", filters, rows, cols);
     }
 
@@ -91,17 +106,39 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<IActionResult> ExportByCategory([FromQuery] AccountsFilters filters, CancellationToken ct)
     {
         var rows = await accounts.GetByCategoryAsync(filters, ct);
+        var view = NormalizeView(filters.View);
         var cols = new List<AccountsXlsxWriter.Column<AccountsCategoryRowDto>>
         {
-            new("Category Path",   r => r.CategoryPath),
-            new("Quantity",        r => r.Quantity, AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Amount (MRP)",    r => r.Amount,   AccountsXlsxWriter.ColumnFormat.Currency),
-            // 17-Jun-2026 (client #12): cost-side columns after Amount.
-            // Profit / Loss are mutually exclusive — Indian P&L pair convention.
-            new("Purchase Amount", r => r.PurchaseAmount, AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Profit",          r => r.Profit,         AccountsXlsxWriter.ColumnFormat.Currency),
-            new("Loss",            r => r.Loss,           AccountsXlsxWriter.ColumnFormat.Currency),
+            new("Category Path", r => r.CategoryPath),
         };
+        // Per-view column set — match what the FE table shows on screen so
+        // the exported file looks like the active lens.
+        if (view == "all")
+        {
+            cols.Add(new("Quantity (Net)",    r => r.Quantity,        AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Amount (MRP Net)",  r => r.Amount,          AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Purchase Amount",   r => r.PurchaseAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Profit",            r => r.Profit,          AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Loss",              r => r.Loss,            AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else if (view == "requested")
+        {
+            cols.Add(new("Requested Qty",     r => r.RequestedQty,    AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Requested (MRP)",   r => r.RequestedAmount, AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else if (view == "dispatched")
+        {
+            cols.Add(new("Dispatched Qty",    r => r.DispatchedQty,   AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Dispatched (MRP)",  r => r.DispatchedAmount,AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Purchase Amount",   r => r.PurchaseAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Profit",            r => r.Profit,          AccountsXlsxWriter.ColumnFormat.Currency));
+            cols.Add(new("Loss",              r => r.Loss,            AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else // returns
+        {
+            cols.Add(new("Returns Qty",       r => r.ReturnsQty,      AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Returns (MRP)",     r => r.ReturnsAmount,   AccountsXlsxWriter.ColumnFormat.Currency));
+        }
         return XlsxResult("by-category", filters, rows, cols);
     }
 
@@ -109,6 +146,7 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<IActionResult> ExportTopProducts([FromQuery] AccountsFilters filters, CancellationToken ct)
     {
         var rows = await accounts.GetTopProductsAsync(filters, ct);
+        var view = NormalizeView(filters.View);
         var cols = new List<AccountsXlsxWriter.Column<AccountsProductRowDto>>
         {
             new("Product Code",   r => r.ProductCode),
@@ -117,16 +155,46 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
             new("Weight",         r => r.WeightValue.HasValue
                                        ? $"{r.WeightValue.Value.ToString("0.###", CultureInfo.InvariantCulture)} {r.WeightUnit}"
                                        : null),
-            new("Quantity",       r => r.Quantity, AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Amount (MRP)",   r => r.Amount,   AccountsXlsxWriter.ColumnFormat.Currency),
         };
+        if (view == "all")
+        {
+            cols.Add(new("Quantity (Net)",   r => r.Quantity,         AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Amount (MRP Net)", r => r.Amount,           AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else if (view == "requested")
+        {
+            cols.Add(new("Requested Qty",    r => r.RequestedQty,     AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Requested (MRP)",  r => r.RequestedAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else if (view == "dispatched")
+        {
+            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,    AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Dispatched (MRP)", r => r.DispatchedAmount, AccountsXlsxWriter.ColumnFormat.Currency));
+        }
+        else // returns
+        {
+            cols.Add(new("Returns Qty",      r => r.ReturnsQty,       AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Returns (MRP)",    r => r.ReturnsAmount,    AccountsXlsxWriter.ColumnFormat.Currency));
+        }
         return XlsxResult("top-products", filters, rows, cols);
     }
 
     [HttpGet("export/adjustments")]
     public async Task<IActionResult> ExportAdjustments([FromQuery] AccountsFilters filters, CancellationToken ct)
     {
-        var rows = await accounts.GetAdjustmentsAsync(filters, ct);
+        var allRows = await accounts.GetAdjustmentsAsync(filters, ct);
+        // 19-Jun-2026 (client #13): filter to the active view's request-type
+        // slice so the downloaded Excel matches the on-screen audit log.
+        // 'requested' is never reached here — the FE hides the export
+        // button in that view — but guarded defensively anyway.
+        var view = NormalizeView(filters.View);
+        IEnumerable<AccountsAdjustmentRowDto> rows = view switch
+        {
+            "returns"    => allRows.Where(r => r.RequestType == "Return"),
+            "dispatched" => allRows.Where(r => r.RequestType == "Order"),
+            "requested"  => Enumerable.Empty<AccountsAdjustmentRowDto>(),
+            _            => allRows,
+        };
         var cols = new List<AccountsXlsxWriter.Column<AccountsAdjustmentRowDto>>
         {
             // Edited-at goes in as a DateTimeOffset; the writer converts to
@@ -152,6 +220,20 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     }
 
     // ──────── helpers ────────
+
+    /// <summary>
+    /// Normalizes the view query param to a known token. Any unrecognized
+    /// value falls back to 'all' — defensive against typos or stale links.
+    /// Only the Excel export endpoints honour this; JSON endpoints always
+    /// return all dimensions (FE switches views without a refetch).
+    /// </summary>
+    private static string NormalizeView(string? raw) => raw?.ToLowerInvariant() switch
+    {
+        "requested"  => "requested",
+        "dispatched" => "dispatched",
+        "returns"    => "returns",
+        _            => "all",
+    };
 
     private FileStreamResult XlsxResult<T>(
         string slug, AccountsFilters filters,

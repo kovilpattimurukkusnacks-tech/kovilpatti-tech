@@ -62,7 +62,9 @@ public class AccountsService(
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return rows.Select(r => new AccountsCategoryRowDto(
             r.Category_Id, r.Category_Path, r.Quantity, r.Amount,
-            r.Purchase_Amount, r.Profit, r.Loss)).ToList();
+            r.Purchase_Amount, r.Profit, r.Loss,
+            r.Requested_Qty, r.Dispatched_Qty, r.Returns_Qty,
+            r.Requested_Amount, r.Dispatched_Amount, r.Returns_Amount)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsProductRowDto>> GetTopProductsAsync(AccountsFilters filters, CancellationToken ct = default)
@@ -76,7 +78,9 @@ public class AccountsService(
         return rows.Select(r => new AccountsProductRowDto(
             r.Product_Id, r.Product_Code, r.Product_Name,
             r.Weight_Value, r.Weight_Unit,
-            r.Quantity, r.Amount)).ToList();
+            r.Quantity, r.Amount,
+            r.Requested_Qty, r.Dispatched_Qty, r.Returns_Qty,
+            r.Requested_Amount, r.Dispatched_Amount, r.Returns_Amount)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsAdjustmentRowDto>> GetAdjustmentsAsync(AccountsFilters filters, CancellationToken ct = default)
@@ -86,7 +90,7 @@ public class AccountsService(
             filters.From!.Value, filters.To!.Value,
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return rows.Select(r => new AccountsAdjustmentRowDto(
-            r.Audit_Id, r.Edited_At, r.Request_Id, r.Request_Code,
+            r.Audit_Id, r.Edited_At, r.Request_Id, r.Request_Code, r.Request_Type,
             r.Shop_Id, r.Shop_Name,
             r.Product_Id, r.Product_Name, r.Weight_Value, r.Weight_Unit,
             r.Old_Qty, r.New_Qty, r.Delta_Qty, r.Unit_Price, r.Delta_Amount,
