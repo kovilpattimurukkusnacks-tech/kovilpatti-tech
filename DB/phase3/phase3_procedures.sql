@@ -508,8 +508,10 @@ $$;
 --    filtered requests). category_path uses the same ' > ' separator as
 --    fn_category_tree so the FE doesn't need to rebuild it.
 -- ============================================================
--- Old signature (pre-profit/loss columns) — drop so the return-type change
--- can land. The new signature appends purchase_amount + profit + loss.
+-- Old signatures dropped so the return-type changes land. Two prior shapes
+-- exist depending on environment: the original (id/path/qty/amount only)
+-- and the 17-Jun-2026 add of purchase/profit/loss. New 19-Jun-2026 shape
+-- adds per-dimension aggregates for view-mode (client #13).
 DROP FUNCTION IF EXISTS fn_accounts_by_category(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_by_category(
@@ -522,14 +524,21 @@ CREATE OR REPLACE FUNCTION fn_accounts_by_category(
 RETURNS TABLE (
   category_id    int,
   category_path  varchar,
+  -- Net (Orders − Returns) — kept for the default "All" view.
   quantity       bigint,
   amount         numeric,
-  -- 17-Jun-2026 (client #12): cost-side metrics, mirroring fn_accounts_by_shop.
-  -- purchase_amount uses current products.purchase_price; profit / loss are
-  -- the Indian retail P&L pair (exactly one is non-zero per row).
   purchase_amount numeric,
   profit          numeric,
-  loss            numeric
+  loss            numeric,
+  -- 19-Jun-2026 (client #13): per-dimension aggregates so the FE view-mode
+  -- (Requested / Dispatched / Returns) can render single-dim breakdowns
+  -- without a refetch. All values are positive (no signed-amount tricks).
+  requested_qty       bigint,
+  dispatched_qty      bigint,
+  returns_qty         bigint,
+  requested_amount    numeric,
+  dispatched_amount   numeric,
+  returns_amount      numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -561,15 +570,19 @@ LANGUAGE sql STABLE AS $$
   tree AS (
     SELECT * FROM fn_category_tree()
   ),
-  -- Items belonging to finalised requests (Orders contribute dispatched qty
-  -- × unit_price; Returns contribute -1 × dispatched_qty × unit_price so
-  -- the category amount reflects Net for that category, matching the page-
-  -- level Net KPI). signed_cost mirrors signed_amount but at current
-  -- products.purchase_price — used for the by-category Excel-only profit /
-  -- loss columns.
+  -- Items belonging to finalised requests. We carry BOTH signed values
+  -- (for the Net row in 'All' view) AND per-dimension positive aggregates
+  -- (for the Requested / Dispatched / Returns view lenses). The dimension
+  -- semantics:
+  --   • Requested  — Orders only, using it.requested_qty (initial ask).
+  --   • Dispatched — Orders only, using COALESCE(dispatched_qty, requested_qty).
+  --   • Returns    — Returns only, using COALESCE(dispatched_qty, requested_qty)
+  --                  (which is the accepted-qty per the Phase 2 convention).
+  -- signed_cost feeds the existing profit / loss columns.
   contrib AS (
     SELECT
       p.category_id,
+      -- Signed aggregates (existing behaviour — kept for the Net columns).
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
@@ -581,7 +594,14 @@ LANGUAGE sql STABLE AS $$
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
-      END                                                                                     AS signed_cost
+      END                                                                                     AS signed_cost,
+      -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
@@ -606,7 +626,14 @@ LANGUAGE sql STABLE AS $$
     SUM(c.signed_cost)::numeric(14,2)                          AS purchase_amount,
     -- P&L pair — exactly one is non-zero per row.
     GREATEST(0, SUM(c.signed_amount) - SUM(c.signed_cost))::numeric(14,2) AS profit,
-    GREATEST(0, SUM(c.signed_cost)   - SUM(c.signed_amount))::numeric(14,2) AS loss
+    GREATEST(0, SUM(c.signed_cost)   - SUM(c.signed_amount))::numeric(14,2) AS loss,
+    -- Per-dimension positive aggregates.
+    SUM(c.req_qty)::bigint                                     AS requested_qty,
+    SUM(c.disp_qty)::bigint                                    AS dispatched_qty,
+    SUM(c.ret_qty)::bigint                                     AS returns_qty,
+    SUM(c.req_amt)::numeric(14,2)                              AS requested_amount,
+    SUM(c.disp_amt)::numeric(14,2)                             AS dispatched_amount,
+    SUM(c.ret_amt)::numeric(14,2)                              AS returns_amount
   FROM contrib c
   JOIN tree t ON t.id = c.category_id
   GROUP BY c.category_id, t.path
@@ -618,6 +645,8 @@ $$;
 -- 5. fn_accounts_top_products
 --    Top-N products by net amount (Orders − Returns) in the range.
 -- ============================================================
+-- 19-Jun-2026 (client #13): adds per-dimension positive aggregates so the
+-- FE view-mode lens can render Requested / Dispatched / Returns slices.
 DROP FUNCTION IF EXISTS fn_accounts_top_products(date, date, uuid[], uuid[], int[], int);
 
 CREATE OR REPLACE FUNCTION fn_accounts_top_products(
@@ -634,8 +663,16 @@ RETURNS TABLE (
   product_name  varchar,
   weight_value  numeric,
   weight_unit   varchar,
+  -- Net (Orders − Returns) — used by 'All' view ranking.
   quantity      bigint,
-  amount        numeric
+  amount        numeric,
+  -- Per-dimension positive aggregates (added 19-Jun-2026 client #13).
+  requested_qty       bigint,
+  dispatched_qty      bigint,
+  returns_qty         bigint,
+  requested_amount    numeric,
+  dispatched_amount   numeric,
+  returns_amount      numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -670,6 +707,7 @@ LANGUAGE sql STABLE AS $$
       p.name          AS product_name,
       p.weight_value,
       p.weight_unit,
+      -- Signed (existing — for the Net columns in 'All' view).
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
@@ -677,7 +715,14 @@ LANGUAGE sql STABLE AS $$
       CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
-      END AS signed_amount
+      END AS signed_amount,
+      -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
@@ -697,9 +742,17 @@ LANGUAGE sql STABLE AS $$
   SELECT
     product_id, product_code, product_name, weight_value, weight_unit,
     SUM(signed_qty)::bigint           AS quantity,
-    SUM(signed_amount)::numeric(14,2) AS amount
+    SUM(signed_amount)::numeric(14,2) AS amount,
+    SUM(req_qty)::bigint              AS requested_qty,
+    SUM(disp_qty)::bigint             AS dispatched_qty,
+    SUM(ret_qty)::bigint              AS returns_qty,
+    SUM(req_amt)::numeric(14,2)       AS requested_amount,
+    SUM(disp_amt)::numeric(14,2)      AS dispatched_amount,
+    SUM(ret_amt)::numeric(14,2)       AS returns_amount
   FROM contrib
   GROUP BY product_id, product_code, product_name, weight_value, weight_unit
+  -- ORDER BY net amount stays the default. FE re-sorts client-side when
+  -- a non-'All' view is active (avoids a second SP roundtrip).
   ORDER BY amount DESC, product_code
   LIMIT GREATEST(COALESCE(p_limit, 10), 1);
 $$;
@@ -711,6 +764,8 @@ $$;
 --    delta_qty / delta_amount (uses the line's UNIT_PRICE snapshot, not the
 --    current product MRP — so the historical delta is stable).
 -- ============================================================
+-- 19-Jun-2026 (client #13): adds request_type column so the FE Accounts
+-- view-mode lens can filter audits by Order / Return slice.
 DROP FUNCTION IF EXISTS fn_accounts_adjustments(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_adjustments(
@@ -725,6 +780,8 @@ RETURNS TABLE (
   edited_at       timestamptz,
   request_id      uuid,
   request_code    varchar,
+  -- Request shape — 'Order' or 'Return'. Lets the FE filter audits by view.
+  request_type    varchar,
   shop_id         uuid,
   shop_name       varchar,
   product_id      uuid,
@@ -771,6 +828,7 @@ LANGUAGE sql STABLE AS $$
     a.edited_at,
     a.request_id,
     r.code                                                         AS request_code,
+    r.request_type                                                 AS request_type,
     r.shop_id,
     s.name                                                         AS shop_name,
     p.id                                                           AS product_id,

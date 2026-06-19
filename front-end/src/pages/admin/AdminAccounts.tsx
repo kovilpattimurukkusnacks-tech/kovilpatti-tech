@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Alert, Box, Stack } from '@mui/material'
+import { Alert, Box, Button, Stack } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { istFirstOfThisMonth, istToday } from '../../utils/istDate'
 import { dateRangeLabel } from '../../components/DateRangeFilter'
@@ -21,7 +21,7 @@ import {
   useAccountsSummary,
   useAccountsTopProducts,
 } from '../../hooks/useAccounts'
-import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit } from '../../api/accounts/types'
+import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
 
 /**
  * Phase 3 Accounts dashboard. Admin-only (route gate + BE re-check). Filter
@@ -65,6 +65,12 @@ export default function AdminAccounts() {
     }
 
     const limit = Number(params.get('limit')) as AccountsTopProductsLimit
+    // View / lens (19-Jun-2026, client #13). Defaults to 'all'.
+    const viewRaw = params.get('view')
+    const view: AccountsView =
+      viewRaw === 'requested' || viewRaw === 'dispatched' || viewRaw === 'returns'
+        ? viewRaw
+        : 'all'
     return {
       from,
       to,
@@ -72,6 +78,7 @@ export default function AdminAccounts() {
       shopIds:     shopIds && shopIds.length > 0 ? shopIds : undefined,
       categoryIds: categoryIds && categoryIds.length > 0 ? categoryIds : undefined,
       limit: [10, 25, 50].includes(limit) ? limit : 10,
+      view,
     }
   }, [params, shopsData, categoriesData])
 
@@ -116,9 +123,16 @@ export default function AdminAccounts() {
       if (next.shopIds      && next.shopIds.length)      out.set('shopIds',      next.shopIds.join(','));      else out.delete('shopIds')
       if (next.categoryIds  && next.categoryIds.length)  out.set('categoryIds',  next.categoryIds.join(','));  else out.delete('categoryIds')
       if (next.limit && next.limit !== 10) out.set('limit', String(next.limit)); else out.delete('limit')
+      // View — omit URL key when 'all' (default) to keep links clean.
+      if (next.view && next.view !== 'all') out.set('view', next.view); else out.delete('view')
       return out
     }, { replace: true })
   }, [setParams])
+
+  /** Convenience setter so the tab onClick stays one-liner. */
+  const setView = useCallback((view: AccountsView) => {
+    setFilters({ ...filters, view })
+  }, [filters, setFilters])
 
   const setTopProductsLimit = useCallback((n: AccountsTopProductsLimit) => {
     setFilters({ ...filters, limit: n })
@@ -173,6 +187,12 @@ export default function AdminAccounts() {
       />
 
       <Stack spacing={2} sx={{ mt: 2 }}>
+        {/* View / lens tabs (19-Jun-2026, client #13). Switches the dashboard
+            between All / Requested / Dispatched / Returns. FE-only filter —
+            BE returns all dimensions, FE hides cards / columns based on
+            the active view. Cache stays warm across switches. */}
+        <ViewTabs current={filters.view ?? 'all'} onChange={setView} />
+
         <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
           <AccountsFilterBar filters={filters} activePresetKey={activePresetKey} onChange={setFilters} />
         </FilterPanel>
@@ -183,9 +203,13 @@ export default function AdminAccounts() {
           </Alert>
         )}
 
-        <KpiStrip data={summary.data} loading={summary.isLoading} />
+        <KpiStrip data={summary.data} loading={summary.isLoading} view={filters.view} />
 
-        <InTransitStrip data={inTransit.data} loading={inTransit.isLoading} />
+        {/* In-Transit: order-side metric (dispatched but not yet received).
+            Doesn't apply when the user is focused on Returns view — hide. */}
+        {filters.view !== 'returns' && (
+          <InTransitStrip data={inTransit.data} loading={inTransit.isLoading} />
+        )}
 
         <ShopBreakdownTable
           rows={byShop.data}
@@ -208,13 +232,67 @@ export default function AdminAccounts() {
           }
         />
 
-        <AdjustmentsLogTable
-          rows={adjustments.data}
-          loading={adjustments.isLoading}
-          filters={filters}
-          summary={summary.data}
-        />
+        {/* Adjustments log: hidden ONLY in Requested view (pre-finalization,
+            no audits exist yet). Shown in All / Dispatched / Returns since
+            qty edits can happen on either an Order's dispatched_qty OR a
+            Return's accepted_qty after the request is finalized — both
+            flow into the same stock_request_qty_audits table. */}
+        {filters.view !== 'requested' && (
+          <AdjustmentsLogTable
+            rows={adjustments.data}
+            loading={adjustments.isLoading}
+            filters={filters}
+            summary={summary.data}
+          />
+        )}
       </Stack>
+    </Box>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────
+// ViewTabs — segmented control rendered as MUI Buttons (not Tabs).
+// Using Buttons over the Tabs component because:
+//   1. Gold gradient matches the existing preset-button pattern, so
+//      the page has one consistent active-button look.
+//   2. No underline / indicator state to manage.
+//   3. Easier mobile wrap behaviour.
+//
+// active = gold gradient (theme primary). inactive = white pill.
+// ───────────────────────────────────────────────────────────────
+function ViewTabs({ current, onChange }: {
+  current: AccountsView
+  onChange: (v: AccountsView) => void
+}) {
+  const options: { key: AccountsView; label: string }[] = [
+    { key: 'all',         label: 'All Activity' },
+    { key: 'requested',   label: 'Requested' },
+    { key: 'dispatched',  label: 'Dispatched' },
+    { key: 'returns',     label: 'Returns' },
+  ]
+  return (
+    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
+      {options.map(o => {
+        const active = current === o.key
+        return (
+          <Button
+            key={o.key}
+            size="small"
+            disableElevation
+            variant={active ? 'contained' : 'outlined'}
+            onClick={() => onChange(o.key)}
+            sx={{
+              textTransform: 'none',
+              fontWeight: 700,
+              borderRadius: 999,
+              px: 2,
+              ...(active ? {} : { bgcolor: '#FFFBE6', color: '#1F1F1F', borderColor: 'rgba(31,31,31,0.25)' }),
+            }}
+          >
+            {o.label}
+          </Button>
+        )
+      })}
     </Box>
   )
 }

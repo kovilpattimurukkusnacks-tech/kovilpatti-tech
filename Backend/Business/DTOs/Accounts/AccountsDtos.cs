@@ -62,7 +62,16 @@ public record AccountsCategoryRowDto(
     /// CategoryAndProductsTable grid).
     decimal PurchaseAmount,
     decimal Profit,
-    decimal Loss
+    decimal Loss,
+    /// 19-Jun-2026 (client #13): per-dimension positive aggregates so the FE
+    /// view-mode lens (Requested / Dispatched / Returns) can pick the right
+    /// number per row without a refetch.
+    long    RequestedQty,
+    long    DispatchedQty,
+    long    ReturnsQty,
+    decimal RequestedAmount,
+    decimal DispatchedAmount,
+    decimal ReturnsAmount
 );
 
 /// Signed quantity / amount, same semantics as the category breakdown.
@@ -73,7 +82,14 @@ public record AccountsProductRowDto(
     decimal? WeightValue,
     string?  WeightUnit,
     long     Quantity,
-    decimal  Amount
+    decimal  Amount,
+    /// 19-Jun-2026 (client #13): per-dim aggregates (see AccountsCategoryRowDto).
+    long     RequestedQty,
+    long     DispatchedQty,
+    long     ReturnsQty,
+    decimal  RequestedAmount,
+    decimal  DispatchedAmount,
+    decimal  ReturnsAmount
 );
 
 public record AccountsAdjustmentRowDto(
@@ -81,6 +97,9 @@ public record AccountsAdjustmentRowDto(
     DateTimeOffset  EditedAt,
     Guid            RequestId,
     string          RequestCode,
+    /// 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so FE filters
+    /// audits by view-mode lens.
+    string          RequestType,
     Guid            ShopId,
     string          ShopName,
     Guid            ProductId,

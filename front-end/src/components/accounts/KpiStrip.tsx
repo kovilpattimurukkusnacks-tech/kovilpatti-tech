@@ -2,11 +2,13 @@ import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
 import { ArrowDownLeft, ArrowUpRight, ClipboardList, TrendingUp } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
-import type { AccountsSummaryDto } from '../../api/accounts/types'
+import type { AccountsSummaryDto, AccountsView } from '../../api/accounts/types'
 
 type Props = {
   data: AccountsSummaryDto | undefined
   loading: boolean
+  /** Active view / lens. Drives which KPI cards render (19-Jun-2026, client #13). */
+  view?: AccountsView
 }
 
 /**
@@ -23,45 +25,88 @@ type Props = {
  * Requested→Dispatched gap — confusing next to them. The edits total + log
  * live on the Adjustments log table instead. (Tried 06-Jun-2026, removed.)
  */
-export default function KpiStrip({ data, loading }: Props) {
+export default function KpiStrip({ data, loading, view = 'all' }: Props) {
+  // Build the full card set once, then filter by the active view.
+  // 'all' shows everything; each dim view shows ONLY its own card so the
+  // strip clearly reframes around that dimension (lens-mode).
+  const allCards = [
+    {
+      dim: 'requested' as const,
+      label: 'Requested (at MRP)',
+      value: data?.requestedAmount,
+      secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
+      icon: <ClipboardList size={18} />,
+      accent: undefined as 'net' | 'returns' | undefined,
+    },
+    {
+      dim: 'dispatched' as const,
+      label: 'Dispatched (at MRP)',
+      value: data?.dispatchedAmount,
+      secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
+      icon: <ArrowUpRight size={18} />,
+      accent: undefined as 'net' | 'returns' | undefined,
+    },
+    {
+      dim: 'returns' as const,
+      label: 'Returns (at MRP)',
+      value: data?.returnsAmount,
+      secondary: data ? `${data.returnsRequestCount} return${data.returnsRequestCount === 1 ? '' : 's'}` : undefined,
+      icon: <ArrowDownLeft size={18} />,
+      accent: 'returns' as const,
+    },
+    {
+      dim: 'net' as const,
+      label: 'Net (at MRP)',
+      value: data?.netAmount,
+      secondary: data ? `${data.activeShopCount} active shop${data.activeShopCount === 1 ? '' : 's'}` : undefined,
+      icon: <TrendingUp size={18} />,
+      accent: 'net' as const,
+    },
+  ]
+
+  // Map view → which dims to show. Net belongs to 'all' only since it's a
+  // composite (Dispatched − Returns) — surfacing it inside a single-dim view
+  // would be misleading.
+  const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
+    all:        ['requested', 'dispatched', 'returns', 'net'],
+    requested:  ['requested'],
+    dispatched: ['dispatched'],
+    returns:    ['returns'],
+  }
+  const cards = allCards.filter(c => dimsByView[view].includes(c.dim))
+
+  // Grid column count tracks the visible card count so a single card doesn't
+  // stretch the full page width (looks awkward). When only one card shows
+  // (Requested / Dispatched / Returns single-dim views), the strip is
+  // width-capped AND centered with mx:'auto' so it sits in the middle of
+  // the page instead of clinging to the left edge.
+  const cols = Math.min(cards.length, 4)
   return (
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr 1fr', md: 'repeat(4, 1fr)' },
+        gridTemplateColumns: {
+          xs: cols === 1 ? '1fr' : '1fr 1fr',
+          md: `repeat(${cols}, minmax(220px, 1fr))`,
+        },
         gap: 2,
+        // alignSelf overrides the parent Stack's default `align-items: stretch`
+        // so the maxWidth actually constrains the child; mx:'auto' then
+        // pushes equal margin left/right for horizontal centering.
+        ...(cols === 1 ? { maxWidth: 360, mx: 'auto', alignSelf: 'center', width: '100%' } : {}),
       }}
     >
-      <KpiCard
-        label="Requested (at MRP)"
-        value={data?.requestedAmount}
-        secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
-        icon={<ClipboardList size={18} />}
-        loading={loading}
-      />
-      <KpiCard
-        label="Dispatched (at MRP)"
-        value={data?.dispatchedAmount}
-        secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
-        icon={<ArrowUpRight size={18} />}
-        loading={loading}
-      />
-      <KpiCard
-        label="Returns (at MRP)"
-        value={data?.returnsAmount}
-        secondary={data ? `${data.returnsRequestCount} return${data.returnsRequestCount === 1 ? '' : 's'}` : undefined}
-        icon={<ArrowDownLeft size={18} />}
-        loading={loading}
-        accent="returns"
-      />
-      <KpiCard
-        label="Net (at MRP)"
-        value={data?.netAmount}
-        secondary={data ? `${data.activeShopCount} active shop${data.activeShopCount === 1 ? '' : 's'}` : undefined}
-        icon={<TrendingUp size={18} />}
-        loading={loading}
-        accent="net"
-      />
+      {cards.map(c => (
+        <KpiCard
+          key={c.dim}
+          label={c.label}
+          value={c.value}
+          secondary={c.secondary}
+          icon={c.icon}
+          loading={loading}
+          accent={c.accent}
+        />
+      ))}
     </Box>
   )
 }

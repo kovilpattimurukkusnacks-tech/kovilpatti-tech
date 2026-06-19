@@ -16,6 +16,21 @@ export type AccountsGrouping = 'day' | 'week' | 'month'
 
 export type AccountsTopProductsLimit = 10 | 25 | 50
 
+/**
+ * View / lens for the whole Accounts dashboard (19-Jun-2026, client #13).
+ * Switches which dimension every panel surfaces:
+ *   - 'all'        → current behaviour (every dimension visible)
+ *   - 'requested'  → only requested-side data (Order requests pre-dispatch)
+ *   - 'dispatched' → only dispatched-side data (what actually went out)
+ *   - 'returns'    → only returns-side data
+ *
+ * Backed by the URL `?view=…` query param. FE-only filter for KPI strip,
+ * shop breakdown, adjustments, in-transit (their SPs already return all
+ * dims). Category + top-products SPs got additive per-dim aggregates so
+ * FE can pick the right field at render time.
+ */
+export type AccountsView = 'all' | 'requested' | 'dispatched' | 'returns'
+
 /** Shared query-string filters for every Accounts endpoint. */
 export type AccountsFilters = {
   from: IsoDate
@@ -28,6 +43,8 @@ export type AccountsFilters = {
   categoryIds?:  number[]
   /** Only meaningful for top-products. */
   limit?: AccountsTopProductsLimit
+  /** View / lens — defaults to 'all'. */
+  view?: AccountsView
 }
 
 export type AccountsSummaryDto = {
@@ -96,6 +113,14 @@ export type AccountsCategoryRowDto = {
    *  (Indian P&L pair convention). Excel-export-only. */
   profit:       number
   loss:         number
+  /** 19-Jun-2026 (client #13): per-dimension positive aggregates for the
+   *  view-mode lens. FE picks the right field at render time. */
+  requestedQty:      number
+  dispatchedQty:     number
+  returnsQty:        number
+  requestedAmount:   number
+  dispatchedAmount:  number
+  returnsAmount:     number
 }
 
 /** Same signed semantics as the category breakdown. */
@@ -107,6 +132,13 @@ export type AccountsProductRowDto = {
   weightUnit:  string | null
   quantity:    number
   amount:      number
+  /** 19-Jun-2026 (client #13): per-dim aggregates — see AccountsCategoryRowDto. */
+  requestedQty:      number
+  dispatchedQty:     number
+  returnsQty:        number
+  requestedAmount:   number
+  dispatchedAmount:  number
+  returnsAmount:     number
 }
 
 export type AccountsAdjustmentRowDto = {
@@ -114,6 +146,9 @@ export type AccountsAdjustmentRowDto = {
   editedAt:       IsoDateTime
   requestId:      string
   requestCode:    string
+  /** 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so the FE filters
+   *  audits by view-mode lens. */
+  requestType:    'Order' | 'Return'
   shopId:         string
   shopName:       string
   productId:      string

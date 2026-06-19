@@ -1,4 +1,5 @@
-import { Box, Button, Card, CardContent, Link as MuiLink, Typography } from '@mui/material'
+import { useMemo, useState } from 'react'
+import { Box, Button, Card, CardContent, CircularProgress, Link as MuiLink, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
 import { Link, useNavigate } from 'react-router-dom'
@@ -28,6 +29,32 @@ type Props = {
  */
 export default function AdjustmentsLogTable({ rows, loading, filters, summary }: Props) {
   const navigate = useNavigate()
+  // Excel export typically takes 2-5 seconds — spinner during BE render.
+  const [exporting, setExporting] = useState(false)
+
+  // 19-Jun-2026 (client #13): view-mode lens filter — keep audits whose
+  // request_type matches the active view. The summary KPI (count + net
+  // effect) is recomputed from the visible rows so the header line stays
+  // honest. 'all' / 'dispatched' show Order audits + Return audits both
+  // for now (dispatched lens conceptually covers Order-side audits, but
+  // returns lens conceptually covers Return-side audits — we keep both
+  // visible in 'dispatched' since it's the closest to the historical
+  // "Adjustments" semantic; clients can refine later if needed).
+  const view = filters.view ?? 'all'
+  const visibleRows = useMemo(() => {
+    if (!rows) return [] as AccountsAdjustmentRowDto[]
+    if (view === 'returns')    return rows.filter(r => r.requestType === 'Return')
+    if (view === 'dispatched') return rows.filter(r => r.requestType === 'Order')
+    // 'all' (and 'requested' — but the parent doesn't render the table in
+    // that view anyway) show every audit.
+    return rows
+  }, [rows, view])
+
+  // Recompute summary from the visible rows so the count / net-effect
+  // header matches what's actually rendered. When view='all' this still
+  // matches summary.adjustmentsCount / summary.adjustmentsAmount.
+  const visibleCount  = visibleRows.length
+  const visibleAmount = visibleRows.reduce((acc, r) => acc + r.deltaAmount, 0)
 
   const cols: GridColDef<AccountsAdjustmentRowDto>[] = [
     {
@@ -90,19 +117,24 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
             <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>Adjustments log</Typography>
             <Typography variant="caption" sx={{ color: '#1F1F1F99' }}>
               {summary
-                ? <>{summary.adjustmentsCount} edit{summary.adjustmentsCount === 1 ? '' : 's'} · net effect <strong>{formatINR(summary.adjustmentsAmount)}</strong> — already included in the totals above</>
+                ? <>{visibleCount} edit{visibleCount === 1 ? '' : 's'} · net effect <strong>{formatINR(visibleAmount)}</strong> — already included in the totals above</>
                 : 'Qty edits in this period — already included in the totals above'}
             </Typography>
           </Box>
           <Button
             size="small"
             variant="outlined"
-            startIcon={<Download size={16} />}
-            onClick={() => accountsExport.adjustments(filters)}
-            disabled={loading || !rows || rows.length === 0}
+            startIcon={exporting ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : <Download size={16} />}
+            onClick={async () => {
+              if (exporting) return
+              setExporting(true)
+              try { await accountsExport.adjustments(filters) }
+              finally { setExporting(false) }
+            }}
+            disabled={exporting || loading || visibleRows.length === 0}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >
-            Export Excel
+            {exporting ? 'Preparing…' : 'Export Excel'}
           </Button>
         </Box>
         <Box sx={{
@@ -111,7 +143,7 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
         }}>
           <DataGrid
             className="data-page-grid"
-            rows={rows ?? []}
+            rows={visibleRows}
             columns={cols}
             getRowId={(r) => r.auditId}
             loading={loading}
