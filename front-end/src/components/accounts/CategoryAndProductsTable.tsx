@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Autocomplete, Box, Button, Card, CardContent, Chip, MenuItem, Tab, Tabs, TextField } from '@mui/material'
+import { Autocomplete, Box, Button, Card, CardContent, Chip, CircularProgress, MenuItem, Tab, Tabs, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { CornerDownRight, Download } from 'lucide-react'
 import type {
@@ -7,6 +7,7 @@ import type {
   AccountsFilters,
   AccountsProductRowDto,
   AccountsTopProductsLimit,
+  AccountsView,
 } from '../../api/accounts/types'
 import type { CategoryDto } from '../../api/categories/types'
 import { accountsExport } from '../../api/accounts/api'
@@ -48,20 +49,67 @@ export default function CategoryAndProductsTable({
   categories, selectedCategoryIds, onCategoryIdsChange,
 }: Props) {
   const [tab, setTab] = useState<'category' | 'top-products'>('category')
+  // Excel export typically takes 2-5 seconds — spinner gives the admin
+  // immediate feedback that the click registered.
+  const [exporting, setExporting] = useState(false)
 
   // Resolve the selected ids to full CategoryDto objects for the Autocomplete
   // `value` prop. The parent's `selectedCategoryIds` is the source of truth
   // (URL-backed via filters.categoryIds).
   const selectedCategories = categories.filter(c => selectedCategoryIds.includes(c.id))
 
+  // 19-Jun-2026 (client #13): when the page is in a view-mode lens, the
+  // Category & Top-Products tables render per-dim numbers instead of Net.
+  // The BE already returns all dims in the same payload (additive SP change)
+  // so we can switch on view without a refetch — cache stays warm.
+  const view: AccountsView = filters.view ?? 'all'
+
+  const qtyLabel    = view === 'all'        ? 'Quantity (Net)'
+                    : view === 'requested'  ? 'Requested Qty'
+                    : view === 'dispatched' ? 'Dispatched Qty'
+                    :                         'Returned Qty'
+  const amtLabel    = view === 'all'        ? 'Amount (MRP Net)'
+                    : view === 'requested'  ? 'Requested (MRP)'
+                    : view === 'dispatched' ? 'Dispatched (MRP)'
+                    :                         'Returns (MRP)'
+  // Field-resolution helpers — pick the right numeric column per view.
+  const catQty = (r: AccountsCategoryRowDto) =>
+    view === 'requested'  ? r.requestedQty
+  : view === 'dispatched' ? r.dispatchedQty
+  : view === 'returns'    ? r.returnsQty
+  :                         r.quantity
+  const catAmt = (r: AccountsCategoryRowDto) =>
+    view === 'requested'  ? r.requestedAmount
+  : view === 'dispatched' ? r.dispatchedAmount
+  : view === 'returns'    ? r.returnsAmount
+  :                         r.amount
+  const prodQty = (r: AccountsProductRowDto) =>
+    view === 'requested'  ? r.requestedQty
+  : view === 'dispatched' ? r.dispatchedQty
+  : view === 'returns'    ? r.returnsQty
+  :                         r.quantity
+  const prodAmt = (r: AccountsProductRowDto) =>
+    view === 'requested'  ? r.requestedAmount
+  : view === 'dispatched' ? r.dispatchedAmount
+  : view === 'returns'    ? r.returnsAmount
+  :                         r.amount
+
   const catCols: GridColDef<AccountsCategoryRowDto>[] = [
     { field: 'categoryPath', headerName: 'Category', flex: 1.5, minWidth: 220 },
-    { field: 'quantity',     headerName: 'Quantity', type: 'number', width: 130 },
+    {
+      field: 'quantity',
+      headerName: qtyLabel,
+      type: 'number',
+      width: 150,
+      // valueGetter so the grid's sort + Excel-paste both see the active dim.
+      valueGetter: (_v, row) => catQty(row),
+    },
     {
       field: 'amount',
-      headerName: 'Amount (MRP)',
+      headerName: amtLabel,
       type: 'number',
-      width: 160,
+      width: 170,
+      valueGetter: (_v, row) => catAmt(row),
       valueFormatter: (value) => formatINR(value as number),
       cellClassName: 'amount-cell',
     },
@@ -78,12 +126,19 @@ export default function CategoryAndProductsTable({
       valueGetter: (_v, row) =>
         row.weightValue != null ? `${row.weightValue} ${row.weightUnit ?? ''}`.trim() : '',
     },
-    { field: 'quantity', headerName: 'Quantity', type: 'number', width: 110 },
+    {
+      field: 'quantity',
+      headerName: qtyLabel,
+      type: 'number',
+      width: 140,
+      valueGetter: (_v, row) => prodQty(row),
+    },
     {
       field: 'amount',
-      headerName: 'Amount (MRP)',
+      headerName: amtLabel,
       type: 'number',
-      width: 160,
+      width: 170,
+      valueGetter: (_v, row) => prodAmt(row),
       valueFormatter: (value) => formatINR(value as number),
       cellClassName: 'amount-cell',
     },
@@ -154,20 +209,28 @@ export default function CategoryAndProductsTable({
             <Button
               size="small"
               variant="outlined"
-              startIcon={<Download size={16} />}
-              onClick={() =>
-                tab === 'category'
-                  ? accountsExport.byCategory(filters)
-                  : accountsExport.topProducts(filters)
-              }
+              startIcon={exporting ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : <Download size={16} />}
+              onClick={async () => {
+                if (exporting) return
+                setExporting(true)
+                try {
+                  await (tab === 'category'
+                    ? accountsExport.byCategory(filters)
+                    : accountsExport.topProducts(filters))
+                } finally {
+                  setExporting(false)
+                }
+              }}
               disabled={
-                tab === 'category'
-                  ? loadingCategories || !categoryRows || categoryRows.length === 0
-                  : loadingProducts   || !topProductRows || topProductRows.length === 0
+                exporting || (
+                  tab === 'category'
+                    ? loadingCategories || !categoryRows || categoryRows.length === 0
+                    : loadingProducts   || !topProductRows || topProductRows.length === 0
+                )
               }
               sx={{ textTransform: 'none', fontWeight: 600 }}
             >
-              Export Excel
+              {exporting ? 'Preparing…' : 'Export Excel'}
             </Button>
           </Box>
         </Box>

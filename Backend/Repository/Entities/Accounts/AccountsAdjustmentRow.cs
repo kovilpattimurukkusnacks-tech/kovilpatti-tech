@@ -9,6 +9,9 @@ public class AccountsAdjustmentRow
     public DateTimeOffset Edited_At       { get; set; }
     public Guid           Request_Id      { get; set; }
     public string         Request_Code    { get; set; } = default!;
+    /// 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so FE can filter
+    /// audits by view-mode lens.
+    public string         Request_Type    { get; set; } = default!;
     public Guid           Shop_Id         { get; set; }
     public string         Shop_Name       { get; set; } = default!;
     public Guid           Product_Id      { get; set; }

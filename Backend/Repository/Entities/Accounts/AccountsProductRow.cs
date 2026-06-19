@@ -11,4 +11,12 @@ public class AccountsProductRow
     public string?  Weight_Unit  { get; set; }
     public long     Quantity     { get; set; }
     public decimal  Amount       { get; set; }
+    // 19-Jun-2026 (client #13): per-dimension positive aggregates for the
+    // FE view-mode lens (Requested / Dispatched / Returns).
+    public long     Requested_Qty       { get; set; }
+    public long     Dispatched_Qty      { get; set; }
+    public long     Returns_Qty         { get; set; }
+    public decimal  Requested_Amount    { get; set; }
+    public decimal  Dispatched_Amount   { get; set; }
+    public decimal  Returns_Amount      { get; set; }
 }

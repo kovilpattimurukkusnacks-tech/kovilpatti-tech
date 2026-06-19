@@ -24,6 +24,9 @@ function toQuery(f: AccountsFilters): string {
   if (f.inventoryIds && f.inventoryIds.length) p.set('inventoryIds', f.inventoryIds.join(','))
   if (f.categoryIds  && f.categoryIds.length)  p.set('categoryIds',  f.categoryIds.join(','))
   if (f.limit != null) p.set('limit', String(f.limit))
+  // 19-Jun-2026 (client #13): view-mode lens — passed only when non-default so
+  // the URL stays clean. BE Excel exports drop columns based on this param.
+  if (f.view && f.view !== 'all') p.set('view', f.view)
   return `?${p.toString()}`
 }
 

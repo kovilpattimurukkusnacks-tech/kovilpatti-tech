@@ -21,4 +21,9 @@ public class AccountsFilters
     public int[]? CategoryIds { get; set; }
     /// Top-N selector for the top-products endpoint. Validator restricts to {10,25,50}.
     public int? Limit { get; set; }
+    /// 19-Jun-2026 (client #13): view-mode lens — 'all' | 'requested' |
+    /// 'dispatched' | 'returns'. Only the Excel export endpoints honour it
+    /// (drops irrelevant columns server-side); JSON endpoints always return
+    /// all dimensions so the FE can switch views without a refetch.
+    public string? View { get; set; }
 }
