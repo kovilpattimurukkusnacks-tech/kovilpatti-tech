@@ -307,7 +307,7 @@ public class ProductService(
             }
 
             var weightUnit = (row.WeightUnit ?? "g").Trim().ToLowerInvariant();
-            if (weightUnit is not ("g" or "kg")) rowErrors.Add("weight_unit must be 'g' or 'kg'");
+            if (weightUnit is not ("g" or "kg" or "pcs" or "pkt")) rowErrors.Add("weight_unit must be 'g', 'kg', 'pcs', or 'pkt'");
 
             var active = ParseActive(row.Active);
 
