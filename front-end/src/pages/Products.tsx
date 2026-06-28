@@ -29,7 +29,7 @@ type FormValues = {
   categoryId: number
   type: string
   weightValue: string  // raw input, parsed on submit
-  weightUnit: 'g' | 'kg'
+  weightUnit: 'g' | 'kg' | 'pcs' | 'pkt'
   mrp: string
   purchasePrice: string
   active: boolean
@@ -338,7 +338,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [type, setType] = useState('pack')
   const [weightValue, setWeightValue] = useState('')
-  const [weightUnit, setWeightUnit] = useState<'g' | 'kg'>('g')
+  const [weightUnit, setWeightUnit] = useState<'g' | 'kg' | 'pcs' | 'pkt'>('g')
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
@@ -370,7 +370,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setCategoryId(product?.categoryId ?? (categories[0]?.id ?? ''))
     setType(product?.type ?? 'pack')
     setWeightValue(product?.weightValue?.toString() ?? '')
-    setWeightUnit((product?.weightUnit as 'g' | 'kg') ?? 'g')
+    setWeightUnit((product?.weightUnit as 'g' | 'kg' | 'pcs' | 'pkt') ?? 'g')
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
@@ -559,12 +559,14 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               select
               label="Unit"
               value={weightUnit}
-              onChange={e => setWeightUnit(e.target.value as 'g' | 'kg')}
+              onChange={e => setWeightUnit(e.target.value as 'g' | 'kg' | 'pcs' | 'pkt')}
               size="small"
               disabled={submitting}
             >
               <MenuItem value="g">g</MenuItem>
               <MenuItem value="kg">kg</MenuItem>
+              <MenuItem value="pcs">pcs</MenuItem>
+              <MenuItem value="pkt">pkt</MenuItem>
             </TextField>
           </Box>
 

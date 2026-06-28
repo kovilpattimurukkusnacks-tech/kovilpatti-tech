@@ -214,7 +214,7 @@ CREATE TABLE products (
   created_by     uuid          REFERENCES users(id) ON DELETE SET NULL,
   updated_at     timestamptz   NOT NULL DEFAULT now(),
   updated_by     uuid          REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT chk_products_weight_unit   CHECK (weight_unit IN ('g','kg')),
+  CONSTRAINT chk_products_weight_unit   CHECK (weight_unit IN ('g','kg','pcs','pkt')),
   CONSTRAINT chk_products_prices_nonneg CHECK (mrp >= 0 AND purchase_price >= 0),
   CONSTRAINT chk_products_gst_range     CHECK (gst IS NULL OR (gst >= 0 AND gst <= 100))
 );

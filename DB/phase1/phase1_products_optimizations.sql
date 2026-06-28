@@ -12,13 +12,18 @@
 -- Adds:
 --   • Sequence-backed fn_product_next_code (replaces MAX+1 pattern that was
 --     unsafe for bulk insert from fn_product_create_bulk).
---   • Unique partial index on the product "variant key" tuple — replaces
---     the load-all-products check in BE (ProductService).
---   • fn_product_variant_exists — single-index lookup the BE can call
---     instead of iterating the whole catalog.
 --   • fn_product_create_bulk — atomic bulk insert for the CSV/Excel import
 --     flow. Generates codes server-side so 100 imported rows become 1 SP
---     call instead of 200.
+--     call instead of 200. Honours an explicit per-row `code` when present.
+--
+-- Drops (client #8, 28-May-2026 — variant uniqueness relaxed):
+--   • uq_products_variant_active index — two products may now share the
+--     exact (name, category, type, weight, weight_unit) tuple. Keeping this
+--     unique index would make the script fail on any DB with duplicate
+--     variants (e.g. catalogue seed v3).
+--   • fn_product_variant_exists — the BE no longer pre-checks variants.
+--   These DROPs are defensive: no-ops on a fresh deploy, cleanup on an
+--   older dev DB that still has them.
 --
 -- HOW TO RUN
 --   Supabase: paste in SQL Editor → Run.
@@ -72,70 +77,23 @@ LANGUAGE sql AS $$
 $$;
 
 -- ------------------------------------------------------------
--- 1. Unique partial index on the variant tuple
+-- 1. Drop relaxed-variant artifacts (client #8, 28-May-2026)
 --
--- Treats two products as "the same SKU" if their normalized
--- (name, category, type, weight_value, weight_unit) all match.
+-- Variant uniqueness was relaxed: two products may share the exact
+-- (name, category, type, weight_value, weight_unit) tuple, differing only
+-- on their auto-assigned P-code. The old unique index would now reject
+-- such rows (and abort this whole script, since it runs in one txn), so we
+-- drop it and the helper SP that backed the pre-insert check.
 --
--- NULL weight_value is its own bucket (different from "0" or "10g"),
--- so we coalesce to -1 (a value valid weight_value can never be — chk
--- says >0) for indexing purposes.
---
--- Excludes soft-deleted rows so a deleted product doesn't block a fresh
--- insert with the same variant.
+-- Both drops are idempotent: no-ops on a fresh deploy that never had them,
+-- cleanup on an older dev DB that does.
 -- ------------------------------------------------------------
-CREATE UNIQUE INDEX IF NOT EXISTS uq_products_variant_active
-ON products (
-  LOWER(TRIM(name)),
-  category_id,
-  LOWER(TRIM(type)),
-  COALESCE(weight_value, -1),
-  LOWER(TRIM(COALESCE(weight_unit, 'g')))
-)
-WHERE is_deleted = false;
-
--- ------------------------------------------------------------
--- 2. fn_product_variant_exists — does any active product match this tuple?
---
--- p_exclude_id lets the caller skip a specific row (used when validating
--- an Update — the row being updated must not match itself).
---
--- String params declared as `text` so Dapper's default text-typed
--- parameters match without an implicit-cast hop. (Postgres won't always
--- auto-cast text→varchar during overload resolution.)
---
--- Defensive drop: an earlier draft of this script used `varchar` for the
--- string params. CREATE OR REPLACE only replaces a function with the
--- exact same signature, so the varchar version would survive alongside
--- the text version → ambiguous overload at call time. The IF EXISTS makes
--- this a no-op on fresh deploys.
--- ------------------------------------------------------------
+DROP INDEX IF EXISTS uq_products_variant_active;
+DROP FUNCTION IF EXISTS fn_product_variant_exists(text, int, text, numeric, text, uuid);
 DROP FUNCTION IF EXISTS fn_product_variant_exists(varchar, int, varchar, numeric, varchar, uuid);
 
-CREATE OR REPLACE FUNCTION fn_product_variant_exists(
-  p_name         text,
-  p_category_id  int,
-  p_type         text,
-  p_weight_value numeric,
-  p_weight_unit  text,
-  p_exclude_id   uuid
-)
-RETURNS boolean
-LANGUAGE sql STABLE AS $$
-  SELECT EXISTS(
-    SELECT 1 FROM products
-    WHERE LOWER(TRIM(name)) = LOWER(TRIM(p_name))
-      AND category_id = p_category_id
-      AND LOWER(TRIM(type)) = LOWER(TRIM(p_type))
-      AND COALESCE(weight_value, -1) = COALESCE(p_weight_value, -1)
-      AND LOWER(TRIM(COALESCE(weight_unit, 'g'))) = LOWER(TRIM(COALESCE(p_weight_unit, 'g')))
-      AND (p_exclude_id IS NULL OR id <> p_exclude_id)
-      AND is_deleted = false
-  );
-$$;
-
 -- ------------------------------------------------------------
--- 3. fn_product_create_bulk — atomic bulk insert for imports
+-- 2. fn_product_create_bulk — atomic bulk insert for imports
 --
 -- p_products is a jsonb array of objects with keys:
 --   code (optional), name, category_id, type, weight_value, weight_unit,
@@ -190,6 +148,6 @@ COMMIT;
 -- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------
--- \df fn_product_next_code fn_product_variant_exists fn_product_create_bulk
--- \d uq_products_variant_active
+-- \df fn_product_next_code fn_product_create_bulk
+-- (uq_products_variant_active + fn_product_variant_exists intentionally gone)
 -- ============================================================
