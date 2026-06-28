@@ -8,7 +8,7 @@ export type ProductDto = {
   categoryName: string
   type: string                        // pack, bottle, jar, packet, can …
   weightValue: number | null
-  weightUnit: string | null           // 'g' | 'kg'
+  weightUnit: string | null           // 'g' | 'kg' | 'pcs' | 'pkt'
   mrp: number
   purchasePrice: number | null        // null when caller is shop_user (BE filters)
   gst: number | null                  // GST % (0..100). Hidden in the UI for now.

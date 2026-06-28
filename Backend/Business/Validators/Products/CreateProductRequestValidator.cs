@@ -15,8 +15,8 @@ public abstract class ProductPayloadValidator<T> : AbstractValidator<T>
         RuleFor(x => x.Type).NotEmpty().MaximumLength(20);
         RuleFor(x => x.WeightValue).GreaterThan(0).When(x => x.WeightValue.HasValue);
         RuleFor(x => x.WeightUnit)
-            .Must(u => u is null or "g" or "kg")
-            .WithMessage("WeightUnit must be 'g' or 'kg'.");
+            .Must(u => u is null or "g" or "kg" or "pcs" or "pkt")
+            .WithMessage("WeightUnit must be 'g', 'kg', 'pcs', or 'pkt'.");
         RuleFor(x => x.Mrp).GreaterThanOrEqualTo(0);
         RuleFor(x => x.PurchasePrice).GreaterThanOrEqualTo(0);
         RuleFor(x => x.Gst).InclusiveBetween(0m, 100m).When(x => x.Gst.HasValue);
