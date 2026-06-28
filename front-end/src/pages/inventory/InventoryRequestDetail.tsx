@@ -588,6 +588,10 @@ export default function InventoryRequestDetail() {
         sx={{
           columnCount: { xs: 1, md: 2 },
           columnGap: 2,
+          // mb so action buttons / notes don't collapse flush against the
+          // items grid (the inline Summary that used to sit here was moved
+          // to a fixed footer 19-Jun-2026; this restores the visual gap).
+          mb: 3,
           '& > *': { breakInside: 'avoid', display: 'block' },
         }}
       >
