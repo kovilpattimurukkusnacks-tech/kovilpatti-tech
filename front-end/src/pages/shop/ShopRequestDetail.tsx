@@ -318,6 +318,11 @@ export default function ShopRequestDetail() {
         sx={{
           columnCount: { xs: 1, md: 2 },
           columnGap: 2,
+          // mb gives Notes / Errors / Actions room to breathe under the
+          // items grid. Previously the inline Summary card provided this
+          // gap; once that became a fixed footer (out of flow), buttons
+          // collapsed flush against items — restored explicitly here.
+          mb: 3,
           '& > *': { breakInside: 'avoid', display: 'block' },
         }}
       >
