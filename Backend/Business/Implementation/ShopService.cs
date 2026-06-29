@@ -69,7 +69,8 @@ public class ShopService(
             ContactPhone2  = string.IsNullOrWhiteSpace(request.ContactPhone2) ? null : request.ContactPhone2.Trim(),
             Gstin          = string.IsNullOrWhiteSpace(request.Gstin) ? null : request.Gstin.Trim().ToUpperInvariant(),
             InventoryId    = request.InventoryId,
-            Active         = request.Active
+            Active         = request.Active,
+            GstEnabled     = request.GstEnabled
         };
 
         var newId = await shops.CreateAsync(shop, userId, ct);
@@ -101,10 +102,22 @@ public class ShopService(
             ContactPhone2  = string.IsNullOrWhiteSpace(request.ContactPhone2) ? null : request.ContactPhone2.Trim(),
             Gstin          = string.IsNullOrWhiteSpace(request.Gstin) ? null : request.Gstin.Trim().ToUpperInvariant(),
             InventoryId    = request.InventoryId,
-            Active         = request.Active
+            Active         = request.Active,
+            GstEnabled     = request.GstEnabled
         };
 
         var ok = await shops.UpdateAsync(updated, userId, ct);
+        if (!ok) throw new NotFoundException($"Shop '{id}' not found.");
+
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<ShopDto> SetGstEnabledAsync(Guid id, bool enabled, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var ok = await shops.SetGstEnabledAsync(id, enabled, userId, ct);
         if (!ok) throw new NotFoundException($"Shop '{id}' not found.");
 
         return await GetAsync(id, ct);
@@ -129,6 +142,7 @@ public class ShopService(
         Gstin:          s.Gstin,
         InventoryId:    s.InventoryId,
         InventoryName:  s.InventoryName,
-        Active:         s.Active
+        Active:         s.Active,
+        GstEnabled:     s.GstEnabled
     );
 }

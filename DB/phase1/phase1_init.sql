@@ -69,6 +69,11 @@ CREATE TABLE shops (
   gstin           varchar(15),
   inventory_id    uuid          NOT NULL REFERENCES inventories(id) ON DELETE RESTRICT,
   active          boolean       NOT NULL DEFAULT true,
+  -- 19-Jun-2026 (client #15): per-shop GST flag. When the global
+  -- app_settings.gst_enabled is true, this row-level flag picks which
+  -- shops are GST-registered (later used by Phase 5 POS billing to
+  -- decide whether bills include GST line items).
+  gst_enabled     boolean       NOT NULL DEFAULT true,
   is_deleted      boolean       NOT NULL DEFAULT false,
   created_at      timestamptz   NOT NULL DEFAULT now(),
   created_by      uuid,

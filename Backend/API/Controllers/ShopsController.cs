@@ -39,6 +39,17 @@ public class ShopsController(IShopService shops) : ControllerBase
     public async Task<ActionResult<ShopDto>> Update(Guid id, [FromBody] UpdateShopRequest request, CancellationToken ct)
         => Ok(await shops.UpdateAsync(id, request, ct));
 
+    /// 19-Jun-2026 (client #15): fast-path single-column toggle used by the
+    /// AdminSettings per-shop GST list. Avoids round-tripping the whole
+    /// shop payload when the admin just clicks a switch.
+    [HttpPatch("{id:guid}/gst-enabled")]
+    [Authorize(Roles = "Admin")]
+    public async Task<ActionResult<ShopDto>> SetGstEnabled(
+        Guid id,
+        [FromBody] SetShopGstEnabledRequest request,
+        CancellationToken ct)
+        => Ok(await shops.SetGstEnabledAsync(id, request.Enabled, ct));
+
     [HttpDelete("{id:guid}")]
     [Authorize(Roles = "Admin")]
     public async Task<IActionResult> Delete(Guid id, CancellationToken ct)
