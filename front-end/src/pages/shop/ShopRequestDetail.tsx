@@ -180,8 +180,18 @@ export default function ShopRequestDetail() {
                   const effectiveQty = item.dispatchedQty ?? item.requestedQty
                   const effectiveSubtotal = effectiveQty * item.unitPrice
                   const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  // Over-dispatch — godown sent more than the shop requested.
+                  // Tinted amber (vs red for short) so the shop user can scan
+                  // and tell under/over apart at a glance. 29-Jun-2026.
+                  const over  = item.dispatchedQty != null && item.dispatchedQty > item.requestedQty
+                  // Row tint pairs with the qty + total colour so a row
+                  // reads as one signal — not just one coloured cell.
+                  const rowBg = short ? 'rgba(198,40,40,0.06)'
+                              : over  ? 'rgba(230,81,0,0.07)'
+                              : 'transparent'
+                  const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>
@@ -190,7 +200,7 @@ export default function ShopRequestDetail() {
                         <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor }}>
                         {formatINR(effectiveSubtotal)}
                       </TableCell>
                     </TableRow>
@@ -223,7 +233,7 @@ export default function ShopRequestDetail() {
               onClick={() => window.open(`/print/request/${request.id}/thermal`, '_blank', 'noopener,noreferrer')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                 '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
               }}
             >
@@ -349,7 +359,39 @@ export default function ShopRequestDetail() {
           py: 1.5,
         }}
       >
-        <RequestSummary request={request} variant="footer" />
+        <RequestSummary
+          request={request}
+          variant="footer"
+          // Shop user's primary action lives in the footer's center slot so
+          // it's reachable without scrolling past the items grid (client #14
+          // follow-up, 29-Jun-2026). Stays a no-op when canReceive is false
+          // — RequestSummary skips the slot when actionSlot is undefined.
+          actionSlot={canReceive ? (
+            <Button
+              variant="contained"
+              // color="success" escapes the global MuiButton override in
+              // theme.ts that paints variant="contained" color="primary"
+              // gold. Using `background` (not `bgcolor`) so we beat the
+              // theme's CSS shorthand, not just background-color longhand.
+              color="success"
+              startIcon={<PackageCheck className="w-4 h-4" />}
+              onClick={() => setReceiveOpen(true)}
+              disabled={receiveMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                background: '#16A34A',
+                color: '#FFFFFF',
+                border: 'none',
+                boxShadow: '0 2px 6px rgba(22,163,74,0.35)',
+                '&:hover': { background: '#15803D', boxShadow: '0 3px 8px rgba(21,128,61,0.45)' },
+                '&.Mui-disabled': { background: '#16A34A66', color: '#FFFFFFCC' },
+              }}
+            >
+              Confirm Received
+            </Button>
+          ) : undefined}
+        />
       </Paper>
 
       {/* Notes */}
@@ -373,7 +415,7 @@ export default function ShopRequestDetail() {
             onClick={() => navigate(`/shop/requests/${request.id}/edit`)}
             sx={{
               textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
               '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
             }}
           >
@@ -395,17 +437,9 @@ export default function ShopRequestDetail() {
             Cancel Request
           </Button>
         )}
-        {canReceive && (
-          <Button
-            variant="contained"
-            startIcon={<PackageCheck className="w-4 h-4" />}
-            onClick={() => setReceiveOpen(true)}
-            disabled={receiveMutation.isPending}
-            sx={{ textTransform: 'none', fontWeight: 700 }}
-          >
-            Confirm Received
-          </Button>
-        )}
+        {/* Confirm Received was relocated to the fixed footer's center slot
+            on 29-Jun-2026 — it's the primary post-dispatch action and was
+            hiding below the items grid here. See RequestSummary actionSlot. */}
       </Box>
 
       <ConfirmDialog
@@ -438,7 +472,7 @@ function BackButton({ onClick }: { onClick: () => void }) {
       onClick={onClick}
       sx={{
         textTransform: 'none', fontWeight: 600,
-        borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+        borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
         '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
       }}
     >

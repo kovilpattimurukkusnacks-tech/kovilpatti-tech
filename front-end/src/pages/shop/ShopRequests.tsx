@@ -48,8 +48,9 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
 
 export default function ShopRequests() {
   const navigate = useNavigate()
-  // Default to All — shop user usually wants the full list of their requests.
-  const [activePreset, setActivePreset] = useState<string>('all')
+  // Default to Pending — shop user lands on what's still outstanding
+  // (29-Jun-2026 client follow-up); they can switch to All any time.
+  const [activePreset, setActivePreset] = useState<string>('pending')
   const [search, setSearch] = useState<string>('')
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
@@ -187,12 +188,12 @@ export default function ShopRequests() {
                     }
                   : isReturn
                   ? {
-                      bgcolor: '#FFFFFF', color: '#C62828',
+                      bgcolor: '#FFF8E1', color: '#C62828',
                       borderColor: 'rgba(198,40,40,0.45)',
                       '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
                     }
                   : {
-                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      bgcolor: '#FFF8E1', color: '#1F1F1F',
                       borderColor: 'rgba(31,31,31,0.25)',
                       '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                     }),

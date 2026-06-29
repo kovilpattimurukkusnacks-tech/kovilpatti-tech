@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Trash2, ArrowLeft, ShoppingCart, X, Search } from 'lucide-react'
+import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell,
@@ -90,6 +90,50 @@ export default function ShopRequestNew() {
   const allCats  = useMemo(() => categoriesQuery.data ?? [], [categoriesQuery.data])
   const rootCats = useMemo(() => allCats.filter(c => c.parentId == null), [allCats])
 
+  // 29-Jun-2026 (client #16): hard-coded display order for the shop's
+  // category dropdown. Matches the priority sequence the client wants
+  // shop staff to browse in. Categories NOT in this list fall to the end
+  // in alphabetical order (so a future admin-added category appears, just
+  // after the curated set). Names match by normalised key (lowercase +
+  // alphanumeric only) so minor variations in DB casing/spacing don't
+  // break the order — e.g. "1 Kg Snacks", "1kg Snacks", "1KG Snacks"
+  // all map to the same priority slot.
+  const ROOT_CAT_PRIORITY: readonly string[] = [
+    '1kg Snacks',
+    'Packing Items',
+    // 29-Jun-2026: DB root is named "Murukku & Snacks Packed" — keep this
+    // entry in sync with the actual category name (admin can rename via
+    // the Categories admin page; update both if it changes).
+    'Murukku & Snacks Packed',
+    'Sweets',
+    'Biscuits',
+    'Cakes',
+    'Pickle/Thokku/Podi',
+    'Healthy Foods',
+    'Millet Foods',
+    'Dry Fruit & Nuts',
+    'Shop Needs',
+  ]
+  // Wrapped in a module-level helper so the .sort() callback below doesn't
+  // re-normalise twice per comparison. Lookup is O(1) via Map.
+  const priorityIndex = useMemo(() => {
+    const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+    const m = new Map<string, number>()
+    ROOT_CAT_PRIORITY.forEach((name, i) => m.set(norm(name), i))
+    return { map: m, norm }
+  // ROOT_CAT_PRIORITY is a module constant — deps empty is intentional.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const sortedRootCats = useMemo(() => {
+    return [...rootCats].sort((a, b) => {
+      const aIdx = priorityIndex.map.get(priorityIndex.norm(a.name)) ?? Infinity
+      const bIdx = priorityIndex.map.get(priorityIndex.norm(b.name)) ?? Infinity
+      if (aIdx !== bIdx) return aIdx - bIdx
+      // Both unmapped → alphabetical tie-break.
+      return a.name.localeCompare(b.name)
+    })
+  }, [rootCats, priorityIndex])
+
   // children-by-parent index — used to walk descendants of the selected root.
   const childrenByParent = useMemo(() => {
     const m = new Map<number, number[]>()
@@ -117,17 +161,46 @@ export default function ShopRequestNew() {
     return out
   }, [selectedCategoryId, childrenByParent])
 
-  // Auto-select the alphabetically-first ROOT category as the default filter
-  // on initial mount (covers both new-request and edit modes). Auto-seeded
-  // category counts as "visited" — user loaded the page and saw it.
+  // Auto-select the FIRST ROOT category (per the hard-coded priority order)
+  // as the default filter on initial mount (covers both new-request and
+  // edit modes). Auto-seeded category counts as "visited" — user loaded
+  // the page and saw it.
   useEffect(() => {
     if (categoryAutoSeeded) return
-    if (rootCats.length === 0) return
-    const first = [...rootCats].sort((a, b) => a.name.localeCompare(b.name))[0]
+    if (sortedRootCats.length === 0) return
+    const first = sortedRootCats[0]
     setSelectedCategoryId(first.id)
     setVisitedCategoryIds(prev => prev.has(first.id) ? prev : new Set(prev).add(first.id))
     setCategoryAutoSeeded(true)
-  }, [rootCats, categoryAutoSeeded])
+  }, [sortedRootCats, categoryAutoSeeded])
+
+  // Prev / Next category pager (29-Jun-2026, client #16). Wired to the
+  // sticky bottom bar so the shop user can flick between categories
+  // without scrolling back to the top filter. Walks `sortedRootCats` in
+  // the hard-coded priority order, marking each visited category so the
+  // Review & Submit gate progresses naturally.
+  const currentCatIndex = useMemo(
+    () => sortedRootCats.findIndex(c => c.id === selectedCategoryId),
+    [sortedRootCats, selectedCategoryId],
+  )
+  const hasPrevCat = currentCatIndex > 0
+  const hasNextCat = currentCatIndex >= 0 && currentCatIndex < sortedRootCats.length - 1
+  const gotoCat = useCallback((id: number) => {
+    setSelectedCategoryId(id)
+    setVisitedCategoryIds(prev => prev.has(id) ? prev : new Set(prev).add(id))
+    // Scroll to top of the products area so the user lands on the new
+    // category's first product, not their previous scroll position from
+    // the prior category.
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [])
+  const gotoPrevCat = useCallback(() => {
+    if (!hasPrevCat) return
+    gotoCat(sortedRootCats[currentCatIndex - 1].id)
+  }, [hasPrevCat, currentCatIndex, sortedRootCats, gotoCat])
+  const gotoNextCat = useCallback(() => {
+    if (!hasNextCat) return
+    gotoCat(sortedRootCats[currentCatIndex + 1].id)
+  }, [hasNextCat, currentCatIndex, sortedRootCats, gotoCat])
   const productsQuery = useProducts({
     // Broadened to the selected root's full subtree (root + descendants).
     categoryIds: filterCategoryIds,
@@ -193,6 +266,28 @@ export default function ShopRequestNew() {
     setSeeded(true)
   }, [isEditMode, existing, draftQuery.data, seeded])
 
+  // 29-Jun-2026 bug fix: when a saved draft (or edit-mode request) seeds
+  // the cart with items, also mark EVERY root category as "visited" so the
+  // Submit gate doesn't reset to 1/11. The user already went through the
+  // discovery phase to build that draft — having to re-click each
+  // category just to unlock Submit is friction with no protective value.
+  // Only fires when (a) we've seeded, (b) rootCats has loaded, and (c)
+  // the seeded source actually had items. A bare empty-draft (none today
+  // but defensive against future changes) doesn't trip this.
+  useEffect(() => {
+    if (!seeded) return
+    if (rootCats.length === 0) return
+    const source = isEditMode ? existing : draftQuery.data
+    if (!source?.items?.length) return
+    setVisitedCategoryIds(prev => {
+      // Already saturated — avoid an unnecessary state update + re-render.
+      if (prev.size >= rootCats.length) return prev
+      const next = new Set(prev)
+      for (const c of rootCats) next.add(c.id)
+      return next
+    })
+  }, [seeded, rootCats, isEditMode, existing, draftQuery.data])
+
   // Edit-mode guard:
   //   • Shop user — only Pending, and only within editable_until.
   //   • Admin    — Pending or Approved, no time lock.
@@ -240,18 +335,30 @@ export default function ShopRequestNew() {
   )
 
   // Split CAT GROUPS (not weight groups) across the two side-by-side columns
-  // so each sub-cat heading + its weight sections stay intact. Fill the left
-  // column until it has ≥ half the products by count, then spill to the right
-  // — keeps the two columns visually balanced even when sub-cats are uneven.
+  // so each sub-cat heading + its weight sections stay intact. Greedy with
+  // look-ahead: push a sub-cat to the LEFT only if doing so keeps left
+  // within the half-mark; otherwise it spills to the right. This produces
+  // a tight balance even when sub-cats are very uneven.
+  //
+  // Example: sub-cats of size [2, 8, 13] (total 23, half 12):
+  //   • CHIPS(2)   → 2 ≤ 12 ✓ push left  (leftCount=2)
+  //   • REGULAR(8) → 2+8=10 ≤ 12 ✓ push left  (leftCount=10)
+  //   • SPECIAL(13)→ 10+13=23 > 12 ✗ push right
+  // Result: LEFT=10, RIGHT=13 (imbalance 3). Previously the older guard
+  // pushed everything left because `leftCount < half` was checked BEFORE
+  // adding — so even the over-the-cliff one was accepted (29-Jun-2026,
+  // client #16). Edge case: the very first sub-cat always lands on left
+  // even if it alone exceeds half, so the page never renders an empty
+  // left column.
   const [leftCatGroups, rightCatGroups] = useMemo(() => {
-    const total    = deferredProducts.length
-    const half     = Math.ceil(total / 2)
+    const total = deferredProducts.length
+    const half  = Math.ceil(total / 2)
     const left:  CategoryGroup[] = []
     const right: CategoryGroup[] = []
     let leftCount = 0
     for (const cg of catGroups) {
       const cgCount = cg.weightGroups.reduce((n, g) => n + g.items.length, 0)
-      if (leftCount < half) {
+      if (left.length === 0 || leftCount + cgCount <= half) {
         left.push(cg)
         leftCount += cgCount
       } else {
@@ -550,7 +657,7 @@ export default function ShopRequestNew() {
             onClick={() => navigate(detailPath)}
             sx={{
               textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
               '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
             }}
           >
@@ -594,8 +701,9 @@ export default function ShopRequestNew() {
           size="small"
           // Shop user picks from ROOT categories only — sub-cats are an admin
           // concern. Picking a root broadens the product list to the whole
-          // subtree (see filterCategoryIds).
-          options={rootCats}
+          // subtree (see filterCategoryIds). Options use the hard-coded
+          // priority order (sortedRootCats), not alphabetical.
+          options={sortedRootCats}
           getOptionLabel={(opt) => opt.name}
           isOptionEqualToValue={(a, b) => a.id === b.id}
           value={selectedCategoryValue}
@@ -649,7 +757,7 @@ export default function ShopRequestNew() {
             onClick={clearCart}
             sx={{
               textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
               '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
             }}
           >
@@ -740,6 +848,53 @@ export default function ShopRequestNew() {
             )}
           </Box>
         </Box>
+        {/* Category pager (29-Jun-2026, client #16). Sits between the
+            cart info and the action buttons. Lets the user flick to the
+            next/prev category in the hard-coded priority order without
+            scrolling back to the top filter. Position counter
+            (e.g. 3/11) gives orientation. Hidden when there's no current
+            category or fewer than 2 sub-cats (no point pagering). */}
+        {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={gotoPrevCat}
+              disabled={!hasPrevCat}
+              startIcon={<ChevronLeft className="w-4 h-4" />}
+              sx={{
+                textTransform: 'none', fontWeight: 600,
+                borderColor: '#1F1F1F', color: '#1F1F1F',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+              }}
+            >
+              Prev
+            </Button>
+            <Box sx={{
+              fontSize: 11, fontWeight: 700, color: '#1F1F1F99', textAlign: 'center',
+              minWidth: 50, whiteSpace: 'nowrap', px: 0.5,
+            }}>
+              {currentCatIndex + 1}/{sortedRootCats.length}
+            </Box>
+            <Button
+              size="small"
+              variant="outlined"
+              onClick={gotoNextCat}
+              disabled={!hasNextCat}
+              endIcon={<ChevronRight className="w-4 h-4" />}
+              sx={{
+                textTransform: 'none', fontWeight: 600,
+                borderColor: '#1F1F1F', color: '#1F1F1F',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+              }}
+            >
+              Next
+            </Button>
+          </Box>
+        )}
+
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
           {/* Discard Draft — only shown when a draft has been previously
               saved. Hidden in edit mode (no draft concept) and for admin. */}
@@ -939,21 +1094,14 @@ export default function ShopRequestNew() {
           )}
         </DialogContent>
         <DialogActions sx={{ p: 2, flexWrap: 'wrap', gap: 1 }}>
-          <Button
-            onClick={() => setReviewOpen(false)}
-            variant="outlined"
-            color="secondary"
-            disabled={activeMutation.isPending}
-            sx={{ textTransform: 'none', fontWeight: 500 }}
-          >
-            Keep browsing
-          </Button>
-
           {/* Return Stock — second submit path. Same cart, different endpoint
               (sends items BACK to the godown instead of forward). Red so it
-              reads as a destructive / reverse action vs the green-ish primary
-              Submit. Hidden in edit mode and for admin (they're not creating
-              new returns from this screen). */}
+              reads as a destructive / reverse action vs the primary Submit.
+              Hidden in edit mode and for admin (they're not creating new
+              returns from this screen). 29-Jun-2026: pinned to the LEFT
+              corner via `mr: auto`, which pushes the other two buttons to
+              the right edge — separates the reverse action from the
+              forward actions so the user doesn't fat-finger it. */}
           {showReturnButton && (
             <Button
               onClick={handleSubmitAsReturn}
@@ -963,11 +1111,25 @@ export default function ShopRequestNew() {
                 textTransform: 'none', fontWeight: 700,
                 borderColor: '#C62828', color: '#C62828', bgcolor: '#FFFFFF',
                 '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.08)' },
+                mr: 'auto',
               }}
             >
               {createReturnMutation.isPending ? 'Returning…' : 'Return Stock'}
             </Button>
           )}
+
+          <Button
+            onClick={() => setReviewOpen(false)}
+            variant="outlined"
+            disabled={activeMutation.isPending}
+            sx={{
+              textTransform: 'none', fontWeight: 600,
+              borderColor: '#1F1F1F', color: '#1F1F1F',
+              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+            }}
+          >
+            Keep browsing
+          </Button>
 
           <Button
             onClick={handleSubmit}
