@@ -4,6 +4,7 @@ import { Eye, EyeOff } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
 import { ApiError } from '../api/errors'
+import { BASE_URL } from '../api/config'
 import './Landing.css'
 
 export default function Landing() {
@@ -29,10 +30,21 @@ export default function Landing() {
       // Distinguish the failure modes so the user gets an honest message:
       //   401 → wrong credentials   429 → rate-limited (BE message)
       //   other ApiError → BE message   non-ApiError → network/unreachable
+      //
+      // 29-Jun-2026: when login can't reach the BE at all, append the API
+      // URL + a short tag to the user-facing error. Mobile users can read
+      // this off the screen and report it back — much easier than asking
+      // them to open DevTools on a phone.
       if (err instanceof ApiError) {
-        setError(err.status === 401 ? 'Invalid username or password.' : err.message)
+        if (err.status === 401) {
+          setError('Invalid username or password.')
+        } else if ([502, 503, 504].includes(err.status)) {
+          setError(`Server is starting up — please try again in a few seconds.\n(API ${BASE_URL} · status ${err.status})`)
+        } else {
+          setError(`${err.message}\n(API ${BASE_URL} · status ${err.status})`)
+        }
       } else {
-        setError('Could not reach the server. Check your connection and try again.')
+        setError(`Could not reach the server. Check your connection and try again.\n(API ${BASE_URL} · network error)`)
       }
     } finally {
       setSubmitting(false)
@@ -98,7 +110,7 @@ export default function Landing() {
             </div>
 
             {error && (
-              <div className="px-3 py-2 bg-red-50 border-2 border-red-700 rounded-lg text-sm text-red-700 font-medium">
+              <div className="px-3 py-2 bg-red-50 border-2 border-red-700 rounded-lg text-sm text-red-700 font-medium whitespace-pre-line break-words">
                 {error}
               </div>
             )}
