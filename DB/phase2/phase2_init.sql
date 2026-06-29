@@ -71,7 +71,14 @@ INSERT INTO app_settings (key, value, description) VALUES
   ('request_lock_cutoff', '09:00',
    'Daily IST cutoff (HH:MM) after which shop requests lock. Only admin may edit thereafter.'),
   ('request_lock_enabled', 'true',
-   'Master switch for the daily cutoff. When false, the cutoff is ignored and shop users can edit/cancel Pending requests anytime.')
+   'Master switch for the daily cutoff. When false, the cutoff is ignored and shop users can edit/cancel Pending requests anytime.'),
+  -- 19-Jun-2026 (client #15): master switch for GST tracking. When true,
+  -- Products Add/Edit exposes a GST input and per-shop GST flags drive
+  -- Phase 5 POS billing. When false, the GST input is hidden everywhere;
+  -- existing stored GST values on products are preserved silently so
+  -- re-enabling later doesn't lose data.
+  ('gst_enabled', 'true',
+   'Master switch for GST tracking. When false, the GST input on Products Add/Edit is hidden and per-shop GST flags are ignored downstream.')
 ON CONFLICT (key) DO NOTHING;
 
 -- ------------------------------------------------------------

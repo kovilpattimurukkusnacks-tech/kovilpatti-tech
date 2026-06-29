@@ -122,6 +122,10 @@ $$;
 -- ------------------------------------------------------------
 -- SHOPS
 -- ------------------------------------------------------------
+-- 19-Jun-2026 (client #15): return shape gained gst_enabled. Drop the old
+-- shape first so the new CREATE OR REPLACE can land the new return-type.
+DROP FUNCTION IF EXISTS fn_shop_list_paged(int, int);
+
 CREATE OR REPLACE FUNCTION fn_shop_list_paged(
   p_page      int DEFAULT 1,
   p_page_size int DEFAULT 25
@@ -136,12 +140,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.is_deleted = false

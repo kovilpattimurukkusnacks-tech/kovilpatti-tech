@@ -10,5 +10,8 @@ public interface IShopService
     Task<ShopDto> GetAsync(Guid id, CancellationToken ct = default);
     Task<ShopDto> CreateAsync(CreateShopRequest request, CancellationToken ct = default);
     Task<ShopDto> UpdateAsync(Guid id, UpdateShopRequest request, CancellationToken ct = default);
+    /// 19-Jun-2026 (client #15): fast-path single-column update for the
+    /// AdminSettings per-shop GST toggle.
+    Task<ShopDto> SetGstEnabledAsync(Guid id, bool enabled, CancellationToken ct = default);
     Task DeleteAsync(Guid id, CancellationToken ct = default);
 }

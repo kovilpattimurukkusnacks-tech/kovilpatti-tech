@@ -68,7 +68,7 @@ public class ShopRepository(IDbConnectionFactory factory) : IShopRepository
             SELECT fn_shop_create(
                 @p_code, @p_name, @p_address,
                 @p_contact_phone_1, @p_contact_phone_2, @p_gstin,
-                @p_inventory_id, @p_active, @p_user_id)";
+                @p_inventory_id, @p_active, @p_gst_enabled, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
@@ -80,6 +80,7 @@ public class ShopRepository(IDbConnectionFactory factory) : IShopRepository
             p_gstin           = shop.Gstin,
             p_inventory_id    = shop.InventoryId,
             p_active          = shop.Active,
+            p_gst_enabled     = shop.GstEnabled,
             p_user_id         = userId
         }, cancellationToken: ct));
     }
@@ -91,7 +92,7 @@ public class ShopRepository(IDbConnectionFactory factory) : IShopRepository
             SELECT fn_shop_update(
                 @p_id, @p_name, @p_address,
                 @p_contact_phone_1, @p_contact_phone_2, @p_gstin,
-                @p_inventory_id, @p_active, @p_user_id)";
+                @p_inventory_id, @p_active, @p_gst_enabled, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
         {
@@ -103,8 +104,19 @@ public class ShopRepository(IDbConnectionFactory factory) : IShopRepository
             p_gstin           = shop.Gstin,
             p_inventory_id    = shop.InventoryId,
             p_active          = shop.Active,
+            p_gst_enabled     = shop.GstEnabled,
             p_user_id         = userId
         }, cancellationToken: ct));
+    }
+
+    public async Task<bool> SetGstEnabledAsync(Guid id, bool enabled, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_shop_set_gst_enabled(@p_id, @p_gst_enabled, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql,
+            new { p_id = id, p_gst_enabled = enabled, p_user_id = userId },
+            cancellationToken: ct));
     }
 
     public async Task<bool> SoftDeleteAsync(Guid id, Guid userId, CancellationToken ct = default)

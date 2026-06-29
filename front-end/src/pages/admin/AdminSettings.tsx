@@ -1,16 +1,17 @@
 import { useState, useEffect } from 'react'
-import { Edit2, X, Settings as SettingsIcon } from 'lucide-react'
+import { Edit2, X, Settings as SettingsIcon, Store } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  FormControlLabel, IconButton, Paper, Switch, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField,
+  FormControlLabel, IconButton, Paper, Skeleton, Switch, Table, TableBody, TableCell,
+  TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
 import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
 import { TimePicker } from '@mui/x-date-pickers/TimePicker'
 import dayjs, { type Dayjs } from 'dayjs'
 import PageHeader from '../../components/PageHeader'
-import { useSettings, useUpdateSetting } from '../../hooks/useSettings'
+import { useGstEnabled, useSettings, useUpdateSetting } from '../../hooks/useSettings'
+import { useShops, useToggleShopGst } from '../../hooks/useShops'
 import type { AppSettingDto } from '../../api/settings/types'
 import { ValidationError } from '../../api/errors'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -54,6 +55,12 @@ const BOOLEAN_KEYS: Record<string, { onLabel: string; offLabel: string }> = {
     onLabel: 'Cutoff is ON — shop users locked out after cutoff',
     offLabel: 'Cutoff is OFF — shop users can edit/cancel anytime',
   },
+  // 19-Jun-2026 (client #15): master switch for GST tracking. Drives the
+  // visibility of the per-shop GST list below + the GST input on Products.
+  gst_enabled: {
+    onLabel: 'GST tracking is ON — Products show GST input, per-shop toggles apply',
+    offLabel: 'GST tracking is OFF — GST input hidden, per-shop flags ignored',
+  },
 }
 
 // Friendly display names for known keys. Falls back to title-casing the key
@@ -61,6 +68,7 @@ const BOOLEAN_KEYS: Record<string, { onLabel: string; offLabel: string }> = {
 const KEY_LABEL: Record<string, string> = {
   request_lock_cutoff: 'Cutoff Time',
   request_lock_enabled: 'Cutoff Enabled',
+  gst_enabled: 'GST Tracking',
 }
 
 function humanizeKey(key: string): string {
@@ -159,11 +167,97 @@ export default function AdminSettings() {
         </TableContainer>
       </Paper>
 
+      {/* Per-shop GST section (19-Jun-2026, client #15). Only visible when
+          the global GST master switch is ON — when disabled, per-shop flags
+          are irrelevant so we hide the noise entirely. */}
+      <ShopGstSection />
+
       <EditSettingDialog
         setting={editing}
         onClose={() => setEditing(null)}
       />
     </div>
+  )
+}
+
+/**
+ * Per-shop GST toggle list. Renders only when the global `gst_enabled`
+ * app-setting is true. Each row has a Switch driving useToggleShopGst,
+ * which optimistically updates the cached shop lists so the UI feels
+ * instant (no spinner flicker between click and confirmation).
+ *
+ * If you turn the global master OFF in the Settings table above, this
+ * whole section disappears — per-shop flags persist in DB but are
+ * ignored downstream until master is re-enabled.
+ */
+function ShopGstSection() {
+  const gst = useGstEnabled()
+  const shopsQuery = useShops()
+  const toggle = useToggleShopGst()
+
+  if (gst.isLoading) return null
+  if (!gst.enabled)   return null   // master OFF → hide entire section
+
+  const shops = shopsQuery.data ?? []
+
+  return (
+    <Box sx={{ mt: 4 }}>
+      <Typography variant="h6" sx={{ fontWeight: 700, mb: 0.5 }}>
+        Per-shop GST
+      </Typography>
+      <Typography variant="caption" sx={{ display: 'block', color: '#1F1F1F99', mb: 1.5 }}>
+        Toggle which shops are GST-registered. Used by the POS billing flow
+        to decide whether each shop's bills include GST line items.
+      </Typography>
+
+      <Paper className="products-paper" sx={{ borderRadius: 2.5, overflow: 'hidden' }} elevation={0}>
+        <TableContainer>
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#FCD835' }}>
+                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11 }}>Shop</TableCell>
+                <TableCell sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, fontSize: 11, width: 200 }} align="right">
+                  GST Enabled
+                </TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {shopsQuery.isLoading ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <TableRow key={i}>
+                    <TableCell colSpan={2}><Skeleton variant="text" /></TableCell>
+                  </TableRow>
+                ))
+              ) : shops.length === 0 ? (
+                <TableRow><TableCell colSpan={2} align="center" sx={{ color: '#1F1F1F99' }}>No shops yet.</TableCell></TableRow>
+              ) : shops.map(s => (
+                <TableRow key={s.id} hover>
+                  <TableCell>
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                      <Store className="w-4 h-4 text-[#1F1F1F]/60" />
+                      <Box>
+                        <Box sx={{ fontWeight: 600, fontSize: 13 }}>{s.name}</Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>{s.code}</Box>
+                      </Box>
+                    </Box>
+                  </TableCell>
+                  <TableCell align="right">
+                    <Switch
+                      checked={s.gstEnabled}
+                      onChange={e => toggle.mutate({ id: s.id, enabled: e.target.checked })}
+                      // Disable during the in-flight mutation for the SAME shop so
+                      // a rapid click can't queue two opposite toggles.
+                      disabled={toggle.isPending && toggle.variables?.id === s.id}
+                      color="success"
+                    />
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </TableContainer>
+      </Paper>
+    </Box>
   )
 }
 

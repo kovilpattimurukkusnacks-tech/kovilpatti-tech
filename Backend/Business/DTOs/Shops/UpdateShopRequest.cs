@@ -7,5 +7,7 @@ public record UpdateShopRequest(
     string? ContactPhone2,
     string? Gstin,
     Guid InventoryId,
-    bool Active
+    bool Active,
+    /// 19-Jun-2026 (client #15): per-shop GST flag.
+    bool GstEnabled = true
 );
