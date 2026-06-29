@@ -184,8 +184,16 @@ export default function AdminRequestDetail() {
                   const effectiveQty = item.dispatchedQty ?? item.requestedQty
                   const effectiveSubtotal = effectiveQty * item.unitPrice
                   const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  // Mirrors ShopRequestDetail — over flag + row tint so the
+                  // shop/admin/inventory pages tell the same story when an
+                  // order ended up under or over the original request.
+                  const over  = item.dispatchedQty != null && item.dispatchedQty > item.requestedQty
+                  const rowBg = short ? 'rgba(198,40,40,0.06)'
+                              : over  ? 'rgba(230,81,0,0.07)'
+                              : 'transparent'
+                  const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>
@@ -194,7 +202,7 @@ export default function AdminRequestDetail() {
                         <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor }}>
                         {formatINR(effectiveSubtotal)}
                       </TableCell>
                       {canEditQty && (
@@ -235,7 +243,7 @@ export default function AdminRequestDetail() {
               onClick={() => window.open(`/print/request/${request.id}`, '_blank', 'noopener,noreferrer')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                 '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
               }}
             >
@@ -354,7 +362,7 @@ export default function AdminRequestDetail() {
             onClick={() => navigate(`/admin/requests/${request.id}/edit`)}
             sx={{
               textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
               '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
             }}
           >
@@ -369,7 +377,7 @@ export default function AdminRequestDetail() {
             disabled={cancelMutation.isPending}
             sx={{
               textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
               '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
             }}
           >
@@ -471,7 +479,7 @@ export default function AdminRequestDetail() {
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <Button variant="outlined" startIcon={<ArrowLeft className="w-4 h-4" />} onClick={onClick}
-      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
+      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
       Back to list
     </Button>
   )

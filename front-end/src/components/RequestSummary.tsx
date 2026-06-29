@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { Box, Divider, Paper } from '@mui/material'
 import type { StockRequestDto } from '../api/stock-requests/types'
 import { formatINR } from '../utils/format'
@@ -22,9 +23,14 @@ type Variant =
  * Rows / chips that don't apply (no dispatch yet, no short lines, no OOS
  * line) are hidden so the panel stays tight.
  */
-export function RequestSummary({ request, variant = 'card' }: {
+export function RequestSummary({ request, variant = 'card', actionSlot }: {
   request: StockRequestDto
   variant?: Variant
+  /** Footer-variant only: optional node injected between the counts (left)
+   *  and amounts (right). Lets a page surface a primary action (e.g. shop
+   *  user's Confirm Received) where the eye already is — instead of making
+   *  the user scroll past items to reach the action row at page bottom. */
+  actionSlot?: ReactNode
 }) {
   const items = request.items ?? []
   const dispatched = request.totalDispatchedQty
@@ -113,6 +119,24 @@ export function RequestSummary({ request, variant = 'card' }: {
             </>
           )}
         </Box>
+
+        {/* CENTER — optional primary action (e.g. Confirm Received). Wrapped
+            in a flex box so the slot stays centered when the bar wraps on
+            narrow screens. flex:1 lets it absorb extra space between the
+            counts and amounts blocks. */}
+        {actionSlot && (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'center',
+              flex: { sm: '1 1 auto' },
+              order: { xs: 3, sm: 0 },
+              width: { xs: '100%', sm: 'auto' },
+            }}
+          >
+            {actionSlot}
+          </Box>
+        )}
 
         {/* RIGHT — amounts. Big + bold. Wraps to a new line on narrow screens. */}
         <Box

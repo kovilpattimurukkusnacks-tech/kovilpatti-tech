@@ -38,7 +38,17 @@ export default function ConfirmDialog({
         <p className="text-sm text-[#5D4037]">{message}</p>
       </DialogContent>
       <DialogActions sx={{ p: 2 }}>
-        <Button onClick={onCancel} variant="outlined" color="secondary" sx={{ textTransform: 'none', fontWeight: 500 }}>{cancelLabel}</Button>
+        <Button
+          onClick={onCancel}
+          variant="outlined"
+          sx={{
+            textTransform: 'none', fontWeight: 600,
+            borderColor: '#1F1F1F', color: '#1F1F1F',
+            '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+          }}
+        >
+          {cancelLabel}
+        </Button>
         <Button onClick={onConfirm} variant="contained" color="error" sx={{ textTransform: 'none', fontWeight: 600 }}>{confirmLabel}</Button>
       </DialogActions>
     </Dialog>

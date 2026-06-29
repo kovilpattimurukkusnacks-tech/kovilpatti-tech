@@ -664,7 +664,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={onClose} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+          <Button onClick={onClose} variant="outlined" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
             {submitting ? 'Saving…' : (isEdit ? 'Update' : 'Create')}
           </Button>
@@ -837,7 +837,7 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
       <DialogActions sx={{ p: 2 }}>
         {!result && (
           <>
-            <Button onClick={handleClose} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+            <Button onClick={handleClose} variant="outlined" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
             <Button onClick={handleSubmit} variant="contained" disabled={!file || submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
               {submitting ? 'Importing…' : 'Import'}
             </Button>
@@ -929,7 +929,7 @@ function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
         <DialogActions sx={{ p: 2, justifyContent: 'space-between' }}>
           <Button onClick={handleClear} sx={{ textTransform: 'none', fontWeight: 500 }}>Clear all</Button>
           <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button onClick={onClose} variant="outlined" color="secondary" sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+            <Button onClick={onClose} variant="outlined" sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
             <Button type="submit" variant="contained" sx={{ textTransform: 'none', fontWeight: 600 }}>Apply</Button>
           </Box>
         </DialogActions>
