@@ -10,6 +10,7 @@ import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useProducts, useCreateProduct, useUpdateProduct, useDeleteProduct, useImportProducts } from '../hooks/useProducts'
 import { useCategories } from '../hooks/useCategories'
+import { useGstEnabled } from '../hooks/useSettings'
 import type {
   ProductDto, CreateProductRequest, UpdateProductRequest, ImportProductsResult, ProductListFilters,
 } from '../api/products/types'
@@ -33,6 +34,10 @@ type FormValues = {
   mrp: string
   purchasePrice: string
   active: boolean
+  /** GST percent (0..100), raw input. Only surfaced when the global
+   *  `gst_enabled` app-setting is true (19-Jun-2026, client #15).
+   *  Empty string → send null to BE (preserves the existing strategy). */
+  gst: string
 }
 
 export default function Products() {
@@ -78,6 +83,14 @@ export default function Products() {
     // through JSON would serialize the key and confuse the validator.
     const trimmedCode = values.code.trim()
     const code = trimmedCode ? { code: trimmedCode } : {}
+    // GST: empty input → null (clears the value); non-empty → number.
+    // The BE preserves the existing GST when the global gst_enabled is
+    // OFF (FE never collects + never sends the field in that mode), so
+    // disabling the master switch doesn't wipe historical GST data.
+    const trimmedGst = values.gst.trim()
+    const gstField = trimmedGst === ''
+      ? {}                                          // omit when blank
+      : { gst: Number(trimmedGst) }
     const common = {
       name: values.name,
       categoryId: values.categoryId,
@@ -89,10 +102,10 @@ export default function Products() {
     }
 
     if (formMode.kind === 'edit') {
-      const req: UpdateProductRequest = { ...code, ...common, active: values.active }
+      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active }
       await update.mutateAsync({ id: formMode.product.id, req })
     } else if (formMode.kind === 'create') {
-      const req: CreateProductRequest = { ...code, ...common, active: values.active }
+      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active }
       await create.mutateAsync(req)
     }
     closeForm()
@@ -342,6 +355,13 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
+  // GST percent — only rendered + collected when the global gst_enabled
+  // app-setting is true (19-Jun-2026, client #15). Stored values are
+  // preserved across toggles: when global GST is OFF the input isn't
+  // shown, the field isn't sent on save, and the BE keeps the existing
+  // gst value silently.
+  const [gst, setGst] = useState('')
+  const gstEnabled = useGstEnabled().enabled
 
   // Direct child count per category — used by the dropdown to show a chip
   // next to parent rows, mirroring the Manage Categories table. Built once
@@ -374,6 +394,9 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
+    // Prefill GST if the product already has one (even if global is now OFF —
+    // value persists silently so admin can toggle back without re-entering).
+    setGst(product?.gst != null ? String(product.gst) : '')
     setErr(null)
     // 50 ms gives the Dialog's transition + focus trap time to finish,
     // so our .focus() wins the final placement.
@@ -439,6 +462,10 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
         mrp: mrpNum.toString(),
         purchasePrice: ppNum.toString(),
         active,
+        // Only send GST when the global master is ON. When OFF, the dialog
+        // doesn't render the input and we omit the field entirely → BE
+        // preserves whatever was already stored on the product.
+        gst: gstEnabled ? gst.trim() : '',
       })
     } catch {
       // Surfaces via submitError prop
@@ -601,6 +628,32 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               disabled={submitting}
             />
           </Box>
+
+          {/* GST row — only renders when the global GST master switch is ON
+              (19-Jun-2026, client #15). Hiding the input also stops it from
+              being sent on save (handleSubmit conditional), so stored GST
+              values are preserved when admin disables the master and
+              re-enables later. */}
+          {gstEnabled && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              <TextField
+                label="GST (%)"
+                type="number"
+                slotProps={{
+                  htmlInput: { step: 0.01, min: 0, max: 100, inputMode: 'decimal' },
+                  inputLabel: { shrink: gst !== '' || undefined },
+                }}
+                value={gst}
+                onChange={numericInput(setGst, { max: 100, decimals: 2 })}
+                onKeyDown={blockNonNumericKeys}
+                size="small"
+                disabled={submitting}
+                helperText="0–100. Leave blank to clear."
+                placeholder="5"
+              />
+            </Box>
+          )}
+
           {/* Manual layout instead of FormControlLabel so only the checkbox itself toggles,
               not the label text or surrounding whitespace. */}
           <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

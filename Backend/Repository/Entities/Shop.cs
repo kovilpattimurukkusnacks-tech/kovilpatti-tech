@@ -12,4 +12,7 @@ public class Shop
     public Guid InventoryId { get; set; }
     public string InventoryName { get; set; } = default!;
     public bool Active { get; set; }
+    // 19-Jun-2026 (client #15): per-shop GST flag. Driven by AdminSettings
+    // per-shop toggle when the global gst_enabled app-setting is true.
+    public bool GstEnabled { get; set; }
 }

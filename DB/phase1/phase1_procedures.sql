@@ -597,6 +597,12 @@ $$;
 
 -- ============== Shops ============================================
 
+-- fn_shop_list / fn_shop_get return shapes gained gst_enabled (19-Jun-2026,
+-- client #15). Drop the old shapes so CREATE OR REPLACE can land the new
+-- return-type. Safe via IF EXISTS.
+DROP FUNCTION IF EXISTS fn_shop_list();
+DROP FUNCTION IF EXISTS fn_shop_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_list()
 RETURNS TABLE (
   id              uuid,
@@ -608,12 +614,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.is_deleted = false
@@ -631,12 +638,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.id = p_id AND s.is_deleted = false
@@ -671,6 +679,10 @@ BEGIN
 END;
 $$;
 
+-- fn_shop_create signature gained p_gst_enabled (19-Jun-2026, client #15).
+-- Drop the old 9-arg version so the new 10-arg CREATE OR REPLACE can land.
+DROP FUNCTION IF EXISTS fn_shop_create(varchar, varchar, varchar, varchar, varchar, varchar, uuid, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_create(
   p_code            varchar,
   p_name            varchar,
@@ -680,6 +692,7 @@ CREATE OR REPLACE FUNCTION fn_shop_create(
   p_gstin           varchar,
   p_inventory_id    uuid,
   p_active          boolean,
+  p_gst_enabled     boolean,
   p_user_id         uuid
 )
 RETURNS uuid
@@ -688,9 +701,9 @@ DECLARE
   v_id uuid;
 BEGIN
   INSERT INTO shops (code, name, address, contact_phone_1, contact_phone_2,
-                     gstin, inventory_id, active, created_by, updated_by)
+                     gstin, inventory_id, active, gst_enabled, created_by, updated_by)
   VALUES (p_code, p_name, p_address, p_contact_phone_1, p_contact_phone_2,
-          p_gstin, p_inventory_id, p_active, p_user_id, p_user_id)
+          p_gstin, p_inventory_id, p_active, COALESCE(p_gst_enabled, true), p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -709,6 +722,10 @@ $$;
 -- Dispatched/Received/Rejected/Cancelled stay frozen to the original godown
 -- because those rows represent goods that physically left that godown — the
 -- audit trail must remain consistent. Pre-dispatch rows follow the shop.
+-- fn_shop_update signature gained p_gst_enabled (19-Jun-2026, client #15).
+-- Drop the old 9-arg version so the new 10-arg CREATE OR REPLACE can land.
+DROP FUNCTION IF EXISTS fn_shop_update(uuid, varchar, varchar, varchar, varchar, varchar, uuid, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_update(
   p_id              uuid,
   p_name            varchar,
@@ -718,6 +735,7 @@ CREATE OR REPLACE FUNCTION fn_shop_update(
   p_gstin           varchar,
   p_inventory_id    uuid,
   p_active          boolean,
+  p_gst_enabled     boolean,
   p_user_id         uuid
 )
 RETURNS boolean
@@ -731,9 +749,30 @@ BEGIN
       gstin           = p_gstin,
       inventory_id    = p_inventory_id,
       active          = p_active,
+      gst_enabled     = COALESCE(p_gst_enabled, gst_enabled),
       updated_by      = p_user_id,
       updated_at      = now()
   WHERE id = p_id;
+
+  RETURN FOUND;
+END;
+$$;
+
+-- Fast-path SP for the AdminSettings per-shop GST toggle. Single column
+-- update, no need to send the whole shop payload.
+CREATE OR REPLACE FUNCTION fn_shop_set_gst_enabled(
+  p_id          uuid,
+  p_gst_enabled boolean,
+  p_user_id     uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE shops
+  SET gst_enabled = p_gst_enabled,
+      updated_by  = p_user_id,
+      updated_at  = now()
+  WHERE id = p_id AND is_deleted = false;
 
   RETURN FOUND;
 END;
