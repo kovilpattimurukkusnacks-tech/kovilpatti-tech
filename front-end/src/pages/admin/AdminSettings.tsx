@@ -375,9 +375,12 @@ function EditSettingDialog({ setting, onClose }: { setting: AppSettingDto | null
         <Button
           onClick={onClose}
           variant="outlined"
-          color="secondary"
           disabled={updateMutation.isPending}
-          sx={{ textTransform: 'none', fontWeight: 500 }}
+          sx={{
+            textTransform: 'none', fontWeight: 600,
+            borderColor: '#1F1F1F', color: '#1F1F1F',
+            '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+          }}
         >
           Cancel
         </Button>

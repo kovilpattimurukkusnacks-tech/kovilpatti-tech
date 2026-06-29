@@ -422,9 +422,25 @@ export default function InventoryRequestDetail() {
                 {wg.items.map(item => {
                   const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
                   const lineTotal = currentDispatch * item.unitPrice
+                  // Short / over flags drive both the qty input chrome and
+                  // the row-level tint + line-total colour. The `canEditQty`
+                  // guard limits the in-edit chrome (red/amber background +
+                  // border on the TextField) — but the row tint + total
+                  // colour apply whether or not the user can still edit, so
+                  // the variance reads the same once the request is locked.
                   const isShort = canEditQty && currentDispatch < item.requestedQty
+                  const isOver  = canEditQty && currentDispatch > item.requestedQty
+                  const dispatched = item.dispatchedQty
+                  const persistedShort = dispatched != null && dispatched < item.requestedQty
+                  const persistedOver  = dispatched != null && dispatched > item.requestedQty
+                  const rowShort = isShort || persistedShort
+                  const rowOver  = isOver  || persistedOver
+                  const rowBg = rowShort ? 'rgba(198,40,40,0.06)'
+                              : rowOver  ? 'rgba(230,81,0,0.07)'
+                              : 'transparent'
+                  const totalColor = rowShort ? '#C62828' : rowOver ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
                       <TableCell sx={{ pl: 3, py: 1 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>
@@ -441,8 +457,8 @@ export default function InventoryRequestDetail() {
                             sx={{
                               width: 86,
                               '& .MuiOutlinedInput-root': {
-                                bgcolor: isShort ? '#FFEBEE' : '#FFF8DC',
-                                '& fieldset': { borderColor: isShort ? '#C62828' : '#1F1F1F' },
+                                bgcolor: isShort ? '#FFEBEE' : isOver ? '#FFE0B2' : '#FFF8DC',
+                                '& fieldset': { borderColor: isShort ? '#C62828' : isOver ? '#E65100' : '#1F1F1F' },
                               },
                             }}
                           />
@@ -451,7 +467,7 @@ export default function InventoryRequestDetail() {
                         )}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600 }}>{formatINR(lineTotal)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600, color: totalColor }}>{formatINR(lineTotal)}</TableCell>
                     </TableRow>
                   )
                 })}
@@ -512,7 +528,7 @@ export default function InventoryRequestDetail() {
                 disabled={revokeMutation.isPending}
                 sx={{
                   textTransform: 'none', fontWeight: 600,
-                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                   '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
                 }}
               >
@@ -525,7 +541,7 @@ export default function InventoryRequestDetail() {
               onClick={() => window.open(`/print/request/${request.id}`, '_blank', 'noopener,noreferrer')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                 '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
               }}
             >
@@ -719,7 +735,7 @@ export default function InventoryRequestDetail() {
                 }
                 sx={{
                   textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
-                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                   '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
                 }}
               >
@@ -817,7 +833,7 @@ export default function InventoryRequestDetail() {
           />
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setRejectOpen(false)} variant="outlined" color="secondary" disabled={rejectMutation.isPending} sx={{ textTransform: 'none', fontWeight: 500 }}>
+          <Button onClick={() => setRejectOpen(false)} variant="outlined" disabled={rejectMutation.isPending} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
             Cancel
           </Button>
           <Button onClick={handleReject} variant="contained" color="error" disabled={!rejectReason.trim() || rejectMutation.isPending} sx={{ textTransform: 'none', fontWeight: 600 }}>
@@ -860,7 +876,7 @@ export default function InventoryRequestDetail() {
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <Button variant="outlined" startIcon={<ArrowLeft className="w-4 h-4" />} onClick={onClick}
-      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
+      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
       Back to list
     </Button>
   )

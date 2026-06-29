@@ -1,6 +1,7 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { ClipboardList, LogOut } from 'lucide-react'
+import { ClipboardList, LogOut, Warehouse } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { useInventory } from '../hooks/useInventories'
 import './Sidebar.css'
 
 const navItems = [
@@ -12,6 +13,10 @@ type Props = { onNavigate?: () => void }
 export default function InventorySidebar({ onNavigate }: Props) {
   const navigate = useNavigate()
   const { currentUser, logout } = useApp()
+  // 29-Jun-2026: surface the inventory (godown) name + code below the user
+  // line so dispatchers always see which godown they're acting on. Shared
+  // cache with useInventories() — no extra network call on most pages.
+  const inventoryQuery = useInventory(currentUser?.inventoryId ?? undefined)
 
   const handleLogout = () => {
     logout()
@@ -47,7 +52,7 @@ export default function InventorySidebar({ onNavigate }: Props) {
       </nav>
 
       <div className="relative z-10 px-4 py-4 border-t-2 border-[#1F1F1F]/15">
-        <div className="flex items-center gap-3 mb-3">
+        <div className="flex items-center gap-3 mb-2">
           <div className="w-9 h-9 gold-gradient rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0 shadow-md shadow-black/30">
             {currentUser?.fullName.charAt(0).toUpperCase() ?? 'I'}
           </div>
@@ -56,6 +61,13 @@ export default function InventorySidebar({ onNavigate }: Props) {
             <div className="text-xs text-[#1F1F1F]/65 font-medium">Inventory</div>
           </div>
         </div>
+        {/* Godown badge — mirrors the shop badge on ShopSidebar. */}
+        {inventoryQuery.data && (
+          <div className="flex items-center gap-2 mb-3 px-2.5 py-2 rounded-lg bg-[#1F1F1F]/8 border border-[#1F1F1F]/15">
+            <Warehouse className="w-4 h-4 flex-shrink-0 text-[#1F1F1F]/70" />
+            <div className="text-sm font-bold truncate text-[#1F1F1F]">{inventoryQuery.data.name}</div>
+          </div>
+        )}
         <button
           onClick={handleLogout}
           className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-xs text-[#1F1F1F] hover:gold-gradient font-bold transition"

@@ -372,12 +372,12 @@ export default function AdminRequests() {
                         }
                     : isReturn
                     ? {
-                        bgcolor: '#FFFFFF', color: '#C62828',
+                        bgcolor: '#FFF8E1', color: '#C62828',
                         borderColor: 'rgba(198,40,40,0.45)',
                         '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
                       }
                     : {
-                        bgcolor: '#FFFFFF', color: '#1F1F1F',
+                        bgcolor: '#FFF8E1', color: '#1F1F1F',
                         borderColor: 'rgba(31,31,31,0.25)',
                         '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                       }),
@@ -418,7 +418,7 @@ export default function AdminRequests() {
                           },
                         }
                       : {
-                          bgcolor: '#FFFFFF', color: '#1F1F1F',
+                          bgcolor: '#FFF8E1', color: '#1F1F1F',
                           borderColor: 'rgba(31,31,31,0.2)',
                           '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
                         }),
