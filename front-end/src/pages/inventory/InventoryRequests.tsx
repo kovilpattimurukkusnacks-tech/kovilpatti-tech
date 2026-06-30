@@ -1,14 +1,15 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp } from 'lucide-react'
-import { Alert, Box, Button, Chip, Collapse, InputAdornment, Paper, TextField } from '@mui/material'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon } from 'lucide-react'
+import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
-  useInventoryDispatchDrafts,
+  useInventoryDispatchDrafts, useRenameDispatchDraft,
 } from '../../hooks/useStockRequests'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
@@ -61,6 +62,12 @@ export default function InventoryRequests() {
   // eats most of the viewport; we keep it collapsed by default and let the
   // user expand on demand.
   const [draftsOpen, setDraftsOpen] = useState(false)
+  // Draft-list search box (30-Jun-2026). FE-only filter over the already-loaded
+  // dispatch-drafts list — at ≤10 max drafts there's no point fetching
+  // server-side. Debounced 150ms so a quick burst of keystrokes doesn't
+  // re-filter on every char.
+  const [draftFilter, setDraftFilter] = useState('')
+  const debouncedDraftFilter = useDebouncedValue(draftFilter, 150)
 
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
@@ -91,6 +98,19 @@ export default function InventoryRequests() {
   // strips below the page title so the user can jump back into any WIP
   // dispatch session in one click.
   const dispatchDrafts = useInventoryDispatchDrafts()
+  // Apply the draft-list filter. Matches against (case-insensitive) draft
+  // name, REQ code, and shop name — that way un-named drafts can still be
+  // searched by code/shop without forcing the user to name them first.
+  const filteredDrafts = useMemo(() => {
+    const all = dispatchDrafts.data ?? []
+    const q = debouncedDraftFilter.trim().toLowerCase()
+    if (!q) return all
+    return all.filter(d => {
+      const haystack = `${d.draftName ?? ''} ${d.code} ${d.shopName}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [dispatchDrafts.data, debouncedDraftFilter])
+  const renameDraft = useRenameDispatchDraft()
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -285,43 +305,47 @@ export default function InventoryRequests() {
 
           <Collapse in={draftsOpen} timeout="auto" unmountOnExit>
             <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {dispatchDrafts.data!.map(d => (
-                <Paper
-                  key={d.id}
-                  elevation={0}
-                  sx={{
-                    borderRadius: 2,
-                    border: '2px solid #1F1F1F',
-                    bgcolor: '#FFF8DC',
-                    px: 2,
-                    py: 1.25,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 2,
-                    flexWrap: 'wrap',
+              {/* Filter search (30-Jun-2026). FE-only, debounced; matches
+                  name + code + shop so un-named drafts can still be found
+                  by their REQ code or shop. Hidden when there's only 1
+                  draft — no point filtering a list of one. */}
+              {dispatchDrafts.data!.length > 1 && (
+                <TextField
+                  size="small"
+                  value={draftFilter}
+                  onChange={e => setDraftFilter(e.target.value)}
+                  placeholder="Filter by name, code, or shop…"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search className="w-4 h-4 text-[#1F1F1F]/60" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: draftFilter ? (
+                        <InputAdornment position="end">
+                          <IconButton size="small" onClick={() => setDraftFilter('')}>
+                            <XIcon className="w-3.5 h-3.5" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
                   }}
-                >
-                  <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Box sx={{ fontWeight: 700, fontSize: 14 }}>
-                      Resume dispatch draft — {d.code}
-                    </Box>
-                    <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
-                      {d.shopCode} · {d.shopName}
-                      · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
-                      · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
-                      · Last saved {formatIstDateTime(d.updatedAt)}
-                    </Box>
-                  </Box>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => navigate(`/inventory/requests/${d.id}`)}
-                    sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
-                  >
-                    Resume
-                  </Button>
-                </Paper>
+                  sx={{ bgcolor: '#FFFBE6' }}
+                />
+              )}
+              {filteredDrafts.length === 0 ? (
+                <Box sx={{ textAlign: 'center', color: '#1F1F1F99', fontSize: 13, py: 2 }}>
+                  No drafts match "{draftFilter}".
+                </Box>
+              ) : filteredDrafts.map(d => (
+                <DraftRow
+                  key={d.id}
+                  draft={d}
+                  renameInFlight={renameDraft.isPending}
+                  onResume={() => navigate(`/inventory/requests/${d.id}`)}
+                  onRename={(name) => renameDraft.mutate({ id: d.id, req: { name } })}
+                />
               ))}
             </Box>
           </Collapse>
@@ -479,5 +503,123 @@ export default function InventoryRequests() {
         />
       </Paper>
     </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────
+// Resume-strip row (30-Jun-2026). Owns the inline rename state so each row
+// can be in its own edit mode independently. Click pencil → switch to
+// TextField. Enter / blur commits (calls onRename with trimmed value).
+// Esc / X reverts to the saved name. Empty / whitespace clears the name.
+// Length cap matches the DB column (varchar(60)).
+
+const DRAFT_NAME_MAX = 60
+
+function DraftRow({ draft, renameInFlight, onResume, onRename }: {
+  draft: StockRequestDto
+  renameInFlight: boolean
+  onResume: () => void
+  onRename: (name: string | null) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(draft.draftName ?? '')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // When the underlying name changes (after a successful save), keep the
+  // local input in sync — handles the case where the optimistic update
+  // beats the server response.
+  useEffect(() => {
+    if (!editing) setValue(draft.draftName ?? '')
+  }, [draft.draftName, editing])
+
+  // Focus + select-all when entering edit mode so the user can immediately
+  // overwrite an existing name without manually clearing it.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  const titleText = draft.draftName?.trim()
+    ? draft.draftName
+    : `Resume dispatch draft — ${draft.code}`
+
+  const commit = () => {
+    const trimmed = value.trim()
+    const next = trimmed === '' ? null : trimmed
+    // Skip the round-trip if nothing changed.
+    if ((draft.draftName ?? null) !== next) {
+      onRename(next)
+    }
+    setEditing(false)
+  }
+
+  const cancel = () => {
+    setValue(draft.draftName ?? '')
+    setEditing(false)
+  }
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        borderRadius: 2,
+        border: '2px solid #1F1F1F',
+        bgcolor: '#FFF8DC',
+        px: 2,
+        py: 1.25,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        flexWrap: 'wrap',
+      }}
+    >
+      <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        {editing ? (
+          <TextField
+            inputRef={inputRef}
+            size="small"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit() }
+              else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+            }}
+            placeholder="Name this draft (optional)"
+            disabled={renameInFlight}
+            slotProps={{ htmlInput: { maxLength: DRAFT_NAME_MAX } }}
+            sx={{ width: '100%', maxWidth: 480, bgcolor: '#FFFBE6', '& .MuiInputBase-input': { fontWeight: 700, fontSize: 14 } }}
+          />
+        ) : (
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.75, cursor: 'pointer' }}
+            onClick={() => setEditing(true)}
+            title="Click to rename"
+          >
+            <Box sx={{ fontWeight: 700, fontSize: 14 }}>{titleText}</Box>
+            <IconButton size="small" sx={{ p: 0.25 }} aria-label="Rename draft">
+              <Pencil className="w-3.5 h-3.5 text-[#1F1F1F]/60" />
+            </IconButton>
+          </Box>
+        )}
+        <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+          {draft.code} · {draft.shopCode} · {draft.shopName}
+          · {draft.totalItems} {draft.totalItems === 1 ? 'product' : 'products'}
+          · {draft.totalQty} {draft.totalQty === 1 ? 'unit' : 'units'}
+          · Last saved {formatIstDateTime(draft.updatedAt)}
+        </Box>
+      </Box>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onResume}
+        sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+      >
+        Resume
+      </Button>
+    </Paper>
   )
 }

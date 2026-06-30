@@ -291,6 +291,14 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
 
+    public async Task<bool> RenameDispatchDraftAsync(Guid id, Guid userId, string? name, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_rename_dispatch_draft(@p_id, @p_user_id, @p_name)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId, p_name = name }, cancellationToken: ct));
+    }
+
     public async Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default)
     {

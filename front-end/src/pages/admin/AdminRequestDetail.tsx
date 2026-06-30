@@ -202,7 +202,7 @@ export default function AdminRequestDetail() {
                         <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor }}>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
                         {formatINR(effectiveSubtotal)}
                       </TableCell>
                       {canEditQty && (

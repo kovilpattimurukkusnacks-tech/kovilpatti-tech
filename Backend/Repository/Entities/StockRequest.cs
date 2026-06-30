@@ -72,6 +72,12 @@ public class StockRequest
     /// code (e.g. "REQ0042"). NULL when Source_Request_Id is NULL.
     public string? Source_Request_Code { get; set; }
 
+    /// Godown-supplied label on a saved dispatch draft. Populated by
+    /// fn_request_list_inventory_dispatch_drafts; NULL on every other list
+    /// SP today (other endpoints don't surface it, so Dapper leaves this
+    /// at its default null — that's fine, the DTO field is nullable too).
+    public string? Draft_Name { get; set; }
+
     /// Only populated by fn_request_get. Null for list rows.
     public string? Items { get; set; }
 }

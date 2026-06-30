@@ -406,7 +406,8 @@ RETURNS TABLE (
   cancelled_at            timestamptz,
   cancelled_by            uuid,
   source_request_id       uuid,
-  source_request_code     varchar
+  source_request_code     varchar,
+  draft_name              varchar
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -434,7 +435,8 @@ LANGUAGE sql STABLE AS $$
          r.accepted_at, r.accepted_by,
          r.cancelled_at, r.cancelled_by,
          r.source_request_id,
-         src.code AS source_request_code
+         src.code AS source_request_code,
+         r.draft_name
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -1078,13 +1080,15 @@ BEGIN
   END IF;
 
   -- Dispatch-draft qtys are now stale — clear them on the whole request so
-  -- nothing reads a half-saved draft after the dispatch is finalised.
+  -- nothing reads a half-saved draft after the dispatch is finalised. Same
+  -- goes for draft_name: it's a label on a live draft only.
   UPDATE stock_request_items
   SET draft_dispatched_qty = NULL
   WHERE request_id = p_id;
 
   UPDATE stock_requests
   SET status        = 'Dispatched',
+      draft_name    = NULL,
       dispatched_at = now(),
       dispatched_by = p_user_id,
       updated_by    = p_user_id
@@ -1118,8 +1122,11 @@ BEGIN
   SET draft_dispatched_qty = NULL
   WHERE request_id = p_id;
 
+  -- Discarding the draft also drops the godown's free-text label (the
+  -- name only makes sense alongside a live draft — see fn_request_rename_dispatch_draft).
   UPDATE stock_requests
-  SET updated_by = p_user_id
+  SET draft_name = NULL,
+      updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 
@@ -1165,6 +1172,39 @@ BEGIN
 
   UPDATE stock_requests
   SET updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Set / clear the godown's free-text label on a saved dispatch draft.
+-- Separate from fn_request_save_dispatch_draft so the two concerns don't
+-- collide: qty auto-saves shouldn't clobber a manually-set name, and the
+-- rename UI shouldn't have to ship the full qty payload just to change a
+-- label. Pass NULL to clear (or any string up to 60 chars to set).
+-- Same Pending/Approved guard as save — naming a finalised request is
+-- meaningless.
+CREATE OR REPLACE FUNCTION fn_request_rename_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid,
+  p_name    text     -- NULL to clear; BE has already trimmed + null-empty'd
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests
+  SET draft_name = p_name,
+      updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 

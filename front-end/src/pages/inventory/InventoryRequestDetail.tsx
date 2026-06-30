@@ -53,6 +53,11 @@ export default function InventoryRequestDetail() {
   // ship less if they're out of stock (clamped to ≤ requested_qty).
   const [dispatchQtys, setDispatchQtys] = useState<Map<string, number>>(new Map())
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
+  // Same risk as the Shop side — dispatch row sits the discard button
+  // close to Save / Mark as Dispatched, and an accidental click wipes
+  // whatever dispatch qtys the godown has been typing in.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   // True when dispatch qtys have changed since the last successful draft
   // save (or since the seed from a stored draft). Drives the Save as Draft
   // button's disabled state so the user can't redundantly re-save the
@@ -308,16 +313,18 @@ export default function InventoryRequestDetail() {
    * Discard the saved dispatch draft. The BE clears draft_dispatched_qty on
    * every item; the refreshed request flows back into the useEffect seed,
    * which then re-applies the appropriate defaults (empty for Pending,
-   * requestedQty for Approved).
+   * requestedQty for Approved). Gated behind a ConfirmDialog — see the
+   * `discardConfirmOpen` state and the click handler on the Discard button.
    */
   const handleDiscardDraft = async () => {
     try {
       await clearDraftMutation.mutateAsync(request.id)
       setDraftSavedAt(null)
+      setDiscardConfirmOpen(false)
       // The useEffect seeded the new state from the refreshed cache — leave
       // isDraftDirty to it (seed sets it based on what's there now).
     } catch {
-      // surfaced via the error alert below
+      // surfaced via the error alert below — leave dialog open for retry
     }
   }
 
@@ -467,7 +474,7 @@ export default function InventoryRequestDetail() {
                         )}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600, color: totalColor }}>{formatINR(lineTotal)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>{formatINR(lineTotal)}</TableCell>
                     </TableRow>
                   )
                 })}
@@ -704,23 +711,28 @@ export default function InventoryRequestDetail() {
               )}
             </Box>
           </Box>
+          {/* Discard Draft — lifted OUT of the action row on 29-Jun-2026
+              (third pass). With justifyContent:space-between on the outer
+              Paper and 3 flex children (cart info / Discard / Save+Dispatch),
+              Discard sits in the middle of the bar — well separated from
+              the primary Save & Mark-as-Dispatched cluster so a stray
+              click on the right-side actions can't catch it. Order-only;
+              Returns have no draft. */}
+          {canDispatch && hasInitialDraft && (
+            <Button
+              variant="outlined"
+              onClick={() => setDiscardConfirmOpen(true)}
+              disabled={clearDraftMutation.isPending}
+              sx={{
+                textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap',
+                borderColor: '#C62828', color: '#C62828',
+                '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+              }}
+            >
+              {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
+            </Button>
+          )}
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Draft Save / Discard — Order-only. Returns are one-shot;
-                the godown either Accepts the return or Rejects it, no WIP. */}
-            {canDispatch && hasInitialDraft && (
-              <Button
-                variant="outlined"
-                onClick={handleDiscardDraft}
-                disabled={clearDraftMutation.isPending}
-                sx={{
-                  textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap',
-                  borderColor: '#C62828', color: '#C62828',
-                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-                }}
-              >
-                {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
-              </Button>
-            )}
             {canDispatch && (
               <Button
                 variant="outlined"
@@ -866,6 +878,18 @@ export default function InventoryRequestDetail() {
           : undefined}
         onDiscard={() => guard.proceed?.()}
         onCancel={() => guard.reset?.()}
+      />
+
+      {/* Discard Draft confirm — gated so a stray click on the action row
+          doesn't wipe minutes of typed-in dispatch qtys. */}
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="Discard this dispatch draft?"
+        message={`The saved per-line quantities for ${request.code} will be cleared and the form re-seeds to defaults. This can't be undone.`}
+        confirmLabel="Yes, discard"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardDraft}
+        onCancel={() => setDiscardConfirmOpen(false)}
       />
     </Box>
   )

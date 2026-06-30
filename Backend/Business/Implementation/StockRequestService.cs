@@ -471,6 +471,40 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    public async Task<StockRequestDto> RenameDispatchDraftAsync(
+        Guid id, RenameDispatchDraftRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as save/clear — inventory can only rename drafts on
+        // their own godown's requests; admin may rename any. Any godown user
+        // can rename (no created-by lock — dispatch is a shared workload).
+        EnsureInventoryScope(existing);
+
+        // Trim + null-empty here so the SP gets a clean value: NULL means
+        // "clear the label", any non-null string means "set to this".
+        // Length cap matches the DB column (varchar(60)); BE truncates with
+        // a validation error rather than silently chopping.
+        var normalized = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim();
+        if (normalized is { Length: > 60 })
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("name", "Draft name cannot exceed 60 characters.")
+            });
+        }
+
+        var ok = await requests.RenameDispatchDraftAsync(id, userId, normalized, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot rename dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     // ───────── Return Stock ─────────
 
     public async Task<StockRequestDto> CreateReturnAsync(CreateReturnRequest request, CancellationToken ct = default)
@@ -723,6 +757,7 @@ public class StockRequestService(
             r.Accepted_At, r.Accepted_By,
             r.Cancelled_At, r.Cancelled_By,
             r.Source_Request_Id, r.Source_Request_Code,
+            r.Draft_Name,
             Items: null);
 
     // Composes MapHeaderToDto with the deserialised items list. Single source

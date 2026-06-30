@@ -31,3 +31,7 @@ public record DispatchItem(
     Guid Id,           // stock_request_items.id
     int  DispatchedQty
 );
+
+/// Inventory user renames a saved dispatch draft. Empty / whitespace-only
+/// Name clears the existing name (BE trims + null-empties before the SP).
+public record RenameDispatchDraftRequest(string? Name);

@@ -5,6 +5,7 @@ import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
+  RenameDispatchDraftRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -203,6 +204,37 @@ export function useClearDispatchDraft() {
     mutationFn: (id: string) => stockRequestsApi.clearDispatchDraft(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Rename (set / clear) the godown's free-text label on a saved dispatch
+ *  draft (Inventory/Admin). Optimistic — updates the draft-list cache
+ *  in place so the new name renders instantly; rolls back on error. */
+export function useRenameDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: RenameDispatchDraftRequest }) =>
+      stockRequestsApi.renameDispatchDraft(id, req),
+    // Optimistic update: rewrite the dispatch-drafts list cache so the new
+    // name shows up immediately in the resume strip while the PATCH is in
+    // flight. Rollback on error using the snapshot we capture below.
+    onMutate: async ({ id, req }) => {
+      await qc.cancelQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+      const prev = qc.getQueryData<StockRequestDto[]>(['stock-requests', 'dispatch-drafts'])
+      const normalized = (req.name ?? '').trim() || null
+      qc.setQueryData<StockRequestDto[]>(
+        ['stock-requests', 'dispatch-drafts'],
+        (old) => old?.map(d => d.id === id ? { ...d, draftName: normalized } : d),
+      )
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stock-requests', 'dispatch-drafts'], ctx.prev)
+    },
+    onSettled: (updated) => {
+      if (updated) qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
     },
   })

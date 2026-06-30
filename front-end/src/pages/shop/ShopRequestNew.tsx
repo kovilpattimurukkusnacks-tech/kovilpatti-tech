@@ -17,6 +17,7 @@ import {
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
@@ -61,6 +62,10 @@ export default function ShopRequestNew() {
   const saveDraftMutation   = useSaveShopDraft()
   const deleteDraftMutation = useDeleteShopDraft()
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
+  // Discarding wipes work that took the shop minutes to build — a single
+  // accidental click on the sticky bottom bar shouldn't be enough.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
 
   // Browse / filter state — category is a SINGLE-select (one category at a
   // time, per client feedback). Type stays multi-select.
@@ -602,6 +607,8 @@ export default function ShopRequestNew() {
   /**
    * Explicit discard — clears the saved draft on the BE and wipes the
    * in-memory cart. Independent from Clear cart, which is purely local.
+   * Gated behind a confirm dialog (see `discardConfirmOpen`) so a stray
+   * click on the sticky bottom bar can't wipe minutes of work.
    */
   const handleDiscardDraft = async () => {
     try {
@@ -609,8 +616,9 @@ export default function ShopRequestNew() {
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
+      setDiscardConfirmOpen(false)
     } catch {
-      // shown via apiErrorMessage below
+      // shown via apiErrorMessage below — leave dialog open so user can retry
     }
   }
 
@@ -853,66 +861,91 @@ export default function ShopRequestNew() {
             next/prev category in the hard-coded priority order without
             scrolling back to the top filter. Position counter
             (e.g. 3/11) gives orientation. Hidden when there's no current
-            category or fewer than 2 sub-cats (no point pagering). */}
-        {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={gotoPrevCat}
-              disabled={!hasPrevCat}
-              startIcon={<ChevronLeft className="w-4 h-4" />}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F',
-                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
-              }}
-            >
-              Prev
-            </Button>
-            <Box sx={{
-              fontSize: 11, fontWeight: 700, color: '#1F1F1F99', textAlign: 'center',
-              minWidth: 50, whiteSpace: 'nowrap', px: 0.5,
-            }}>
-              {currentCatIndex + 1}/{sortedRootCats.length}
-            </Box>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={gotoNextCat}
-              disabled={!hasNextCat}
-              endIcon={<ChevronRight className="w-4 h-4" />}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F',
-                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
-              }}
-            >
-              Next
-            </Button>
+            category or fewer than 2 sub-cats (no point pagering).
+            Discard Draft moved into this center cluster on 29-Jun-2026
+            so it sits well away from Review & Submit — same client raised
+            an accidental-click risk when both reds were right-side. */}
+        {(currentCatIndex >= 0 && sortedRootCats.length > 1) || (draftEnabled && draftQuery.data) ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+            {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={gotoPrevCat}
+                  disabled={!hasPrevCat}
+                  startIcon={<ChevronLeft className="w-4 h-4" />}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#1F1F1F', color: '#1F1F1F',
+                    '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                    '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+                  }}
+                >
+                  Prev
+                </Button>
+                <Box sx={{
+                  fontSize: 11, fontWeight: 700, color: '#1F1F1F99', textAlign: 'center',
+                  minWidth: 50, whiteSpace: 'nowrap', px: 0.5,
+                }}>
+                  {currentCatIndex + 1}/{sortedRootCats.length}
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={gotoNextCat}
+                  disabled={!hasNextCat}
+                  endIcon={<ChevronRight className="w-4 h-4" />}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#1F1F1F', color: '#1F1F1F',
+                    '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                    '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+                  }}
+                >
+                  Next
+                </Button>
+              </>
+            )}
+            {/* Discard Draft — only shown when a draft has been previously
+                saved. Hidden in edit mode (no draft concept) and for admin.
+                Clicking opens a confirm dialog (handleDiscardDraft fires
+                only on confirm). ml:5 + a thin divider create deliberate
+                breathing room from the Next button so a user reaching for
+                Next doesn't graze Discard Draft (29-Jun-2026, second pass). */}
+            {draftEnabled && draftQuery.data && (
+              <>
+                {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
+                  <Box
+                    aria-hidden
+                    sx={{
+                      width: '1px',
+                      height: 24,
+                      bgcolor: 'rgba(31,31,31,0.18)',
+                      ml: 4,
+                      mr: 1,
+                    }}
+                  />
+                )}
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setDiscardConfirmOpen(true)}
+                  disabled={deleteDraftMutation.isPending}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#C62828', color: '#C62828',
+                    '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+                  }}
+                >
+                  Discard Draft
+                </Button>
+              </>
+            )}
           </Box>
-        )}
+        ) : null}
 
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Discard Draft — only shown when a draft has been previously
-              saved. Hidden in edit mode (no draft concept) and for admin. */}
-          {draftEnabled && draftQuery.data && (
-            <Button
-              variant="outlined"
-              size="medium"
-              onClick={handleDiscardDraft}
-              disabled={deleteDraftMutation.isPending}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#C62828', color: '#C62828',
-                '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-              }}
-            >
-              Discard Draft
-            </Button>
-          )}
           {/* Save as Draft — only on the new-request flow (not edit, not
               admin). Disabled when nothing's pending to save: cart empty,
               save already in flight, OR draft hasn't changed since the
@@ -1170,6 +1203,18 @@ export default function ShopRequestNew() {
           : undefined}
         onDiscard={() => guard.proceed?.()}
         onCancel={() => guard.reset?.()}
+      />
+
+      {/* Discard Draft confirm — gated so an accidental click on the
+          sticky bottom bar doesn't wipe minutes of cart-building. */}
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="Discard this draft?"
+        message="Your saved cart and notes will be cleared. You'll have to start the request from scratch. This can't be undone."
+        confirmLabel="Yes, discard"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardDraft}
+        onCancel={() => setDiscardConfirmOpen(false)}
       />
     </Box>
   )
