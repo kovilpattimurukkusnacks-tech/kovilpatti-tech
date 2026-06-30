@@ -1,14 +1,16 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp } from 'lucide-react'
-import { Alert, Box, Button, Chip, Collapse, InputAdornment, Paper, TextField } from '@mui/material'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
+import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
-  useInventoryDispatchDrafts,
+  useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
 } from '../../hooks/useStockRequests'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
@@ -61,6 +63,12 @@ export default function InventoryRequests() {
   // eats most of the viewport; we keep it collapsed by default and let the
   // user expand on demand.
   const [draftsOpen, setDraftsOpen] = useState(false)
+  // Draft-list search box (30-Jun-2026). FE-only filter over the already-loaded
+  // dispatch-drafts list — at ≤10 max drafts there's no point fetching
+  // server-side. Debounced 150ms so a quick burst of keystrokes doesn't
+  // re-filter on every char.
+  const [draftFilter, setDraftFilter] = useState('')
+  const debouncedDraftFilter = useDebouncedValue(draftFilter, 150)
 
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
@@ -87,10 +95,58 @@ export default function InventoryRequests() {
   // (requestType='Return', no status) so the chip row mirrors the table.
   const shopCounts = useRequestCountByShop({ status: currentStatus, requestType: currentRequestType })
 
+  // Standalone Pending count (independent of the active preset) — drives the
+  // confirmation dialog on the Print Cumulative button so the dispatcher
+  // knows "X requests are still pending and won't be in this print" before
+  // a tab opens. Same hook the shop-chip badges use, just filtered to
+  // status='Pending' and summed across shops.
+  const pendingShopCounts = useRequestCountByShop({ status: 'Pending' })
+  const totalPending = useMemo(
+    () => (pendingShopCounts.data ?? []).reduce((sum, r) => sum + r.requestCount, 0),
+    [pendingShopCounts.data],
+  )
+
+  // Print Cumulative gating (30-Jun-2026): only enabled on the In-Progress
+  // tab — the report itself is scoped to status='Approved' (= In-Progress)
+  // rows, so allowing the print from other tabs is semantically wrong.
+  // Other tabs render the button disabled with a tooltip explaining how
+  // to enable it.
+  const isInProgressTab = activePreset === 'approved'
+  const canPrintCumulative = isInProgressTab && hasPending
+  const printCumulativeTooltip =
+    !isInProgressTab ? 'Switch to In-Progress tab to print the batch plan'
+    : !hasPending    ? 'No in-progress requests to print'
+    : totalPending > 0
+      ? `${totalPending} request${totalPending === 1 ? ' is' : 's are'} still pending — you'll get a confirmation first`
+      : undefined
+
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
+  const openPrintCumulative = () => {
+    window.open('/print/cumulative', '_blank', 'noopener,noreferrer')
+  }
+  const onPrintCumulativeClick = () => {
+    if (totalPending > 0) setPrintConfirmOpen(true)
+    else openPrintCumulative()
+  }
+
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
   // dispatch session in one click.
   const dispatchDrafts = useInventoryDispatchDrafts()
+  // Apply the draft-list filter. Matches against (case-insensitive) draft
+  // name, REQ code, and shop name — that way un-named drafts can still be
+  // searched by code/shop without forcing the user to name them first.
+  const filteredDrafts = useMemo(() => {
+    const all = dispatchDrafts.data ?? []
+    const q = debouncedDraftFilter.trim().toLowerCase()
+    if (!q) return all
+    return all.filter(d => {
+      const haystack = `${d.draftName ?? ''} ${d.code} ${d.shopName}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [dispatchDrafts.data, debouncedDraftFilter])
+  const renameDraft = useRenameDispatchDraft()
+  const pinDraft    = usePinDispatchDraft()
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -229,17 +285,41 @@ export default function InventoryRequests() {
       <PageHeader
         title="Incoming Requests"
         subtitle={list.isLoading ? 'Loading…' : `${total} ${total === 1 ? 'request' : 'requests'}`}
+        // MUI Tooltip wraps a <span> so hover fires even when the Button
+        // underneath is disabled — browsers swallow pointer events on
+        // disabled buttons, so a native `title` attribute (or a Tooltip
+        // directly on the button) never shows in the wrong-tab case.
         action={
-          <Button
-            variant="contained"
-            startIcon={<Printer className="w-4 h-4" />}
-            onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
-            disabled={!hasPending}
-            title={hasPending ? undefined : 'No in-progress requests to print'}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Print Cumulative
-          </Button>
+          <Tooltip title={printCumulativeTooltip ?? ''} placement="bottom" arrow>
+            <span style={{ display: 'inline-block' }}>
+              <Button
+                variant="outlined"
+                startIcon={<Printer className="w-4 h-4" />}
+                onClick={onPrintCumulativeClick}
+                disabled={!canPrintCumulative}
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  bgcolor: '#FFF8E1',
+                  color: '#1F1F1F',
+                  borderColor: '#C28A00',
+                  borderWidth: '1.5px',
+                  '&:hover': {
+                    bgcolor: '#FCD835',
+                    borderColor: '#A07000',
+                    borderWidth: '1.5px',
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: '#FFFBE6',
+                    color: 'rgba(31,31,31,0.4)',
+                    borderColor: 'rgba(194,138,0,0.45)',
+                  },
+                }}
+              >
+                Print Cumulative
+              </Button>
+            </span>
+          </Tooltip>
         }
       />
 
@@ -285,43 +365,54 @@ export default function InventoryRequests() {
 
           <Collapse in={draftsOpen} timeout="auto" unmountOnExit>
             <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {dispatchDrafts.data!.map(d => (
-                <Paper
-                  key={d.id}
-                  elevation={0}
-                  sx={{
-                    borderRadius: 2,
-                    border: '2px solid #1F1F1F',
-                    bgcolor: '#FFF8DC',
-                    px: 2,
-                    py: 1.25,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 2,
-                    flexWrap: 'wrap',
+              {/* Filter search (30-Jun-2026). FE-only, debounced; matches
+                  name + code + shop so un-named drafts can still be found
+                  by their REQ code or shop. Hidden when there's only 1
+                  draft — no point filtering a list of one. */}
+              {dispatchDrafts.data!.length > 1 && (
+                <TextField
+                  size="small"
+                  value={draftFilter}
+                  onChange={e => setDraftFilter(e.target.value)}
+                  placeholder="Filter by name, code, or shop…"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search className="w-4 h-4 text-[#1F1F1F]/60" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: draftFilter ? (
+                        <InputAdornment position="end">
+                          <IconButton size="small" onClick={() => setDraftFilter('')}>
+                            <XIcon className="w-3.5 h-3.5" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
                   }}
-                >
-                  <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Box sx={{ fontWeight: 700, fontSize: 14 }}>
-                      Resume dispatch draft — {d.code}
-                    </Box>
-                    <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
-                      {d.shopCode} · {d.shopName}
-                      · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
-                      · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
-                      · Last saved {formatIstDateTime(d.updatedAt)}
-                    </Box>
-                  </Box>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => navigate(`/inventory/requests/${d.id}`)}
-                    sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
-                  >
-                    Resume
-                  </Button>
-                </Paper>
+                  // bgcolor on the OutlinedInput slot (not the TextField root)
+                  // so the whole field — icon adornment, input, clear button —
+                  // shares one cream background. Setting it on the root left
+                  // the input wrapper transparent → adornment patches showed
+                  // through with the page bg. (30-Jun-2026 fix.)
+                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFBE6' } }}
+                />
+              )}
+              {filteredDrafts.length === 0 ? (
+                <Box sx={{ textAlign: 'center', color: '#1F1F1F99', fontSize: 13, py: 2 }}>
+                  No drafts match "{draftFilter}".
+                </Box>
+              ) : filteredDrafts.map(d => (
+                <DraftRow
+                  key={d.id}
+                  draft={d}
+                  renameInFlight={renameDraft.isPending}
+                  pinInFlight={pinDraft.isPending}
+                  onResume={() => navigate(`/inventory/requests/${d.id}`)}
+                  onRename={(name) => renameDraft.mutate({ id: d.id, req: { name } })}
+                  onTogglePin={() => pinDraft.mutate({ id: d.id, req: { pinned: !d.pinnedAt } })}
+                />
               ))}
             </Box>
           </Collapse>
@@ -478,6 +569,161 @@ export default function InventoryRequests() {
           }}
         />
       </Paper>
+
+      {/* Print Cumulative confirmation — fires only when there are Pending
+          requests that won't be included in the print (which sources only
+          Approved/In-Progress data). Lets the dispatcher decide whether to
+          wait for more approvals or print the current set as-is. */}
+      <ConfirmDialog
+        open={printConfirmOpen}
+        title={`${totalPending} ${totalPending === 1 ? 'request is' : 'requests are'} still pending`}
+        message={`Only the in-progress (approved) requests will be included in this batch plan. Pending requests won't appear here until they're approved. Print anyway?`}
+        confirmLabel="Yes, print approved"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setPrintConfirmOpen(false)
+          openPrintCumulative()
+        }}
+        onCancel={() => setPrintConfirmOpen(false)}
+      />
     </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────
+// Resume-strip row (30-Jun-2026). Owns the inline rename state so each row
+// can be in its own edit mode independently. Click pencil → switch to
+// TextField. Enter / blur commits (calls onRename with trimmed value).
+// Esc / X reverts to the saved name. Empty / whitespace clears the name.
+// Length cap matches the DB column (varchar(60)).
+
+const DRAFT_NAME_MAX = 60
+
+function DraftRow({ draft, renameInFlight, pinInFlight, onResume, onRename, onTogglePin }: {
+  draft: StockRequestDto
+  renameInFlight: boolean
+  pinInFlight: boolean
+  onResume: () => void
+  onRename: (name: string | null) => void
+  onTogglePin: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(draft.draftName ?? '')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // When the underlying name changes (after a successful save), keep the
+  // local input in sync — handles the case where the optimistic update
+  // beats the server response.
+  useEffect(() => {
+    if (!editing) setValue(draft.draftName ?? '')
+  }, [draft.draftName, editing])
+
+  // Focus + select-all when entering edit mode so the user can immediately
+  // overwrite an existing name without manually clearing it.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  const titleText = draft.draftName?.trim()
+    ? draft.draftName
+    : `Resume dispatch draft — ${draft.code}`
+
+  const commit = () => {
+    const trimmed = value.trim()
+    const next = trimmed === '' ? null : trimmed
+    // Skip the round-trip if nothing changed.
+    if ((draft.draftName ?? null) !== next) {
+      onRename(next)
+    }
+    setEditing(false)
+  }
+
+  const cancel = () => {
+    setValue(draft.draftName ?? '')
+    setEditing(false)
+  }
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        borderRadius: 2,
+        border: '2px solid #1F1F1F',
+        bgcolor: '#FFF8DC',
+        px: 2,
+        py: 1.25,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        flexWrap: 'wrap',
+      }}
+    >
+      <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+      {/* Pin toggle — pinned drafts sort to the top of the resume strip.
+          Filled gold icon when pinned, muted outline when unpinned. */}
+      <IconButton
+        size="small"
+        onClick={onTogglePin}
+        disabled={pinInFlight}
+        aria-label={draft.pinnedAt ? 'Unpin draft' : 'Pin draft to top'}
+        title={draft.pinnedAt ? 'Unpin' : 'Pin to top'}
+        sx={{
+          p: 0.5,
+          color: draft.pinnedAt ? '#C28A00' : 'rgba(31,31,31,0.4)',
+          '&:hover': { bgcolor: 'rgba(31,31,31,0.06)', color: draft.pinnedAt ? '#A07000' : '#1F1F1F' },
+        }}
+      >
+        {draft.pinnedAt
+          ? <Pin    className="w-4 h-4" fill="currentColor" />
+          : <PinOff className="w-4 h-4" />}
+      </IconButton>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        {editing ? (
+          <TextField
+            inputRef={inputRef}
+            size="small"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit() }
+              else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+            }}
+            placeholder="Name this draft (optional)"
+            disabled={renameInFlight}
+            slotProps={{ htmlInput: { maxLength: DRAFT_NAME_MAX } }}
+            sx={{ width: '100%', maxWidth: 480, bgcolor: '#FFFBE6', '& .MuiInputBase-input': { fontWeight: 700, fontSize: 14 } }}
+          />
+        ) : (
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.75, cursor: 'pointer' }}
+            onClick={() => setEditing(true)}
+            title="Click to rename"
+          >
+            <Box sx={{ fontWeight: 700, fontSize: 14 }}>{titleText}</Box>
+            <IconButton size="small" sx={{ p: 0.25 }} aria-label="Rename draft">
+              <Pencil className="w-3.5 h-3.5 text-[#1F1F1F]/60" />
+            </IconButton>
+          </Box>
+        )}
+        <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+          {draft.code} · {draft.shopCode} · {draft.shopName}
+          · {draft.totalItems} {draft.totalItems === 1 ? 'product' : 'products'}
+          · {draft.totalQty} {draft.totalQty === 1 ? 'unit' : 'units'}
+          · Last saved {formatIstDateTime(draft.updatedAt)}
+        </Box>
+      </Box>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onResume}
+        sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+      >
+        Resume
+      </Button>
+    </Paper>
   )
 }

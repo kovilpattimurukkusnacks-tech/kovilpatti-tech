@@ -71,8 +71,23 @@ public interface IStockRequestService
     Task<StockRequestDto> SaveDispatchDraftAsync(Guid id, DispatchRequest request, CancellationToken ct = default);
 
     /// Discard the saved dispatch draft on a request (clears draft_dispatched_qty
-    /// on every item). Returns the refreshed request DTO so caches stay in sync.
+    /// on every item AND the draft_name label). Returns the refreshed request
+    /// DTO so caches stay in sync.
     Task<StockRequestDto> ClearDispatchDraftAsync(Guid id, CancellationToken ct = default);
+
+    /// Set / clear the godown's free-text label on a saved dispatch draft
+    /// (30-Jun-2026). Empty / whitespace-only Name clears the existing label.
+    /// Same inventory-scope rule as SaveDispatchDraftAsync; status must still
+    /// be Pending or Approved. Returns the refreshed request DTO.
+    Task<StockRequestDto> RenameDispatchDraftAsync(
+        Guid id, RenameDispatchDraftRequest request, CancellationToken ct = default);
+
+    /// Pin / unpin a saved dispatch draft. Pinned drafts sort to the top of
+    /// the resume strip. Same inventory-scope + Pending/Approved guards as
+    /// the other draft SPs. Returns the refreshed request DTO so caches
+    /// stay in sync.
+    Task<StockRequestDto> PinDispatchDraftAsync(
+        Guid id, PinDispatchDraftRequest request, CancellationToken ct = default);
 
     /// List of incoming requests (Pending/Approved) that have a saved
     /// dispatch draft on at least one item. Inventory role scoped to own

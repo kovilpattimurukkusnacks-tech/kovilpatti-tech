@@ -23,6 +23,8 @@ import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { useCategories } from '../../hooks/useCategories'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
   // Inventory never sees Draft requests (BE excludes them from /incoming).
@@ -53,6 +55,11 @@ export default function InventoryRequestDetail() {
   // ship less if they're out of stock (clamped to ≤ requested_qty).
   const [dispatchQtys, setDispatchQtys] = useState<Map<string, number>>(new Map())
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
+  // Same risk as the Shop side — dispatch row sits the discard button
+  // close to Save / Mark as Dispatched, and an accidental click wipes
+  // whatever dispatch qtys the godown has been typing in.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
   // True when dispatch qtys have changed since the last successful draft
   // save (or since the seed from a stored draft). Drives the Save as Draft
   // button's disabled state so the user can't redundantly re-save the
@@ -145,6 +152,30 @@ export default function InventoryRequestDetail() {
     ),
     [items],
   )
+
+  // Two-level grouping: outer = root category in hard-coded priority order;
+  // inner = leaf-cat cards (existing layout). Mirrors Shop / Admin detail
+  // pages so dispatcher sees the same top-level hierarchy (30-Jun-2026).
+  const categoriesQuery = useCategories()
+  const rootGroups = useMemo(() => {
+    const lookup = buildRootLookup(categoriesQuery.data)
+    const byRoot = new Map<string, typeof grouped>()
+    for (const cg of grouped) {
+      const root = lookup(cg.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(cg)
+      else byRoot.set(root, [cg])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, cg) => sum + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [grouped, categoriesQuery.data])
 
   // Layout note: cards go into a CSS `column-count` container below — the
   // browser auto-balances them across 2 columns (1 on mobile) so column
@@ -308,16 +339,18 @@ export default function InventoryRequestDetail() {
    * Discard the saved dispatch draft. The BE clears draft_dispatched_qty on
    * every item; the refreshed request flows back into the useEffect seed,
    * which then re-applies the appropriate defaults (empty for Pending,
-   * requestedQty for Approved).
+   * requestedQty for Approved). Gated behind a ConfirmDialog — see the
+   * `discardConfirmOpen` state and the click handler on the Discard button.
    */
   const handleDiscardDraft = async () => {
     try {
       await clearDraftMutation.mutateAsync(request.id)
       setDraftSavedAt(null)
+      setDiscardConfirmOpen(false)
       // The useEffect seeded the new state from the refreshed cache — leave
       // isDraftDirty to it (seed sets it based on what's there now).
     } catch {
-      // surfaced via the error alert below
+      // surfaced via the error alert below — leave dialog open for retry
     }
   }
 
@@ -467,7 +500,7 @@ export default function InventoryRequestDetail() {
                         )}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600, color: totalColor }}>{formatINR(lineTotal)}</TableCell>
+                      <TableCell align="right" sx={{ py: 1, width: 110, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>{formatINR(lineTotal)}</TableCell>
                     </TableRow>
                   )
                 })}
@@ -599,19 +632,47 @@ export default function InventoryRequestDetail() {
         )}
       </Box>
 
-      {/* Items — CSS column-count masonry; cards auto-balanced. */}
-      <Box
-        sx={{
-          columnCount: { xs: 1, md: 2 },
-          columnGap: 2,
-          // mb so action buttons / notes don't collapse flush against the
-          // items grid (the inline Summary that used to sit here was moved
-          // to a fixed footer 19-Jun-2026; this restores the visual gap).
-          mb: 3,
-          '& > *': { breakInside: 'avoid', display: 'block' },
-        }}
-      >
-        {grouped.map(cg => renderCatGroup(cg))}
+      {/* Items — cream banner strip per root (mirrors Shop / Admin).
+          Plain underline style is reserved for the print picklist. */}
+      <Box sx={{ mb: 3 }}>
+        {rootGroups.map(rg => (
+          <Box key={rg.root} sx={{ mb: 2.5 }}>
+            <Box
+              sx={{
+                background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                border: '2px solid #1F1F1F',
+                borderRadius: 1,
+                boxShadow: '2px 2px 0 0 rgba(31,31,31,0.15)',
+                px: 2,
+                py: 1.1,
+                mb: 1.5,
+                textAlign: 'center',
+                fontSize: { xs: 13.5, sm: 14.5 },
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: 1.2,
+                color: '#1F1F1F',
+              }}
+            >
+              {rg.root}
+              <Box
+                component="span"
+                sx={{ ml: 1, fontSize: 11.5, color: 'rgba(31,31,31,0.65)', fontWeight: 600, letterSpacing: 0.4 }}
+              >
+                · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+              </Box>
+            </Box>
+            <Box
+              sx={{
+                columnCount: { xs: 1, md: 2 },
+                columnGap: 2,
+                '& > *': { breakInside: 'avoid', display: 'block' },
+              }}
+            >
+              {rg.children.map(cg => renderCatGroup(cg))}
+            </Box>
+          </Box>
+        ))}
       </Box>
 
       {/* Fixed summary bar — same shape as the New Stock Request cart bar.
@@ -704,23 +765,28 @@ export default function InventoryRequestDetail() {
               )}
             </Box>
           </Box>
+          {/* Discard Draft — lifted OUT of the action row on 29-Jun-2026
+              (third pass). With justifyContent:space-between on the outer
+              Paper and 3 flex children (cart info / Discard / Save+Dispatch),
+              Discard sits in the middle of the bar — well separated from
+              the primary Save & Mark-as-Dispatched cluster so a stray
+              click on the right-side actions can't catch it. Order-only;
+              Returns have no draft. */}
+          {canDispatch && hasInitialDraft && (
+            <Button
+              variant="outlined"
+              onClick={() => setDiscardConfirmOpen(true)}
+              disabled={clearDraftMutation.isPending}
+              sx={{
+                textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap',
+                borderColor: '#C62828', color: '#C62828',
+                '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+              }}
+            >
+              {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
+            </Button>
+          )}
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {/* Draft Save / Discard — Order-only. Returns are one-shot;
-                the godown either Accepts the return or Rejects it, no WIP. */}
-            {canDispatch && hasInitialDraft && (
-              <Button
-                variant="outlined"
-                onClick={handleDiscardDraft}
-                disabled={clearDraftMutation.isPending}
-                sx={{
-                  textTransform: 'none', fontWeight: 600, whiteSpace: 'nowrap',
-                  borderColor: '#C62828', color: '#C62828',
-                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-                }}
-              >
-                {clearDraftMutation.isPending ? 'Discarding…' : 'Discard Draft'}
-              </Button>
-            )}
             {canDispatch && (
               <Button
                 variant="outlined"
@@ -866,6 +932,18 @@ export default function InventoryRequestDetail() {
           : undefined}
         onDiscard={() => guard.proceed?.()}
         onCancel={() => guard.reset?.()}
+      />
+
+      {/* Discard Draft confirm — gated so a stray click on the action row
+          doesn't wipe minutes of typed-in dispatch qtys. */}
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="Discard this dispatch draft?"
+        message={`The saved per-line quantities for ${request.code} will be cleared and the form re-seeds to defaults. This can't be undone.`}
+        confirmLabel="Yes, discard"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardDraft}
+        onCancel={() => setDiscardConfirmOpen(false)}
       />
     </Box>
   )

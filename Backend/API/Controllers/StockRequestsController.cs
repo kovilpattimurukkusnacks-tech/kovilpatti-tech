@@ -186,14 +186,38 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         => Ok(await requests.SaveDispatchDraftAsync(id, request, ct));
 
     // ─── Discard dispatch draft (Inventory + Admin) ──────────
-    // Clears draft_dispatched_qty on every item of the request, leaving
-    // the request itself in the same Pending/Approved state.
+    // Clears draft_dispatched_qty on every item AND the draft_name label,
+    // leaving the request itself in the same Pending/Approved state.
     [HttpDelete("{id:guid}/dispatch-draft")]
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<StockRequestDto>> ClearDispatchDraft(
         Guid id,
         CancellationToken ct)
         => Ok(await requests.ClearDispatchDraftAsync(id, ct));
+
+    // ─── Rename dispatch draft (Inventory + Admin) ───────────
+    // Set or clear the godown's free-text label on a saved dispatch draft.
+    // Empty / whitespace-only name in the body clears the label. Separate
+    // endpoint from save-dispatch-draft so qty auto-saves and rename events
+    // can't accidentally collide.
+    [HttpPatch("{id:guid}/dispatch-draft-name")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> RenameDispatchDraft(
+        Guid id,
+        [FromBody] RenameDispatchDraftRequest request,
+        CancellationToken ct)
+        => Ok(await requests.RenameDispatchDraftAsync(id, request, ct));
+
+    // ─── Pin / unpin dispatch draft (Inventory + Admin) ───────
+    // Pinned drafts sort to the top of the resume strip. Pass {pinned:true}
+    // to pin, {pinned:false} to unpin. Re-pinning bumps the timestamp.
+    [HttpPatch("{id:guid}/dispatch-draft-pin")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> PinDispatchDraft(
+        Guid id,
+        [FromBody] PinDispatchDraftRequest request,
+        CancellationToken ct)
+        => Ok(await requests.PinDispatchDraftAsync(id, request, ct));
 
     // ─── Return Stock ─────────────────────────────────────────
     // Shop user creates a Return (items back to godown). Optional

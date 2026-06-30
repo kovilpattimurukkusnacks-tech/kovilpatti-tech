@@ -92,6 +92,13 @@ export type StockRequestDto = {
   sourceRequestId: string | null
   // The linked Order's code (e.g. "REQ0042"). Null when sourceRequestId is null.
   sourceRequestCode: string | null
+  // Godown-supplied label on a saved dispatch draft (30-Jun-2026). Populated
+  // by the inventory dispatch-drafts list endpoint; null on every other list,
+  // on un-named drafts, and on finalised requests.
+  draftName: string | null
+  /** ISO timestamp set when the dispatch draft was pinned (null = not pinned).
+   *  Pinned drafts sort to the top of the resume strip. */
+  pinnedAt: string | null
   items: StockRequestItemDto[] | null  // only on GET /{id}
 }
 
@@ -111,6 +118,14 @@ export type RejectRequest = { reason: string }
 
 export type DispatchItem = { id: string; dispatchedQty: number }
 export type DispatchRequest = { items: DispatchItem[] }
+
+/** Set / clear the godown's free-text label on a saved dispatch draft.
+ *  Empty / whitespace-only name clears the existing label. */
+export type RenameDispatchDraftRequest = { name: string | null }
+
+/** Pin / unpin a saved dispatch draft. Pinned drafts sort to the top of
+ *  the resume strip. Re-pinning bumps the timestamp (re-prioritises). */
+export type PinDispatchDraftRequest = { pinned: boolean }
 
 // Shop user creating a Return — items going BACK to the godown. SourceRequestId
 // is optional: when provided, links the Return to the past Order being reversed

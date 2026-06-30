@@ -54,6 +54,14 @@ public record StockRequestDto(
     Guid?   SourceRequestId,
     /// The linked Order's code (e.g. "REQ0042"). Null when SourceRequestId is null.
     string? SourceRequestCode,
+    /// Godown-supplied label on a saved dispatch draft (30-Jun-2026). Surfaces
+    /// on the inventory dispatch-drafts list endpoint; null on every other
+    /// list, on un-named drafts, and on finalised requests.
+    string? DraftName,
+    /// When the dispatch draft was pinned (null = not pinned). Pinned drafts
+    /// sort first on the resume strip. Cleared on discard / dispatch alongside
+    /// DraftName.
+    DateTimeOffset? PinnedAt,
     /// Only populated by GET /{id}. Null on list endpoints.
     IReadOnlyList<StockRequestItemDto>? Items
 );

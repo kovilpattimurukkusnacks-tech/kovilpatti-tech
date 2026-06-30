@@ -17,7 +17,9 @@ import {
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
 import { ValidationError } from '../../api/errors'
@@ -61,6 +63,10 @@ export default function ShopRequestNew() {
   const saveDraftMutation   = useSaveShopDraft()
   const deleteDraftMutation = useDeleteShopDraft()
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
+  // Discarding wipes work that took the shop minutes to build — a single
+  // accidental click on the sticky bottom bar shouldn't be enough.
+  const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
 
   // Browse / filter state — category is a SINGLE-select (one category at a
   // time, per client feedback). Type stays multi-select.
@@ -401,8 +407,23 @@ export default function ShopRequestNew() {
   // re-run cancels the pending timer, effectively debouncing — keep typing,
   // no save; pause 1.5s, save fires. Only active in the new-request flow
   // (drafts enabled) and when there's something to save.
+  //
+  // 30-Jun-2026 — gated on `saveDraftMutation.isPending` so saves are
+  // strictly serial. Previously, if a save took longer than 1.5s (Railway
+  // cold-start, slow network) and the user kept editing / navigating, the
+  // debounce could fire a SECOND mutation while the first was still in
+  // flight. Two concurrent INSERTs into stock_requests then raced on the
+  // `uq_stock_requests_one_draft_per_shop` partial unique index, the loser
+  // threw a constraint violation, and that save's payload was silently
+  // dropped — the bug the shop user hit when they rapid-pressed Next.
+  //
+  // With this guard: if a save is in flight, the timer effect skips. As
+  // soon as the in-flight save settles (isPending → false), the effect
+  // re-runs and — if the cart is still dirty — schedules a fresh 1.5s
+  // timer with the latest state. No concurrency, latest-state-wins.
   useEffect(() => {
     if (!draftEnabled || !isDraftDirty || cart.size === 0) return
+    if (saveDraftMutation.isPending) return
 
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
@@ -430,11 +451,11 @@ export default function ShopRequestNew() {
     }, 1500)
 
     return () => clearTimeout(timer)
-    // saveDraftMutation deliberately omitted from deps — its identity changes
-    // on every render, which would reset the debounce timer on every keystroke.
-    // We rely on the closure capturing the latest mutation at effect-fire time.
+    // saveDraftMutation.mutate's identity changes per render so we capture
+    // it via the closure at fire-time; isPending IS in deps because we
+    // want the effect to re-run when the previous save lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftEnabled, isDraftDirty, cart, notes])
+  }, [draftEnabled, isDraftDirty, cart, notes, saveDraftMutation.isPending])
 
   // Review & Submit gate — shop user (new mode only) must have visited every
   // category before submitting. Edit-mode and admin-acting-on-shop bypass:
@@ -469,6 +490,30 @@ export default function ShopRequestNew() {
     ),
     [cart],
   )
+
+  // 30-Jun-2026 — re-bucket cart's leaf-cat groups under their ROOT category
+  // in the hard-coded priority order. Mirrors the request-detail / picklist
+  // hierarchy so the shop user sees the same grouping on screen, in the
+  // cart-review dialog, on the print picklist, and on the thermal slip.
+  const groupedCartByRoot = useMemo(() => {
+    const lookup = buildRootLookup(allCats)
+    const byRoot = new Map<string, typeof groupedCart>()
+    for (const cg of groupedCart) {
+      const root = lookup(cg.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(cg)
+      else byRoot.set(root, [cg])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, cg) => sum + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [groupedCart, allCats])
 
   // Stable identity across renders so memoized ProductRow children don't all
   // re-render when the cart changes. Uses functional setCart so it doesn't
@@ -602,6 +647,8 @@ export default function ShopRequestNew() {
   /**
    * Explicit discard — clears the saved draft on the BE and wipes the
    * in-memory cart. Independent from Clear cart, which is purely local.
+   * Gated behind a confirm dialog (see `discardConfirmOpen`) so a stray
+   * click on the sticky bottom bar can't wipe minutes of work.
    */
   const handleDiscardDraft = async () => {
     try {
@@ -609,8 +656,9 @@ export default function ShopRequestNew() {
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
+      setDiscardConfirmOpen(false)
     } catch {
-      // shown via apiErrorMessage below
+      // shown via apiErrorMessage below — leave dialog open so user can retry
     }
   }
 
@@ -853,66 +901,91 @@ export default function ShopRequestNew() {
             next/prev category in the hard-coded priority order without
             scrolling back to the top filter. Position counter
             (e.g. 3/11) gives orientation. Hidden when there's no current
-            category or fewer than 2 sub-cats (no point pagering). */}
-        {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, minWidth: 0 }}>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={gotoPrevCat}
-              disabled={!hasPrevCat}
-              startIcon={<ChevronLeft className="w-4 h-4" />}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F',
-                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
-              }}
-            >
-              Prev
-            </Button>
-            <Box sx={{
-              fontSize: 11, fontWeight: 700, color: '#1F1F1F99', textAlign: 'center',
-              minWidth: 50, whiteSpace: 'nowrap', px: 0.5,
-            }}>
-              {currentCatIndex + 1}/{sortedRootCats.length}
-            </Box>
-            <Button
-              size="small"
-              variant="outlined"
-              onClick={gotoNextCat}
-              disabled={!hasNextCat}
-              endIcon={<ChevronRight className="w-4 h-4" />}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F',
-                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-                '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
-              }}
-            >
-              Next
-            </Button>
+            category or fewer than 2 sub-cats (no point pagering).
+            Discard Draft moved into this center cluster on 29-Jun-2026
+            so it sits well away from Review & Submit — same client raised
+            an accidental-click risk when both reds were right-side. */}
+        {(currentCatIndex >= 0 && sortedRootCats.length > 1) || (draftEnabled && draftQuery.data) ? (
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, minWidth: 0 }}>
+            {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
+              <>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={gotoPrevCat}
+                  disabled={!hasPrevCat}
+                  startIcon={<ChevronLeft className="w-4 h-4" />}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#1F1F1F', color: '#1F1F1F',
+                    '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                    '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+                  }}
+                >
+                  Prev
+                </Button>
+                <Box sx={{
+                  fontSize: 11, fontWeight: 700, color: '#1F1F1F99', textAlign: 'center',
+                  minWidth: 50, whiteSpace: 'nowrap', px: 0.5,
+                }}>
+                  {currentCatIndex + 1}/{sortedRootCats.length}
+                </Box>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  onClick={gotoNextCat}
+                  disabled={!hasNextCat}
+                  endIcon={<ChevronRight className="w-4 h-4" />}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#1F1F1F', color: '#1F1F1F',
+                    '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                    '&.Mui-disabled': { borderColor: 'rgba(31,31,31,0.2)', color: '#1F1F1F40' },
+                  }}
+                >
+                  Next
+                </Button>
+              </>
+            )}
+            {/* Discard Draft — only shown when a draft has been previously
+                saved. Hidden in edit mode (no draft concept) and for admin.
+                Clicking opens a confirm dialog (handleDiscardDraft fires
+                only on confirm). ml:5 + a thin divider create deliberate
+                breathing room from the Next button so a user reaching for
+                Next doesn't graze Discard Draft (29-Jun-2026, second pass). */}
+            {draftEnabled && draftQuery.data && (
+              <>
+                {currentCatIndex >= 0 && sortedRootCats.length > 1 && (
+                  <Box
+                    aria-hidden
+                    sx={{
+                      width: '1px',
+                      height: 24,
+                      bgcolor: 'rgba(31,31,31,0.18)',
+                      ml: 4,
+                      mr: 1,
+                    }}
+                  />
+                )}
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => setDiscardConfirmOpen(true)}
+                  disabled={deleteDraftMutation.isPending}
+                  sx={{
+                    textTransform: 'none', fontWeight: 600,
+                    borderColor: '#C62828', color: '#C62828',
+                    '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+                  }}
+                >
+                  Discard Draft
+                </Button>
+              </>
+            )}
           </Box>
-        )}
+        ) : null}
 
         <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-          {/* Discard Draft — only shown when a draft has been previously
-              saved. Hidden in edit mode (no draft concept) and for admin. */}
-          {draftEnabled && draftQuery.data && (
-            <Button
-              variant="outlined"
-              size="medium"
-              onClick={handleDiscardDraft}
-              disabled={deleteDraftMutation.isPending}
-              sx={{
-                textTransform: 'none', fontWeight: 600,
-                borderColor: '#C62828', color: '#C62828',
-                '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-              }}
-            >
-              Discard Draft
-            </Button>
-          )}
           {/* Save as Draft — only on the new-request flow (not edit, not
               admin). Disabled when nothing's pending to save: cart empty,
               save already in flight, OR draft hasn't changed since the
@@ -980,72 +1053,98 @@ export default function ShopRequestNew() {
             </Box>
           ) : (
             <>
-              {/* One card per category — matches the request detail / picklist
-                  layout so the user sees a consistent grouping everywhere. */}
-              {groupedCart.map(catGroup => (
-                <Paper
-                  key={catGroup.category}
-                  elevation={0}
-                  sx={{ mb: 1.5, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
-                >
+              {/* Two-level grouping: outer = ROOT category (1 KG SNACKS, etc.)
+                  with an underline-style heading; inner = leaf-cat cards
+                  (existing yellow banner + per-product rows). Mirrors the
+                  request-detail / print hierarchy so the shop user sees
+                  the same shape everywhere (30-Jun-2026). */}
+              {groupedCartByRoot.map((rg, rgIdx) => (
+                <Box key={rg.root} sx={{ mb: 2 }}>
                   <Box
                     sx={{
-                      bgcolor: '#FCD835',
-                      borderBottom: '2px solid #1F1F1F',
-                      px: 1.5,
-                      py: 0.75,
+                      fontSize: 13,
                       fontWeight: 700,
-                      fontSize: 12,
                       textTransform: 'uppercase',
                       letterSpacing: 0.6,
                       color: '#1F1F1F',
+                      textAlign: 'center',
+                      pb: 0.5,
+                      mb: 1,
+                      mt: rgIdx === 0 ? 0 : 0.5,
+                      borderBottom: '2px solid #1F1F1F',
                     }}
                   >
-                    {catGroup.category}
+                    {rg.root}
+                    <Box component="span" sx={{ ml: 1, fontSize: 11, color: '#1F1F1F99', fontWeight: 600 }}>
+                      · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+                    </Box>
                   </Box>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableBody>
-                        {catGroup.weightGroups.map((wg, wIdx) => (
-                          <Fragment key={`${catGroup.category}__${wg.label}`}>
-                            <TableRow>
-                              <TableCell
-                                colSpan={3}
-                                sx={{
-                                  bgcolor: '#FFFFFF',
-                                  pl: 1.5,
-                                  pt: wIdx === 0 ? 1 : 2,
-                                  pb: 0.25,
-                                  fontWeight: 700,
-                                  fontSize: 10,
-                                  textTransform: 'uppercase',
-                                  letterSpacing: 1.4,
-                                  color: '#1F1F1F66',
-                                  borderBottom: '1px solid rgba(31,31,31,0.08)',
-                                }}
-                              >
-                                {wg.label}
-                              </TableCell>
-                            </TableRow>
-                            {wg.items.map(line => (
-                              <TableRow key={line.product.id}>
-                                <TableCell sx={{ pl: 2.5, py: 0.75 }}>
-                                  <Box sx={{ fontWeight: 600, fontSize: 13 }}>{line.product.name}</Box>
-                                </TableCell>
-                                <TableCell align="right" sx={{ py: 0.75, width: 60 }}>{line.qty}</TableCell>
-                                <TableCell align="right" sx={{ py: 0.5, width: 40 }}>
-                                  <IconButton size="small" color="error" onClick={() => setQty(line.product, 0)}>
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </IconButton>
-                                </TableCell>
-                              </TableRow>
+                  {rg.children.map(catGroup => (
+                    <Paper
+                      key={catGroup.category}
+                      elevation={0}
+                      sx={{ mb: 1.5, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+                    >
+                      <Box
+                        sx={{
+                          bgcolor: '#FCD835',
+                          borderBottom: '2px solid #1F1F1F',
+                          px: 1.5,
+                          py: 0.75,
+                          fontWeight: 700,
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.6,
+                          color: '#1F1F1F',
+                        }}
+                      >
+                        {catGroup.category}
+                      </Box>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableBody>
+                            {catGroup.weightGroups.map((wg, wIdx) => (
+                              <Fragment key={`${catGroup.category}__${wg.label}`}>
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={3}
+                                    sx={{
+                                      bgcolor: '#FFFFFF',
+                                      pl: 1.5,
+                                      pt: wIdx === 0 ? 1 : 2,
+                                      pb: 0.25,
+                                      fontWeight: 700,
+                                      fontSize: 10,
+                                      textTransform: 'uppercase',
+                                      letterSpacing: 1.4,
+                                      color: '#1F1F1F66',
+                                      borderBottom: '1px solid rgba(31,31,31,0.08)',
+                                    }}
+                                  >
+                                    {wg.label}
+                                  </TableCell>
+                                </TableRow>
+                                {wg.items.map(line => (
+                                  <TableRow key={line.product.id}>
+                                    <TableCell sx={{ pl: 2.5, py: 0.75 }}>
+                                      <Box sx={{ fontWeight: 600, fontSize: 13 }}>{line.product.name}</Box>
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ py: 0.75, width: 60 }}>{line.qty}</TableCell>
+                                    <TableCell align="right" sx={{ py: 0.5, width: 40 }}>
+                                      <IconButton size="small" color="error" onClick={() => setQty(line.product, 0)}>
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </IconButton>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </Fragment>
                             ))}
-                          </Fragment>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Paper>
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Paper>
+                  ))}
+                </Box>
               ))}
 
               {/* Grand-totals strip — single line below all cards, no per-card
@@ -1170,6 +1269,18 @@ export default function ShopRequestNew() {
           : undefined}
         onDiscard={() => guard.proceed?.()}
         onCancel={() => guard.reset?.()}
+      />
+
+      {/* Discard Draft confirm — gated so an accidental click on the
+          sticky bottom bar doesn't wipe minutes of cart-building. */}
+      <ConfirmDialog
+        open={discardConfirmOpen}
+        title="Discard this draft?"
+        message="Your saved cart and notes will be cleared. You'll have to start the request from scratch. This can't be undone."
+        confirmLabel="Yes, discard"
+        cancelLabel="Keep editing"
+        onConfirm={handleDiscardDraft}
+        onCancel={() => setDiscardConfirmOpen(false)}
       />
     </Box>
   )
