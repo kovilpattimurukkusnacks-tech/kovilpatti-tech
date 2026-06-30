@@ -5,9 +5,16 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { splitBalancedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
+
+// Per-card height estimator — number of "rows" the card will occupy
+// (banner + each weight header + each product). Used by splitBalancedColumns
+// to pick the shorter side. Exact pixels aren't needed; relative size is.
+const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
+  1 + cg.weightGroups.reduce((s, wg) => s + 1 + wg.items.length, 0)
 
 // Brand block — mirrors the thermal receipt's centred header so admin/godown
 // prints feel like the same product. Name stays constant; contact comes from
@@ -169,75 +176,88 @@ export default function PrintRequestPicklist() {
           its sub-category banners. break-inside:avoid keeps a sub-category
           together; the root heading is reserved for the print layout (the
           on-screen detail page uses the fieldset/legend wrapper instead). */}
-      {rootGroups.map(rg => (
-        <section key={rg.root} className="print-root-section">
-          <h2 className="print-root-heading">
-            {rg.root}
-            <span className="muted">
-              · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
-              · {rg.unitCount} units
-            </span>
-          </h2>
-          <div className="print-dense-grid">
-            {rg.children.map(section => {
-              const sectionQty = section.weightGroups.reduce(
-                (s, wg) => s + wg.items.reduce((a, it) => a + it.requestedQty, 0), 0)
-              const productCount = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
-              return (
-                <section key={section.category} className="print-dense-section">
-                  <div className="print-dense-banner">
-                    {section.category}
-                    <span className="muted">
-                      · {productCount} {productCount === 1 ? 'product' : 'products'}
-                      · {sectionQty} units
-                    </span>
-                  </div>
-                  {/* 5-col dense table — # / product / req / disp / amount. */}
-                  <table className="print-dense-table">
-                    <colgroup>
-                      <col style={{ width: 20 }} />
-                      <col />
-                      <col style={{ width: 32 }} />
-                      <col style={{ width: 40 }} />
-                      <col style={{ width: 56 }} />
-                    </colgroup>
-                    <tbody>
-                      {section.weightGroups.map(wg => {
-                        let idx = 0
-                        return (
-                          <Fragment key={`${section.category}__${wg.label}`}>
-                            <tr className="print-weight-row-dense">
-                              <td colSpan={5}>{wg.label}</td>
+      {rootGroups.map(rg => {
+        const { left, right } = splitBalancedColumns(rg.children, heightOfCatGroup)
+        const renderCard = (section: typeof rg.children[number]) => {
+          const sectionQty = section.weightGroups.reduce(
+            (s, wg) => s + wg.items.reduce((a, it) => a + it.requestedQty, 0), 0)
+          const productCount = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
+          return (
+            <section key={section.category} className="print-dense-section">
+              <div className="print-dense-banner">
+                {section.category}
+                <span className="muted">
+                  · {productCount} {productCount === 1 ? 'product' : 'products'}
+                  · {sectionQty} units
+                </span>
+              </div>
+              {/* 5-col dense table — # / product / req / disp / amount. */}
+              <table className="print-dense-table">
+                <colgroup>
+                  <col style={{ width: 20 }} />
+                  <col />
+                  <col style={{ width: 32 }} />
+                  <col style={{ width: 40 }} />
+                  <col style={{ width: 56 }} />
+                </colgroup>
+                <tbody>
+                  {section.weightGroups.map(wg => {
+                    let idx = 0
+                    return (
+                      <Fragment key={`${section.category}__${wg.label}`}>
+                        <tr className="print-weight-row-dense">
+                          <td colSpan={5}>{wg.label}</td>
+                        </tr>
+                        {wg.items.map(it => {
+                          idx++
+                          const effQty = it.dispatchedQty ?? it.requestedQty
+                          const lineAmt = effQty * it.unitPrice
+                          return (
+                            <tr key={it.id}>
+                              <td>{idx}</td>
+                              <td><strong>{it.productName}</strong></td>
+                              <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
+                              <td style={{ textAlign: 'right' }}>
+                                <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
+                              </td>
+                              <td style={{ textAlign: 'right' }} className="strong">
+                                {formatINR(lineAmt, { prefix: false })}
+                              </td>
                             </tr>
-                            {wg.items.map(it => {
-                              idx++
-                              const effQty = it.dispatchedQty ?? it.requestedQty
-                              const lineAmt = effQty * it.unitPrice
-                              return (
-                                <tr key={it.id}>
-                                  <td>{idx}</td>
-                                  <td><strong>{it.productName}</strong></td>
-                                  <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
-                                  <td style={{ textAlign: 'right' }}>
-                                    <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
-                                  </td>
-                                  <td style={{ textAlign: 'right' }} className="strong">
-                                    {formatINR(lineAmt, { prefix: false })}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </Fragment>
-                        )
-                      })}
-                    </tbody>
-                  </table>
-                </section>
-              )
-            })}
-          </div>
-        </section>
-      ))}
+                          )
+                        })}
+                      </Fragment>
+                    )
+                  })}
+                </tbody>
+              </table>
+            </section>
+          )
+        }
+        return (
+          <table key={rg.root} className="print-root-section">
+            <thead>
+              <tr><td>
+                <h2 className="print-root-heading">
+                  {rg.root}
+                  <span className="muted">
+                    · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+                    · {rg.unitCount} units
+                  </span>
+                </h2>
+              </td></tr>
+            </thead>
+            <tbody>
+              <tr><td>
+                <div className="print-dense-grid">
+                  <div className="print-dense-col">{left.map(renderCard)}</div>
+                  <div className="print-dense-col">{right.map(renderCard)}</div>
+                </div>
+              </td></tr>
+            </tbody>
+          </table>
+        )
+      })}
 
       {/* Single compact totals strip — quantities on the left, money on
           the right. Post-dispatch shows the delivered numbers; pre-dispatch

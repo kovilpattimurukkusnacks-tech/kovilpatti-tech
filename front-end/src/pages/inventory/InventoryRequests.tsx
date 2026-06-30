@@ -1,10 +1,11 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
-import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField } from '@mui/material'
+import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
   useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
@@ -93,6 +94,40 @@ export default function InventoryRequests() {
   // chip is active, both status and requestType collapse to a single filter
   // (requestType='Return', no status) so the chip row mirrors the table.
   const shopCounts = useRequestCountByShop({ status: currentStatus, requestType: currentRequestType })
+
+  // Standalone Pending count (independent of the active preset) — drives the
+  // confirmation dialog on the Print Cumulative button so the dispatcher
+  // knows "X requests are still pending and won't be in this print" before
+  // a tab opens. Same hook the shop-chip badges use, just filtered to
+  // status='Pending' and summed across shops.
+  const pendingShopCounts = useRequestCountByShop({ status: 'Pending' })
+  const totalPending = useMemo(
+    () => (pendingShopCounts.data ?? []).reduce((sum, r) => sum + r.requestCount, 0),
+    [pendingShopCounts.data],
+  )
+
+  // Print Cumulative gating (30-Jun-2026): only enabled on the In-Progress
+  // tab — the report itself is scoped to status='Approved' (= In-Progress)
+  // rows, so allowing the print from other tabs is semantically wrong.
+  // Other tabs render the button disabled with a tooltip explaining how
+  // to enable it.
+  const isInProgressTab = activePreset === 'approved'
+  const canPrintCumulative = isInProgressTab && hasPending
+  const printCumulativeTooltip =
+    !isInProgressTab ? 'Switch to In-Progress tab to print the batch plan'
+    : !hasPending    ? 'No in-progress requests to print'
+    : totalPending > 0
+      ? `${totalPending} request${totalPending === 1 ? ' is' : 's are'} still pending — you'll get a confirmation first`
+      : undefined
+
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
+  const openPrintCumulative = () => {
+    window.open('/print/cumulative', '_blank', 'noopener,noreferrer')
+  }
+  const onPrintCumulativeClick = () => {
+    if (totalPending > 0) setPrintConfirmOpen(true)
+    else openPrintCumulative()
+  }
 
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
@@ -250,17 +285,41 @@ export default function InventoryRequests() {
       <PageHeader
         title="Incoming Requests"
         subtitle={list.isLoading ? 'Loading…' : `${total} ${total === 1 ? 'request' : 'requests'}`}
+        // MUI Tooltip wraps a <span> so hover fires even when the Button
+        // underneath is disabled — browsers swallow pointer events on
+        // disabled buttons, so a native `title` attribute (or a Tooltip
+        // directly on the button) never shows in the wrong-tab case.
         action={
-          <Button
-            variant="contained"
-            startIcon={<Printer className="w-4 h-4" />}
-            onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
-            disabled={!hasPending}
-            title={hasPending ? undefined : 'No in-progress requests to print'}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Print Cumulative
-          </Button>
+          <Tooltip title={printCumulativeTooltip ?? ''} placement="bottom" arrow>
+            <span style={{ display: 'inline-block' }}>
+              <Button
+                variant="outlined"
+                startIcon={<Printer className="w-4 h-4" />}
+                onClick={onPrintCumulativeClick}
+                disabled={!canPrintCumulative}
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  bgcolor: '#FFF8E1',
+                  color: '#1F1F1F',
+                  borderColor: '#C28A00',
+                  borderWidth: '1.5px',
+                  '&:hover': {
+                    bgcolor: '#FCD835',
+                    borderColor: '#A07000',
+                    borderWidth: '1.5px',
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: '#FFFBE6',
+                    color: 'rgba(31,31,31,0.4)',
+                    borderColor: 'rgba(194,138,0,0.45)',
+                  },
+                }}
+              >
+                Print Cumulative
+              </Button>
+            </span>
+          </Tooltip>
         }
       />
 
@@ -510,6 +569,23 @@ export default function InventoryRequests() {
           }}
         />
       </Paper>
+
+      {/* Print Cumulative confirmation — fires only when there are Pending
+          requests that won't be included in the print (which sources only
+          Approved/In-Progress data). Lets the dispatcher decide whether to
+          wait for more approvals or print the current set as-is. */}
+      <ConfirmDialog
+        open={printConfirmOpen}
+        title={`${totalPending} ${totalPending === 1 ? 'request is' : 'requests are'} still pending`}
+        message={`Only the in-progress (approved) requests will be included in this batch plan. Pending requests won't appear here until they're approved. Print anyway?`}
+        confirmLabel="Yes, print approved"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setPrintConfirmOpen(false)
+          openPrintCumulative()
+        }}
+        onCancel={() => setPrintConfirmOpen(false)}
+      />
     </div>
   )
 }

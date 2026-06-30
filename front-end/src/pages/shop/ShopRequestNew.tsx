@@ -407,8 +407,23 @@ export default function ShopRequestNew() {
   // re-run cancels the pending timer, effectively debouncing — keep typing,
   // no save; pause 1.5s, save fires. Only active in the new-request flow
   // (drafts enabled) and when there's something to save.
+  //
+  // 30-Jun-2026 — gated on `saveDraftMutation.isPending` so saves are
+  // strictly serial. Previously, if a save took longer than 1.5s (Railway
+  // cold-start, slow network) and the user kept editing / navigating, the
+  // debounce could fire a SECOND mutation while the first was still in
+  // flight. Two concurrent INSERTs into stock_requests then raced on the
+  // `uq_stock_requests_one_draft_per_shop` partial unique index, the loser
+  // threw a constraint violation, and that save's payload was silently
+  // dropped — the bug the shop user hit when they rapid-pressed Next.
+  //
+  // With this guard: if a save is in flight, the timer effect skips. As
+  // soon as the in-flight save settles (isPending → false), the effect
+  // re-runs and — if the cart is still dirty — schedules a fresh 1.5s
+  // timer with the latest state. No concurrency, latest-state-wins.
   useEffect(() => {
     if (!draftEnabled || !isDraftDirty || cart.size === 0) return
+    if (saveDraftMutation.isPending) return
 
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
@@ -436,11 +451,11 @@ export default function ShopRequestNew() {
     }, 1500)
 
     return () => clearTimeout(timer)
-    // saveDraftMutation deliberately omitted from deps — its identity changes
-    // on every render, which would reset the debounce timer on every keystroke.
-    // We rely on the closure capturing the latest mutation at effect-fire time.
+    // saveDraftMutation.mutate's identity changes per render so we capture
+    // it via the closure at fire-time; isPending IS in deps because we
+    // want the effect to re-run when the previous save lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draftEnabled, isDraftDirty, cart, notes])
+  }, [draftEnabled, isDraftDirty, cart, notes, saveDraftMutation.isPending])
 
   // Review & Submit gate — shop user (new mode only) must have visited every
   // category before submitting. Edit-mode and admin-acting-on-shop bypass:

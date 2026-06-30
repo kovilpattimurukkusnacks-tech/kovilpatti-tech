@@ -3,9 +3,13 @@ import { useSearchParams } from 'react-router-dom'
 import { useCumulativePending } from '../../hooks/useStockRequests'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { splitBalancedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
+
+const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
+  1 + cg.weightGroups.reduce((s, wg) => s + 1 + wg.items.length, 0)
 
 // Brand block — mirrors the thermal receipt + per-request picklist so all
 // three printouts feel like the same family. Contact phone is per-shop on
@@ -143,66 +147,79 @@ export default function PrintCumulative() {
               sub-cat banner cards flow into a 2-col grid below. Mirrors the
               per-request picklist + the 3-inch thermal slip so the kitchen
               sees the same hierarchy everywhere. */}
-          {rootGroups.map(rg => (
-            <section key={rg.root} className="print-root-section">
-              <h2 className="print-root-heading">
-                {rg.root}
-                <span className="muted">
-                  · {rg.skuCount} {rg.skuCount === 1 ? 'SKU' : 'SKUs'}
-                  · {rg.unitCount} units
-                </span>
-              </h2>
-              <div className="print-dense-grid">
-                {rg.children.map(section => {
-                  const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
-                  const subtotalQty = section.weightGroups.reduce(
-                    (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0)
-                  return (
-                    <section key={section.category} className="print-dense-section">
-                      <div className="print-dense-banner">
-                        {section.category}
-                        <span className="muted">
-                          · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
-                          · {subtotalQty} units
-                        </span>
-                      </div>
-                      <table className="print-dense-table">
-                        <colgroup>
-                          <col style={{ width: 22 }} />
-                          <col />
-                          <col style={{ width: 60 }} />
-                          <col style={{ width: 48 }} />
-                        </colgroup>
-                        <tbody>
-                          {section.weightGroups.map(wg => {
-                            let idx = 0
-                            return (
-                              <Fragment key={`${section.category}__${wg.label}`}>
-                                <tr className="print-weight-row-dense">
-                                  <td colSpan={4}>{wg.label}</td>
+          {rootGroups.map(rg => {
+            const { left, right } = splitBalancedColumns(rg.children, heightOfCatGroup)
+            const renderCard = (section: typeof rg.children[number]) => {
+              const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
+              const subtotalQty = section.weightGroups.reduce(
+                (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0)
+              return (
+                <section key={section.category} className="print-dense-section">
+                  <div className="print-dense-banner">
+                    {section.category}
+                    <span className="muted">
+                      · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
+                      · {subtotalQty} units
+                    </span>
+                  </div>
+                  <table className="print-dense-table">
+                    <colgroup>
+                      <col style={{ width: 22 }} />
+                      <col />
+                      <col style={{ width: 60 }} />
+                      <col style={{ width: 48 }} />
+                    </colgroup>
+                    <tbody>
+                      {section.weightGroups.map(wg => {
+                        let idx = 0
+                        return (
+                          <Fragment key={`${section.category}__${wg.label}`}>
+                            <tr className="print-weight-row-dense">
+                              <td colSpan={4}>{wg.label}</td>
+                            </tr>
+                            {wg.items.map(r => {
+                              idx++
+                              return (
+                                <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
+                                  <td>{idx}</td>
+                                  <td><strong>{r.productName}</strong></td>
+                                  <td>{r.type}</td>
+                                  <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
                                 </tr>
-                                {wg.items.map(r => {
-                                  idx++
-                                  return (
-                                    <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
-                                      <td>{idx}</td>
-                                      <td><strong>{r.productName}</strong></td>
-                                      <td>{r.type}</td>
-                                      <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
-                                    </tr>
-                                  )
-                                })}
-                              </Fragment>
-                            )
-                          })}
-                        </tbody>
-                      </table>
-                    </section>
-                  )
-                })}
-              </div>
-            </section>
-          ))}
+                              )
+                            })}
+                          </Fragment>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </section>
+              )
+            }
+            return (
+              <table key={rg.root} className="print-root-section">
+                <thead>
+                  <tr><td>
+                    <h2 className="print-root-heading">
+                      {rg.root}
+                      <span className="muted">
+                        · {rg.skuCount} {rg.skuCount === 1 ? 'SKU' : 'SKUs'}
+                        · {rg.unitCount} units
+                      </span>
+                    </h2>
+                  </td></tr>
+                </thead>
+                <tbody>
+                  <tr><td>
+                    <div className="print-dense-grid">
+                      <div className="print-dense-col">{left.map(renderCard)}</div>
+                      <div className="print-dense-col">{right.map(renderCard)}</div>
+                    </div>
+                  </td></tr>
+                </tbody>
+              </table>
+            )
+          })}
 
           {/* Compact grand-totals strip below the root sections. */}
               <div className="print-dense-summary">

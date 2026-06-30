@@ -42,12 +42,16 @@
   margin-top: 4px;
 }
 
-/* Meta strip — single-band fact row that replaces the old timestamps row
- * + parties block. Splits onto multiple lines on narrow widths via flex
- * wrap; on a wide A4 page everything sits in a single line. */
+/* Meta strip — single-band fact row used by the cumulative batch plan.
+ * Items push to opposite ends of the row via justify-content:space-between
+ * so "Generated:" sits on the left and "Sourced from:" on the right
+ * (30-Jun-2026 client req). On narrow widths flex-wrap stacks them; the
+ * wrap rule preserves readability if the print is generated at an unusual
+ * width. */
 .print-meta-strip {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 4px 14px;
   font-size: 12px;
   margin-bottom: 10px;
@@ -386,15 +390,27 @@
      • Dropped the 'From Requests' per-row column — surfaced in the page
        summary instead.
    ───────────────────────────────────────────────────────────────────────── */
-/* Root-category section (30-Jun-2026). Wraps one root's sub-cat banner
- * cards under an underline-style heading. Each root sits in its own
- * vertical block; the 2-col card flow happens INSIDE each block via the
- * nested .print-dense-grid below, so sub-cats from different roots never
- * mix in the same column. */
+/* Root-category section (30-Jun-2026, second pass). Wraps one root's
+ * sub-cat banner cards under an underline-style heading.
+ *
+ * Implemented as a 1-column <table> so the heading (in <thead>) repeats
+ * at the top of every page when the root's cards spill across multiple
+ * sheets — same trick the outer .print-page-table uses for the brand
+ * block. Without this, page 3 would start mid-cards with no clue which
+ * root the cards belong to (client report 30-Jun-2026: "MILLET FOODS
+ * heading missing on page 3"). */
 .print-root-section {
-  break-inside: avoid;
-  page-break-inside: auto;        /* root can spill across pages, sub-cats can't */
+  width: 100%;
+  border-collapse: collapse;
   margin-bottom: 14px;
+  page-break-inside: auto;        /* root can spill across pages, sub-cats can't */
+}
+.print-root-section > thead { display: table-header-group; }
+.print-root-section > tbody { display: table-row-group; }
+.print-root-section > thead > tr > td,
+.print-root-section > tbody > tr > td {
+  padding: 0;
+  vertical-align: top;
 }
 
 .print-root-heading {
@@ -420,21 +436,32 @@
   letter-spacing: 0.02em;
 }
 
-/* 30-Jun-2026 — switched from CSS `column-count: 2` to a 2-column grid.
+/* 30-Jun-2026 (third pass) — two flex columns with FE-side balancing.
  *
- * Why: `column-count` balances by HEIGHT — when a root has just 2 short
- * sub-cat cards, the browser puts both in column 1 and column 2 stays
- * empty (no need to balance). A grid fills cards into slots left-to-right
- * regardless of content height, so 2 cards always land as left + right,
- * 3 cards as left+right+left (one empty slot), 4 as two full rows, etc.
- * Saves paper on requests with a small number of sub-cats per root. */
+ * History:
+ *   • Was `column-count: 2`. Problem: short content stays in col 1, col 2
+ *     empty. Wasted paper.
+ *   • Then CSS Grid `repeat(2, 1fr)` with `align-items: start`. Problem:
+ *     when one card in row 1 is much taller (e.g. REGULAR with 7 items
+ *     vs CHIPS with 1), the next card on the short side starts BELOW
+ *     the tall card, leaving a big vertical gap above it.
+ *   • Now: render two flex columns side-by-side and let JS (see
+ *     splitBalancedColumns in utils) assign each card to whichever
+ *     column is currently shorter. Both columns end at roughly the
+ *     same height with no row-induced gaps. */
 .print-dense-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  column-gap: 18px;
-  row-gap: 12px;
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
   margin-top: 4px;
-  align-items: start;
+}
+
+.print-dense-col {
+  flex: 1 1 0;
+  min-width: 0;       /* allow shrinking; long names ellipsis cleanly */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;          /* vertical gap between cards within the column */
 }
 
 .print-dense-section {
@@ -442,7 +469,7 @@
      a column or page boundary unless it's genuinely too tall for one page. */
   break-inside: avoid;
   page-break-inside: avoid;
-  min-width: 0;   /* let the cell shrink so long product names ellipsis cleanly */
+  min-width: 0;
 }
 
 .print-dense-banner {
@@ -534,8 +561,8 @@
   }
   @page {
     size: A4;
-    /* 30-Jun-2026 — bumped 12mm → 18mm side margin so the printed sheet
-     * has visible breathing room on each edge. Top/bottom stay at 12mm. */
+    /* 18mm side margin so the printed sheet has visible breathing room
+     * on each edge (client req 30-Jun-2026); top/bottom stay at 12mm. */
     margin: 12mm 18mm;
   }
 }
