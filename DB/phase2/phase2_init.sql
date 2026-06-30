@@ -131,6 +131,21 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   -- NULL on Orders (enforced by chk_source_only_for_returns below).
   source_request_id uuid           REFERENCES stock_requests(id) ON DELETE SET NULL,
 
+  -- Godown-supplied label on a saved dispatch draft. Pure UX field so a
+  -- dispatcher juggling 6-10 drafts can identify "morning batch" vs "the
+  -- one waiting on pickle" at a glance. Set by fn_request_save_dispatch_draft;
+  -- cleared (alongside the draft_dispatched_qty fields on items) by
+  -- fn_request_dispatch and fn_request_clear_dispatch_draft. NULL on every
+  -- finalised request and on un-named drafts.
+  draft_name        varchar(60),
+
+  -- "Pinned" flag on a dispatch draft — pinned drafts sort first in the
+  -- resume strip so the dispatcher can mark a few as "work on these next".
+  -- Timestamp-typed (not boolean) so we can also use it as a stable sort
+  -- key among multiple pinned drafts. NULL = not pinned. Cleared on
+  -- discard / dispatch alongside the rest of the draft state.
+  pinned_at         timestamptz,
+
   is_deleted        boolean        NOT NULL DEFAULT false,
   created_at        timestamptz    NOT NULL DEFAULT now(),
   created_by        uuid           REFERENCES users(id) ON DELETE SET NULL,

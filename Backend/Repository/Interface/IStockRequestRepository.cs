@@ -72,7 +72,17 @@ public interface IStockRequestRepository
     Task<bool> SaveDispatchDraftAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default);
 
     /// Clear all draft_dispatched_qty on a request — inventory's discard path.
+    /// Also nulls the draft_name label (paired lifecycle).
     Task<bool> ClearDispatchDraftAsync(Guid id, Guid userId, CancellationToken ct = default);
+
+    /// Set / clear the godown's free-text label on a saved dispatch draft.
+    /// `name` should already be trimmed + null-emptied by the caller — pass
+    /// NULL to clear, any string to set.
+    Task<bool> RenameDispatchDraftAsync(Guid id, Guid userId, string? name, CancellationToken ct = default);
+
+    /// Pin / unpin a saved dispatch draft. Pass `pinned=true` to pin
+    /// (SP sets pinned_at = now()), `pinned=false` to unpin (clears pinned_at).
+    Task<bool> PinDispatchDraftAsync(Guid id, Guid userId, bool pinned, CancellationToken ct = default);
 
     /// List of Pending/Approved requests in this inventory that have at least
     /// one item with draft_dispatched_qty set. Header-shaped (no items JSON).
