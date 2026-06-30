@@ -35,3 +35,7 @@ public record DispatchItem(
 /// Inventory user renames a saved dispatch draft. Empty / whitespace-only
 /// Name clears the existing name (BE trims + null-empties before the SP).
 public record RenameDispatchDraftRequest(string? Name);
+
+/// Pin / unpin a saved dispatch draft so it sorts to the top of the resume
+/// strip. Re-pinning a pinned draft bumps the timestamp (re-prioritises).
+public record PinDispatchDraftRequest(bool Pinned);

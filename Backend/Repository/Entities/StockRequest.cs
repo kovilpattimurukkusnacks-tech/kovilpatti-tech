@@ -78,6 +78,11 @@ public class StockRequest
     /// at its default null — that's fine, the DTO field is nullable too).
     public string? Draft_Name { get; set; }
 
+    /// When the dispatch draft was pinned (NULL = not pinned). Used to
+    /// sort pinned drafts above unpinned ones on the resume strip.
+    /// Cleared on discard / dispatch alongside Draft_Name.
+    public DateTimeOffset? Pinned_At { get; set; }
+
     /// Only populated by fn_request_get. Null for list rows.
     public string? Items { get; set; }
 }

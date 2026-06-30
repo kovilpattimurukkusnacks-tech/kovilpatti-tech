@@ -1,13 +1,13 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon } from 'lucide-react'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
 import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
-  useInventoryDispatchDrafts, useRenameDispatchDraft,
+  useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
 } from '../../hooks/useStockRequests'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
@@ -111,6 +111,7 @@ export default function InventoryRequests() {
     })
   }, [dispatchDrafts.data, debouncedDraftFilter])
   const renameDraft = useRenameDispatchDraft()
+  const pinDraft    = usePinDispatchDraft()
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -331,7 +332,12 @@ export default function InventoryRequests() {
                       ) : undefined,
                     },
                   }}
-                  sx={{ bgcolor: '#FFFBE6' }}
+                  // bgcolor on the OutlinedInput slot (not the TextField root)
+                  // so the whole field — icon adornment, input, clear button —
+                  // shares one cream background. Setting it on the root left
+                  // the input wrapper transparent → adornment patches showed
+                  // through with the page bg. (30-Jun-2026 fix.)
+                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFBE6' } }}
                 />
               )}
               {filteredDrafts.length === 0 ? (
@@ -343,8 +349,10 @@ export default function InventoryRequests() {
                   key={d.id}
                   draft={d}
                   renameInFlight={renameDraft.isPending}
+                  pinInFlight={pinDraft.isPending}
                   onResume={() => navigate(`/inventory/requests/${d.id}`)}
                   onRename={(name) => renameDraft.mutate({ id: d.id, req: { name } })}
+                  onTogglePin={() => pinDraft.mutate({ id: d.id, req: { pinned: !d.pinnedAt } })}
                 />
               ))}
             </Box>
@@ -515,11 +523,13 @@ export default function InventoryRequests() {
 
 const DRAFT_NAME_MAX = 60
 
-function DraftRow({ draft, renameInFlight, onResume, onRename }: {
+function DraftRow({ draft, renameInFlight, pinInFlight, onResume, onRename, onTogglePin }: {
   draft: StockRequestDto
   renameInFlight: boolean
+  pinInFlight: boolean
   onResume: () => void
   onRename: (name: string | null) => void
+  onTogglePin: () => void
 }) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(draft.draftName ?? '')
@@ -576,6 +586,24 @@ function DraftRow({ draft, renameInFlight, onResume, onRename }: {
       }}
     >
       <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+      {/* Pin toggle — pinned drafts sort to the top of the resume strip.
+          Filled gold icon when pinned, muted outline when unpinned. */}
+      <IconButton
+        size="small"
+        onClick={onTogglePin}
+        disabled={pinInFlight}
+        aria-label={draft.pinnedAt ? 'Unpin draft' : 'Pin draft to top'}
+        title={draft.pinnedAt ? 'Unpin' : 'Pin to top'}
+        sx={{
+          p: 0.5,
+          color: draft.pinnedAt ? '#C28A00' : 'rgba(31,31,31,0.4)',
+          '&:hover': { bgcolor: 'rgba(31,31,31,0.06)', color: draft.pinnedAt ? '#A07000' : '#1F1F1F' },
+        }}
+      >
+        {draft.pinnedAt
+          ? <Pin    className="w-4 h-4" fill="currentColor" />
+          : <PinOff className="w-4 h-4" />}
+      </IconButton>
       <Box sx={{ flex: 1, minWidth: 0 }}>
         {editing ? (
           <TextField

@@ -82,6 +82,13 @@ public interface IStockRequestService
     Task<StockRequestDto> RenameDispatchDraftAsync(
         Guid id, RenameDispatchDraftRequest request, CancellationToken ct = default);
 
+    /// Pin / unpin a saved dispatch draft. Pinned drafts sort to the top of
+    /// the resume strip. Same inventory-scope + Pending/Approved guards as
+    /// the other draft SPs. Returns the refreshed request DTO so caches
+    /// stay in sync.
+    Task<StockRequestDto> PinDispatchDraftAsync(
+        Guid id, PinDispatchDraftRequest request, CancellationToken ct = default);
+
     /// List of incoming requests (Pending/Approved) that have a saved
     /// dispatch draft on at least one item. Inventory role scoped to own
     /// inventory; admin may pass inventoryId or NULL for tenant-wide;

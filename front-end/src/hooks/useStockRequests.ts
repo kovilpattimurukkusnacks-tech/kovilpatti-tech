@@ -5,7 +5,7 @@ import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
-  RenameDispatchDraftRequest,
+  RenameDispatchDraftRequest, PinDispatchDraftRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -204,6 +204,49 @@ export function useClearDispatchDraft() {
     mutationFn: (id: string) => stockRequestsApi.clearDispatchDraft(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Pin / unpin a saved dispatch draft (Inventory/Admin). Pinned drafts
+ *  sort first on the resume strip. Optimistic — reorders + flags the
+ *  draft-list cache instantly; rolls back on error. */
+export function usePinDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: PinDispatchDraftRequest }) =>
+      stockRequestsApi.pinDispatchDraft(id, req),
+    onMutate: async ({ id, req }) => {
+      await qc.cancelQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+      const prev = qc.getQueryData<StockRequestDto[]>(['stock-requests', 'dispatch-drafts'])
+      // Optimistic: flip pinnedAt and re-sort (pinned first by pinnedAt
+      // DESC, then unpinned by updatedAt DESC — matches the SP's ORDER BY).
+      const stampIso = prev?.find(d => d.id === id)?.pinnedAt
+        ?? (req.pinned ? new Date().toISOString() : null)
+      qc.setQueryData<StockRequestDto[]>(
+        ['stock-requests', 'dispatch-drafts'],
+        (old) => {
+          if (!old) return old
+          const updated = old.map(d => d.id === id
+            ? { ...d, pinnedAt: req.pinned ? (stampIso ?? new Date().toISOString()) : null }
+            : d)
+          return [...updated].sort((a, b) => {
+            const aPin = a.pinnedAt, bPin = b.pinnedAt
+            if (aPin && !bPin) return -1
+            if (!aPin && bPin) return 1
+            if (aPin && bPin) return bPin.localeCompare(aPin)
+            return b.updatedAt.localeCompare(a.updatedAt)
+          })
+        },
+      )
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stock-requests', 'dispatch-drafts'], ctx.prev)
+    },
+    onSettled: (updated) => {
+      if (updated) qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
     },
   })

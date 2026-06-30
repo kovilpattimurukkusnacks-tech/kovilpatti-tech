@@ -19,6 +19,7 @@ import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
 import { ValidationError } from '../../api/errors'
@@ -474,6 +475,30 @@ export default function ShopRequestNew() {
     ),
     [cart],
   )
+
+  // 30-Jun-2026 — re-bucket cart's leaf-cat groups under their ROOT category
+  // in the hard-coded priority order. Mirrors the request-detail / picklist
+  // hierarchy so the shop user sees the same grouping on screen, in the
+  // cart-review dialog, on the print picklist, and on the thermal slip.
+  const groupedCartByRoot = useMemo(() => {
+    const lookup = buildRootLookup(allCats)
+    const byRoot = new Map<string, typeof groupedCart>()
+    for (const cg of groupedCart) {
+      const root = lookup(cg.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(cg)
+      else byRoot.set(root, [cg])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, cg) => sum + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [groupedCart, allCats])
 
   // Stable identity across renders so memoized ProductRow children don't all
   // re-render when the cart changes. Uses functional setCart so it doesn't
@@ -1013,72 +1038,98 @@ export default function ShopRequestNew() {
             </Box>
           ) : (
             <>
-              {/* One card per category — matches the request detail / picklist
-                  layout so the user sees a consistent grouping everywhere. */}
-              {groupedCart.map(catGroup => (
-                <Paper
-                  key={catGroup.category}
-                  elevation={0}
-                  sx={{ mb: 1.5, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
-                >
+              {/* Two-level grouping: outer = ROOT category (1 KG SNACKS, etc.)
+                  with an underline-style heading; inner = leaf-cat cards
+                  (existing yellow banner + per-product rows). Mirrors the
+                  request-detail / print hierarchy so the shop user sees
+                  the same shape everywhere (30-Jun-2026). */}
+              {groupedCartByRoot.map((rg, rgIdx) => (
+                <Box key={rg.root} sx={{ mb: 2 }}>
                   <Box
                     sx={{
-                      bgcolor: '#FCD835',
-                      borderBottom: '2px solid #1F1F1F',
-                      px: 1.5,
-                      py: 0.75,
+                      fontSize: 13,
                       fontWeight: 700,
-                      fontSize: 12,
                       textTransform: 'uppercase',
                       letterSpacing: 0.6,
                       color: '#1F1F1F',
+                      textAlign: 'center',
+                      pb: 0.5,
+                      mb: 1,
+                      mt: rgIdx === 0 ? 0 : 0.5,
+                      borderBottom: '2px solid #1F1F1F',
                     }}
                   >
-                    {catGroup.category}
+                    {rg.root}
+                    <Box component="span" sx={{ ml: 1, fontSize: 11, color: '#1F1F1F99', fontWeight: 600 }}>
+                      · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+                    </Box>
                   </Box>
-                  <TableContainer>
-                    <Table size="small">
-                      <TableBody>
-                        {catGroup.weightGroups.map((wg, wIdx) => (
-                          <Fragment key={`${catGroup.category}__${wg.label}`}>
-                            <TableRow>
-                              <TableCell
-                                colSpan={3}
-                                sx={{
-                                  bgcolor: '#FFFFFF',
-                                  pl: 1.5,
-                                  pt: wIdx === 0 ? 1 : 2,
-                                  pb: 0.25,
-                                  fontWeight: 700,
-                                  fontSize: 10,
-                                  textTransform: 'uppercase',
-                                  letterSpacing: 1.4,
-                                  color: '#1F1F1F66',
-                                  borderBottom: '1px solid rgba(31,31,31,0.08)',
-                                }}
-                              >
-                                {wg.label}
-                              </TableCell>
-                            </TableRow>
-                            {wg.items.map(line => (
-                              <TableRow key={line.product.id}>
-                                <TableCell sx={{ pl: 2.5, py: 0.75 }}>
-                                  <Box sx={{ fontWeight: 600, fontSize: 13 }}>{line.product.name}</Box>
-                                </TableCell>
-                                <TableCell align="right" sx={{ py: 0.75, width: 60 }}>{line.qty}</TableCell>
-                                <TableCell align="right" sx={{ py: 0.5, width: 40 }}>
-                                  <IconButton size="small" color="error" onClick={() => setQty(line.product, 0)}>
-                                    <Trash2 className="w-3.5 h-3.5" />
-                                  </IconButton>
-                                </TableCell>
-                              </TableRow>
+                  {rg.children.map(catGroup => (
+                    <Paper
+                      key={catGroup.category}
+                      elevation={0}
+                      sx={{ mb: 1.5, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+                    >
+                      <Box
+                        sx={{
+                          bgcolor: '#FCD835',
+                          borderBottom: '2px solid #1F1F1F',
+                          px: 1.5,
+                          py: 0.75,
+                          fontWeight: 700,
+                          fontSize: 12,
+                          textTransform: 'uppercase',
+                          letterSpacing: 0.6,
+                          color: '#1F1F1F',
+                        }}
+                      >
+                        {catGroup.category}
+                      </Box>
+                      <TableContainer>
+                        <Table size="small">
+                          <TableBody>
+                            {catGroup.weightGroups.map((wg, wIdx) => (
+                              <Fragment key={`${catGroup.category}__${wg.label}`}>
+                                <TableRow>
+                                  <TableCell
+                                    colSpan={3}
+                                    sx={{
+                                      bgcolor: '#FFFFFF',
+                                      pl: 1.5,
+                                      pt: wIdx === 0 ? 1 : 2,
+                                      pb: 0.25,
+                                      fontWeight: 700,
+                                      fontSize: 10,
+                                      textTransform: 'uppercase',
+                                      letterSpacing: 1.4,
+                                      color: '#1F1F1F66',
+                                      borderBottom: '1px solid rgba(31,31,31,0.08)',
+                                    }}
+                                  >
+                                    {wg.label}
+                                  </TableCell>
+                                </TableRow>
+                                {wg.items.map(line => (
+                                  <TableRow key={line.product.id}>
+                                    <TableCell sx={{ pl: 2.5, py: 0.75 }}>
+                                      <Box sx={{ fontWeight: 600, fontSize: 13 }}>{line.product.name}</Box>
+                                    </TableCell>
+                                    <TableCell align="right" sx={{ py: 0.75, width: 60 }}>{line.qty}</TableCell>
+                                    <TableCell align="right" sx={{ py: 0.5, width: 40 }}>
+                                      <IconButton size="small" color="error" onClick={() => setQty(line.product, 0)}>
+                                        <Trash2 className="w-3.5 h-3.5" />
+                                      </IconButton>
+                                    </TableCell>
+                                  </TableRow>
+                                ))}
+                              </Fragment>
                             ))}
-                          </Fragment>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </TableContainer>
-                </Paper>
+                          </TableBody>
+                        </Table>
+                      </TableContainer>
+                    </Paper>
+                  ))}
+                </Box>
               ))}
 
               {/* Grand-totals strip — single line below all cards, no per-card

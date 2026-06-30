@@ -18,6 +18,8 @@ import { useSettings } from '../../hooks/useSettings'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { useCategories } from '../../hooks/useCategories'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
   // Drafts are reached via the dedicated draft endpoint, not the detail
@@ -57,6 +59,33 @@ export default function ShopRequestDetail() {
     ),
     [request?.items],
   )
+
+  // Two-level grouping: outer = root category (1 KG Snacks, Pickle/Thokku/Podi, …)
+  // in hard-coded priority order; inner = leaf-cat cards (existing layout).
+  // Lets the items grid read with the same top-level hierarchy the shop uses
+  // when picking products on the new-request page (30-Jun-2026 client req).
+  const categoriesQuery = useCategories()
+  const rootGroups = useMemo(() => {
+    const lookup = buildRootLookup(categoriesQuery.data)
+    const byRoot = new Map<string, typeof grouped>()
+    for (const cg of grouped) {
+      const root = lookup(cg.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(cg)
+      else byRoot.set(root, [cg])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        // Total product count across the root — surfaced in the legend so
+        // the user can size up a section at a glance.
+        const productCount = children.reduce(
+          (sum, cg) => sum + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [grouped, categoriesQuery.data])
 
   // Layout note: cards are placed into a CSS `column-count` container below,
   // so the browser auto-balances them across 2 columns (1 on mobile). No
@@ -321,22 +350,55 @@ export default function ShopRequestDetail() {
         </Box>
       </Paper>
 
-      {/* Items — CSS column-count masonry. Browser distributes cards across
-          two columns (1 on xs) to even out column height. break-inside on
-          each card stops a category from splitting across the gutter. */}
-      <Box
-        sx={{
-          columnCount: { xs: 1, md: 2 },
-          columnGap: 2,
-          // mb gives Notes / Errors / Actions room to breathe under the
-          // items grid. Previously the inline Summary card provided this
-          // gap; once that became a fixed footer (out of flow), buttons
-          // collapsed flush against items — restored explicitly here.
-          mb: 3,
-          '& > *': { breakInside: 'avoid', display: 'block' },
-        }}
-      >
-        {grouped.map(cg => renderCatGroup(cg))}
+      {/* Items — grouped under root-category sections in hard-coded priority
+          order (1 KG Snacks → Packing Items → … → Shop Needs). Each root
+          gets a cream banner strip on top with the name + product count
+          centered, then its leaf-cat cards flow into a 2-col grid below.
+          (30-Jun-2026: switched from fieldset/legend → flat banner per
+          client feedback — the dashed-border wrapper read as disconnected
+          from the centered title.) */}
+      <Box sx={{ mb: 3 }}>
+        {rootGroups.map(rg => (
+          <Box key={rg.root} sx={{ mb: 2.5 }}>
+            <Box
+              sx={{
+                // Brand gold gradient — same stops as the primary CTA in the
+                // app. Richer than the sub-cat banners' solid #FCD835, so the
+                // root tier reads as the dominant header at a glance.
+                background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                border: '2px solid #1F1F1F',
+                borderRadius: 1,
+                boxShadow: '2px 2px 0 0 rgba(31,31,31,0.15)',
+                px: 2,
+                py: 1.1,
+                mb: 1.5,
+                textAlign: 'center',
+                fontSize: { xs: 13.5, sm: 14.5 },
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: 1.2,
+                color: '#1F1F1F',
+              }}
+            >
+              {rg.root}
+              <Box
+                component="span"
+                sx={{ ml: 1, fontSize: 11.5, color: 'rgba(31,31,31,0.65)', fontWeight: 600, letterSpacing: 0.4 }}
+              >
+                · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+              </Box>
+            </Box>
+            <Box
+              sx={{
+                columnCount: { xs: 1, md: 2 },
+                columnGap: 2,
+                '& > *': { breakInside: 'avoid', display: 'block' },
+              }}
+            >
+              {rg.children.map(cg => renderCatGroup(cg))}
+            </Box>
+          </Box>
+        ))}
       </Box>
 
       {/* Fixed summary bar — same pattern as the New Stock Request cart

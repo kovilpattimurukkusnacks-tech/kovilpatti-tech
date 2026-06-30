@@ -80,6 +80,10 @@ public interface IStockRequestRepository
     /// NULL to clear, any string to set.
     Task<bool> RenameDispatchDraftAsync(Guid id, Guid userId, string? name, CancellationToken ct = default);
 
+    /// Pin / unpin a saved dispatch draft. Pass `pinned=true` to pin
+    /// (SP sets pinned_at = now()), `pinned=false` to unpin (clears pinned_at).
+    Task<bool> PinDispatchDraftAsync(Guid id, Guid userId, bool pinned, CancellationToken ct = default);
+
     /// List of Pending/Approved requests in this inventory that have at least
     /// one item with draft_dispatched_qty set. Header-shaped (no items JSON).
     Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(

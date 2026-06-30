@@ -4,7 +4,7 @@ import type {
   RejectRequest, DispatchRequest, StockRequestListFilters, PagedResult,
   CumulativePendingLine, ShopRequestCount, RequestStatus, RequestType,
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
-  RenameDispatchDraftRequest,
+  RenameDispatchDraftRequest, PinDispatchDraftRequest,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -85,6 +85,11 @@ export const stockRequestsApi = {
   // Empty / whitespace-only name clears the existing label.
   renameDispatchDraft: (id: string, req: RenameDispatchDraftRequest) =>
     apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft-name`, req),
+
+  // Pin / unpin a saved dispatch draft so it sorts to the top of the
+  // resume strip. Re-pinning bumps the timestamp (re-prioritises).
+  pinDispatchDraft: (id: string, req: PinDispatchDraftRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft-pin`, req),
 
   // Incoming requests with a saved dispatch draft (Inventory/Admin) — drives
   // the "Resume dispatch draft" strip on the inventory list page.

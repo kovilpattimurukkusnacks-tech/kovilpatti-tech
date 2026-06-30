@@ -101,6 +101,43 @@
   color: #000;
   opacity: 0.7;
 }
+/* Root-category heading (30-Jun-2026) — sits ABOVE one or more cat-rows.
+ * Outlined treatment (heavy top + bottom rules, no fill) so the
+ * 3-level hierarchy reads at a glance on a low-res thermal print:
+ *
+ *   ═════════════════════════════
+ *    1 KG SNACKS · 9 PRODUCTS         ← root-row (this rule)
+ *   ═════════════════════════════
+ *    ▓▓▓▓▓ CHIPS 300 ▓▓▓▓▓             ← cat-row (solid black bar)
+ *      1 KG · 2 products                ← weight-row
+ *        Potato Chips ...
+ */
+.thermal-items .root-row td {
+  padding: 1.8mm 1.5mm 1.4mm 1.5mm;
+  font-weight: 800;
+  text-transform: uppercase;
+  font-size: 11.5pt;
+  letter-spacing: 1px;
+  text-align: center;
+  background: #fff;
+  color: #000;
+  border-top: 0.6mm solid #000;
+  border-bottom: 0.6mm solid #000;
+}
+.thermal-items .root-row .root-count {
+  font-weight: 600;
+  font-size: 9pt;
+  letter-spacing: 0.4px;
+  margin-left: 1.5mm;
+  opacity: 0.75;
+}
+/* When root-row sits at top of the tbody it shouldn't have a gap above
+ * (the thead's bottom border is right there); otherwise add breathing
+ * room so consecutive roots don't visually collide. */
+.thermal-items .root-row:not(:first-child) td {
+  padding-top: 3mm;
+}
+
 /* Category "box" — dark band that mirrors the new-request-screen
  * sub-cat heading. Full-width row, inverted colour (dark bg + light
  * text) so it reads as the OUTER grouping layer at a glance. */
@@ -117,6 +154,11 @@
   border-top: 1mm solid #fff;
 }
 .thermal-items .cat-row:first-child td {
+  border-top: 0;
+}
+/* When a cat-row immediately follows a root-row, drop the white
+ * top-gap so the dark band sits flush under the root rule. */
+.thermal-items .root-row + .cat-row td {
   border-top: 0;
 }
 

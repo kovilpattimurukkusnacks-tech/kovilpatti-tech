@@ -505,6 +505,27 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    public async Task<StockRequestDto> PinDispatchDraftAsync(
+        Guid id, PinDispatchDraftRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as the other draft SPs — inventory can only pin
+        // drafts on their own godown's requests; admin may pin any.
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.PinDispatchDraftAsync(id, userId, request.Pinned, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot pin dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     // ───────── Return Stock ─────────
 
     public async Task<StockRequestDto> CreateReturnAsync(CreateReturnRequest request, CancellationToken ct = default)
@@ -757,7 +778,7 @@ public class StockRequestService(
             r.Accepted_At, r.Accepted_By,
             r.Cancelled_At, r.Cancelled_By,
             r.Source_Request_Id, r.Source_Request_Code,
-            r.Draft_Name,
+            r.Draft_Name, r.Pinned_At,
             Items: null);
 
     // Composes MapHeaderToDto with the deserialised items list. Single source

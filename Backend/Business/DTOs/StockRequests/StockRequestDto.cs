@@ -58,6 +58,10 @@ public record StockRequestDto(
     /// on the inventory dispatch-drafts list endpoint; null on every other
     /// list, on un-named drafts, and on finalised requests.
     string? DraftName,
+    /// When the dispatch draft was pinned (null = not pinned). Pinned drafts
+    /// sort first on the resume strip. Cleared on discard / dispatch alongside
+    /// DraftName.
+    DateTimeOffset? PinnedAt,
     /// Only populated by GET /{id}. Null on list endpoints.
     IReadOnlyList<StockRequestItemDto>? Items
 );

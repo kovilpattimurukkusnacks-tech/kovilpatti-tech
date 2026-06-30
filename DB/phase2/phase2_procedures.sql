@@ -407,7 +407,8 @@ RETURNS TABLE (
   cancelled_by            uuid,
   source_request_id       uuid,
   source_request_code     varchar,
-  draft_name              varchar
+  draft_name              varchar,
+  pinned_at               timestamptz
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -436,7 +437,8 @@ LANGUAGE sql STABLE AS $$
          r.cancelled_at, r.cancelled_by,
          r.source_request_id,
          src.code AS source_request_code,
-         r.draft_name
+         r.draft_name,
+         r.pinned_at
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -453,7 +455,10 @@ LANGUAGE sql STABLE AS $$
       WHERE it.request_id = r.id AND it.draft_dispatched_qty IS NOT NULL
     )
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
-  ORDER BY r.updated_at DESC;
+  -- Pinned drafts first (pinned_at IS NULL sorts AFTER timestamps because
+  -- NULLS LAST). Among pinned drafts, most-recently-pinned at the top.
+  -- Among unpinned, most-recently-updated at the top (existing behaviour).
+  ORDER BY r.pinned_at DESC NULLS LAST, r.updated_at DESC;
 $$;
 
 
@@ -1089,6 +1094,7 @@ BEGIN
   UPDATE stock_requests
   SET status        = 'Dispatched',
       draft_name    = NULL,
+      pinned_at     = NULL,
       dispatched_at = now(),
       dispatched_by = p_user_id,
       updated_by    = p_user_id
@@ -1122,10 +1128,11 @@ BEGIN
   SET draft_dispatched_qty = NULL
   WHERE request_id = p_id;
 
-  -- Discarding the draft also drops the godown's free-text label (the
-  -- name only makes sense alongside a live draft — see fn_request_rename_dispatch_draft).
+  -- Discarding the draft also drops the godown's free-text label AND the
+  -- pinned-at flag (both only make sense alongside a live draft).
   UPDATE stock_requests
   SET draft_name = NULL,
+      pinned_at  = NULL,
       updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
@@ -1172,6 +1179,38 @@ BEGIN
 
   UPDATE stock_requests
   SET updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Pin / unpin a dispatch draft so it sorts to the top of the resume strip.
+-- Same Pending/Approved guard as the other draft SPs — pinning a finalised
+-- request is meaningless. Pass TRUE to pin (sets pinned_at = now()), FALSE
+-- to unpin (clears pinned_at). Idempotent — pinning an already-pinned
+-- draft just bumps its pin timestamp (which moves it to the top of the
+-- pinned group; useful when the dispatcher wants to re-prioritise).
+CREATE OR REPLACE FUNCTION fn_request_pin_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid,
+  p_pinned  boolean
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests
+  SET pinned_at  = CASE WHEN p_pinned THEN now() ELSE NULL END,
+      updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 

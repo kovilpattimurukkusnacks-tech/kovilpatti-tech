@@ -208,6 +208,17 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         CancellationToken ct)
         => Ok(await requests.RenameDispatchDraftAsync(id, request, ct));
 
+    // ─── Pin / unpin dispatch draft (Inventory + Admin) ───────
+    // Pinned drafts sort to the top of the resume strip. Pass {pinned:true}
+    // to pin, {pinned:false} to unpin. Re-pinning bumps the timestamp.
+    [HttpPatch("{id:guid}/dispatch-draft-pin")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> PinDispatchDraft(
+        Guid id,
+        [FromBody] PinDispatchDraftRequest request,
+        CancellationToken ct)
+        => Ok(await requests.PinDispatchDraftAsync(id, request, ct));
+
     // ─── Return Stock ─────────────────────────────────────────
     // Shop user creates a Return (items back to godown). Optional
     // sourceRequestId links to the original Order so Phase 3 accounts

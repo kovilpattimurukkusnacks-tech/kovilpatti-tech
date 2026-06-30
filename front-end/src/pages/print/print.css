@@ -5,7 +5,9 @@
   background: #FFFFFF;
   color: #1F1F1F;
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  padding: 24px 32px;
+  /* Side padding bumped 32px → 56px (30-Jun-2026) so on-screen preview
+   * breathes against the white panel edges. Vertical kept at 24px. */
+  padding: 24px 56px;
   max-width: 960px;
   margin: 0 auto;
 }
@@ -55,6 +57,50 @@
 .print-meta-strip > div {
   white-space: nowrap;
 }
+
+/* Repeating-header wrapper (30-Jun-2026 — client req: header missing on
+ * page 2+). Wrapping the whole sheet in a 1-column <table> lets the
+ * browser repeat the <thead> (brand block + meta grid) at the top of
+ * every printed page automatically. Pure HTML / CSS — no Paged.js. */
+.print-page-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.print-page-table > thead { display: table-header-group; }
+.print-page-table > tbody { display: table-row-group; }
+.print-page-table > thead > tr > td,
+.print-page-table > tbody > tr > td {
+  padding: 0;
+  /* Reset default <td> vertical-align so block-level content (the brand
+   * header + meta grid + item sections) starts at the top of the cell. */
+  vertical-align: top;
+}
+
+/* Per-request picklist meta block (30-Jun-2026). Two grid rows with
+ * fixed slot alignment so the fields read like a form header instead
+ * of a wrapping fact list:
+ *   Row 1 — Code (left)      · Shop + by name (center) · Godown (right)
+ *   Row 2 — Submitted (left)                            · Dispatched (right)
+ * Distinct from .print-meta-strip (used by the cumulative report) so the
+ * two layouts can evolve independently. */
+.print-meta-grid {
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.print-meta-grid-row {
+  display: grid;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 2px;
+}
+.print-meta-grid-row:last-child { margin-bottom: 0; }
+.print-meta-grid-row.three-col { grid-template-columns: 1fr 1fr 1fr; }
+.print-meta-grid-row.two-col   { grid-template-columns: 1fr 1fr; }
+.print-meta-grid-row > .left   { text-align: left;   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.print-meta-grid-row > .center { text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.print-meta-grid-row > .right  { text-align: right;  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .print-header {
   display: flex;
@@ -340,11 +386,55 @@
      • Dropped the 'From Requests' per-row column — surfaced in the page
        summary instead.
    ───────────────────────────────────────────────────────────────────────── */
+/* Root-category section (30-Jun-2026). Wraps one root's sub-cat banner
+ * cards under an underline-style heading. Each root sits in its own
+ * vertical block; the 2-col card flow happens INSIDE each block via the
+ * nested .print-dense-grid below, so sub-cats from different roots never
+ * mix in the same column. */
+.print-root-section {
+  break-inside: avoid;
+  page-break-inside: auto;        /* root can spill across pages, sub-cats can't */
+  margin-bottom: 14px;
+}
+
+.print-root-heading {
+  margin: 10px 0 6px 0;
+  padding: 0 0 4px 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1F1F1F;
+  /* 30-Jun-2026 — centered the title so the root heading reads like a
+   * section banner spanning the full sheet, not a left-anchored label. */
+  text-align: center;
+  border-bottom: 2px solid #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-root-heading .muted {
+  color: rgba(31, 31, 31, 0.55);
+  font-weight: 600;
+  margin-left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* 30-Jun-2026 — switched from CSS `column-count: 2` to a 2-column grid.
+ *
+ * Why: `column-count` balances by HEIGHT — when a root has just 2 short
+ * sub-cat cards, the browser puts both in column 1 and column 2 stays
+ * empty (no need to balance). A grid fills cards into slots left-to-right
+ * regardless of content height, so 2 cards always land as left + right,
+ * 3 cards as left+right+left (one empty slot), 4 as two full rows, etc.
+ * Saves paper on requests with a small number of sub-cats per root. */
 .print-dense-grid {
-  column-count: 2;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   column-gap: 18px;
-  column-fill: balance;
+  row-gap: 12px;
   margin-top: 4px;
+  align-items: start;
 }
 
 .print-dense-section {
@@ -352,9 +442,7 @@
      a column or page boundary unless it's genuinely too tall for one page. */
   break-inside: avoid;
   page-break-inside: avoid;
-  margin-bottom: 12px;
-  display: inline-block;
-  width: 100%;
+  min-width: 0;   /* let the cell shrink so long product names ellipsis cleanly */
 }
 
 .print-dense-banner {
@@ -446,6 +534,8 @@
   }
   @page {
     size: A4;
-    margin: 12mm;
+    /* 30-Jun-2026 — bumped 12mm → 18mm side margin so the printed sheet
+     * has visible breathing room on each edge. Top/bottom stay at 12mm. */
+    margin: 12mm 18mm;
   }
 }
