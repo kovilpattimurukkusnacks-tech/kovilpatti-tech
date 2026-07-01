@@ -228,6 +228,15 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
   weight_value    numeric(10,3),
   weight_unit     varchar(5),
 
+  -- Who added this line: 'Shop' when the shop user created the request as
+  -- normal, 'Inventory' when the godown added it post-approval via the
+  -- "Add Products" dialog (01-Jul-2026 client req — last-minute customer
+  -- asks a bigger qty, godown adds directly instead of round-tripping
+  -- through shop + re-approval). Default 'Shop' so all legacy rows and
+  -- normal shop-created items backfill correctly.
+  added_by        varchar(10)   NOT NULL DEFAULT 'Shop'
+    CHECK (added_by IN ('Shop', 'Inventory')),
+
   -- Generated column: line subtotal at request-time pricing.
   -- (When dispatched_qty differs, the BE can present a separate dispatched-subtotal at runtime.)
   subtotal        numeric(12,2) GENERATED ALWAYS AS (requested_qty * unit_price) STORED,

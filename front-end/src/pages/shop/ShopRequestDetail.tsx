@@ -8,6 +8,7 @@ import {
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -234,7 +235,10 @@ export default function ShopRequestDetail() {
                   return (
                     <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>
+                          {item.productName}
+                          {item.addedBy === 'Inventory' && <InvBadge />}
+                        </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>

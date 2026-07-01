@@ -619,7 +619,11 @@ LANGUAGE sql STABLE AS $$
                -- saved draft survives navigating away.
                'draft_dispatched_qty', it.draft_dispatched_qty,
                'unit_price',     it.unit_price,
-               'subtotal',       it.subtotal
+               'subtotal',       it.subtotal,
+               -- 'Shop' | 'Inventory' — flags items the godown appended
+               -- post-approval so shop / admin / picklist can render the
+               -- (inv) tag alongside the product name.
+               'added_by',       it.added_by
              ) ORDER BY c.name, p.code
            )
            FROM stock_request_items it
@@ -939,7 +943,13 @@ BEGIN
     RAISE EXCEPTION 'Stock request must include at least one item';
   END IF;
 
-  DELETE FROM stock_request_items WHERE request_id = p_id;
+  -- 01-Jul-2026: only wipe SHOP-added items. Inv-added items (godown
+  -- appended post-approval via fn_request_inventory_add_items) are
+  -- preserved so the shop's edit doesn't blow away what the godown
+  -- planned to dispatch. To remove an inv item, godown uses the
+  -- inv-remove endpoint.
+  DELETE FROM stock_request_items
+  WHERE request_id = p_id AND added_by = 'Shop';
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
     v_qty   := (v_item->>'requested_qty')::int;
@@ -962,6 +972,17 @@ BEGIN
     v_total_qty    := v_total_qty   + v_qty;
     v_total_amount := v_total_amount + (v_qty * v_price);
   END LOOP;
+
+  -- Fold in any preserved inv-added items so the header aggregates
+  -- reflect the full item set (shop + inv), not just what the shop
+  -- just re-submitted.
+  SELECT
+    v_total_items  + COALESCE(COUNT(*), 0)::int,
+    v_total_qty    + COALESCE(SUM(requested_qty), 0)::int,
+    v_total_amount + COALESCE(SUM(subtotal), 0)::numeric(12,2)
+  INTO v_total_items, v_total_qty, v_total_amount
+  FROM stock_request_items
+  WHERE request_id = p_id AND added_by = 'Inventory';
 
   UPDATE stock_requests
   SET notes        = p_notes,
@@ -1051,6 +1072,145 @@ BEGIN
     AND status IN ('Approved', 'Rejected', 'Cancelled')
     AND is_deleted = false;
   RETURN FOUND;
+END
+$$;
+
+
+-- Inventory user appends items to an already-Approved (or still-Pending)
+-- request (01-Jul-2026 client req). Use case: last-minute customer bumps
+-- a bigger qty just before dispatch — godown adds items directly instead
+-- of asking the shop to re-submit. Each new row is tagged
+-- added_by = 'Inventory' so downstream views can badge them.
+--
+-- Contract:
+--   • p_items = JSON array of { product_id, requested_qty }
+--   • Only allowed when status IN ('Pending', 'Approved') AND is_deleted = false.
+--   • Products already in the request raise 'duplicate_product' — godown
+--     should use the dispatch-qty flow to send more of a shop-included
+--     product; this SP is for ADDING lines that don't exist yet.
+--   • Snapshots products.mrp / weight_value / weight_unit at insert time
+--     (same rule as fn_request_create for consistent history).
+--   • Recalculates request totals so the header aggregates stay in sync.
+CREATE OR REPLACE FUNCTION fn_request_inventory_add_items(
+  p_id      uuid,
+  p_user_id uuid,
+  p_items   jsonb
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_item    jsonb;
+  v_pid     uuid;
+  v_qty     int;
+  v_price   numeric(10,2);
+  v_wv      numeric(10,3);
+  v_wu      varchar(5);
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id
+      AND status IN ('Pending', 'Approved')
+      AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+    -- Nothing to do; treat as no-op success so a stray empty POST doesn't
+    -- surface a false error.
+    RETURN true;
+  END IF;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_pid := (v_item->>'product_id')::uuid;
+    v_qty := (v_item->>'requested_qty')::int;
+
+    IF v_qty <= 0 THEN
+      RAISE EXCEPTION 'requested_qty must be positive (got %)', v_qty;
+    END IF;
+
+    -- Snapshot price + weight from the current products row.
+    SELECT mrp, weight_value, weight_unit
+    INTO v_price, v_wv, v_wu
+    FROM products
+    WHERE id = v_pid AND is_deleted = false;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'product not found: %', v_pid;
+    END IF;
+
+    -- Enforce uniqueness at the app layer with a friendlier error than
+    -- the raw uq_stock_request_items violation.
+    IF EXISTS (
+      SELECT 1 FROM stock_request_items
+      WHERE request_id = p_id AND product_id = v_pid
+    ) THEN
+      RAISE EXCEPTION 'duplicate_product: % is already in this request', v_pid
+        USING ERRCODE = 'unique_violation';
+    END IF;
+
+    INSERT INTO stock_request_items (
+      request_id, product_id, requested_qty, unit_price,
+      weight_value, weight_unit, added_by
+    ) VALUES (
+      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory'
+    );
+  END LOOP;
+
+  -- Refresh header aggregates so total_items / total_qty / total_amount
+  -- reflect the newly appended lines.
+  UPDATE stock_requests r
+  SET total_items = (SELECT COUNT(*)::int FROM stock_request_items WHERE request_id = r.id),
+      total_qty   = (SELECT COALESCE(SUM(requested_qty), 0)::int FROM stock_request_items WHERE request_id = r.id),
+      total_amount = (SELECT COALESCE(SUM(subtotal), 0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+      updated_by  = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Remove a single inv-tagged line the godown appended by mistake. Won't
+-- touch shop-added items — those are still edited by the shop's own
+-- endpoint. Same Pending/Approved guard as add.
+CREATE OR REPLACE FUNCTION fn_request_inventory_remove_item(
+  p_id       uuid,
+  p_item_id  uuid,
+  p_user_id  uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id
+      AND status IN ('Pending', 'Approved')
+      AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  -- Delete only if the row belongs to this request AND was added by
+  -- inventory. Shop-added items are protected — inventory can't wipe
+  -- what the shop asked for; use the dispatch-qty=0 flow instead.
+  DELETE FROM stock_request_items
+  WHERE id         = p_item_id
+    AND request_id = p_id
+    AND added_by   = 'Inventory';
+
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests r
+  SET total_items = (SELECT COUNT(*)::int FROM stock_request_items WHERE request_id = r.id),
+      total_qty   = (SELECT COALESCE(SUM(requested_qty), 0)::int FROM stock_request_items WHERE request_id = r.id),
+      total_amount = (SELECT COALESCE(SUM(subtotal), 0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+      updated_by  = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
 END
 $$;
 

@@ -219,6 +219,30 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         CancellationToken ct)
         => Ok(await requests.PinDispatchDraftAsync(id, request, ct));
 
+    // ─── Inventory adds items (Inventory + Admin) ─────────────
+    // Appends new product lines to a Pending or Approved request. Each row
+    // is inserted with added_by = 'Inventory' so downstream views can
+    // badge them "(inv)". Rejects duplicates — use the dispatch-qty flow
+    // to send more of a shop-included product. (01-Jul-2026 client req.)
+    [HttpPatch("{id:guid}/inventory-add-items")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> InventoryAddItems(
+        Guid id,
+        [FromBody] InventoryAddItemsRequest request,
+        CancellationToken ct)
+        => Ok(await requests.InventoryAddItemsAsync(id, request, ct));
+
+    // ─── Inventory removes an inv-added item (Inventory + Admin) ─
+    // Removes ONLY items the godown appended. Shop-added items are
+    // protected server-side — use dispatch_qty = 0 to skip a shop item.
+    [HttpDelete("{id:guid}/inventory-items/{itemId:guid}")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> InventoryRemoveItem(
+        Guid id,
+        Guid itemId,
+        CancellationToken ct)
+        => Ok(await requests.InventoryRemoveItemAsync(id, itemId, ct));
+
     // ─── Return Stock ─────────────────────────────────────────
     // Shop user creates a Return (items back to godown). Optional
     // sourceRequestId links to the original Order so Phase 3 accounts

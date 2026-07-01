@@ -87,5 +87,10 @@ public record StockRequestItemDto(
     /// — fn_request_dispatch clears these on finalisation).
     int?    DraftDispatchedQty,
     decimal UnitPrice,
-    decimal Subtotal
+    decimal Subtotal,
+    /// "Shop" (default) or "Inventory" — inv-tagged rows were appended by
+    /// the godown post-approval via the Add Products dialog. Downstream
+    /// views render an (inv) chip so shop / admin / picker can see which
+    /// items came in later. 01-Jul-2026.
+    string AddedBy
 );
