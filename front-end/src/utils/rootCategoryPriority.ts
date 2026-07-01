@@ -45,6 +45,13 @@ export function sortRootCategoryNames(names: string[]): string[] {
   })
 }
 
+/** Priority index for a root-category name (0-based; unknowns get MAX_SAFE_INTEGER
+ *  so they sort to the end). Use in comparators when you need a single number
+ *  to compare against another priority. */
+export function rootPriorityIndex(name: string): number {
+  return PRIORITY_MAP.get(norm(name)) ?? Number.MAX_SAFE_INTEGER
+}
+
 /**
  * Resolve a leaf category name to its root-category name using the loaded
  * categories list. `path` is " > "-joined names from root to leaf, so the

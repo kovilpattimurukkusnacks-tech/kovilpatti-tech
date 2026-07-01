@@ -127,7 +127,12 @@ export default function ShopRequestDetail() {
   // editable_until is already in the past.
   const effectiveInWindow = inEditWindow || !lockEnabled
   const canEdit    = request.status === 'Pending' && effectiveInWindow
-  const canCancel  = (request.status === 'Pending' || request.status === 'Approved') && effectiveInWindow
+  // Cancel narrowed to Pending only (01-Jul-2026): once the godown has
+  // accepted a request they've committed prep effort, and a silent
+  // shop-side cancel would waste that. Shop must call the godown to
+  // revoke approval first (Inventory / Admin have Revoke buttons), then
+  // the request is back in Pending and can be cancelled here.
+  const canCancel  = request.status === 'Pending' && effectiveInWindow
   const canReceive = request.status === 'Dispatched'
 
   const cancelError =
