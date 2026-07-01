@@ -6,6 +6,7 @@ import type {
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
+  InventoryAddItemsRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -205,6 +206,38 @@ export function useClearDispatchDraft() {
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Inventory / Admin appends new lines to a Pending or Approved request
+ *  (01-Jul-2026). On success the detail cache is refreshed with the new
+ *  items so the UI reflects them without a manual refetch. */
+export function useInventoryAddItems() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: InventoryAddItemsRequest }) =>
+      stockRequestsApi.inventoryAddItems(id, req),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      // Header aggregates (total_items / total_qty / total_amount) change,
+      // so lists that show these need to refetch.
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+    },
+  })
+}
+
+/** Inventory / Admin removes an inv-added line by item id. Shop-added
+ *  items are rejected server-side (SP only deletes rows with
+ *  added_by = 'Inventory'). */
+export function useInventoryRemoveItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
+      stockRequestsApi.inventoryRemoveItem(id, itemId),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
     },
   })
 }

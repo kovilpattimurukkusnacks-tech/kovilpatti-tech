@@ -247,6 +247,13 @@ export default function ShopRequestNew() {
 
     const map = new Map<string, CartLine>()
     for (const it of source.items ?? []) {
+      // 01-Jul-2026: skip inv-tagged items during shop edit-seed. Those
+      // are the godown's post-approval additions; the shop can't modify
+      // them (the SP protects them server-side too — fn_request_update
+      // only deletes added_by='Shop' rows). If they leaked into the
+      // shop's cart, the shop could accidentally change their qty and
+      // the save would silently drop them.
+      if ('addedBy' in it && it.addedBy === 'Inventory') continue
       const stub: ProductDto = {
         id: it.productId,
         code: it.productCode,

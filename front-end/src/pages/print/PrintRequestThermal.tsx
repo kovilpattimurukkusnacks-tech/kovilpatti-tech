@@ -197,7 +197,10 @@ export default function PrintRequestThermal() {
                           return (
                             <tr key={it.id}>
                               <td>
-                                <div className="item-name">{it.productName}</div>
+                                <div className="item-name">
+                                  {it.productName}
+                                  {it.addedBy === 'Inventory' && <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700, letterSpacing: 0.3 }}>(INV)</span>}
+                                </div>
                               </td>
                               <td className="num">{qty}</td>
                               {/* Indian comma grouping (1,200.00 / 1,23,456.00)

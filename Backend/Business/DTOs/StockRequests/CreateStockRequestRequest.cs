@@ -39,3 +39,12 @@ public record RenameDispatchDraftRequest(string? Name);
 /// Pin / unpin a saved dispatch draft so it sorts to the top of the resume
 /// strip. Re-pinning a pinned draft bumps the timestamp (re-prioritises).
 public record PinDispatchDraftRequest(bool Pinned);
+
+/// Inventory user / Admin appends new product lines to a Pending or Approved
+/// request (01-Jul-2026 client req — last-minute customer bumps qty just
+/// before dispatch). Each row is inserted with added_by = 'Inventory'.
+/// The SP rejects duplicates (product already in the request) — the
+/// dispatch-qty flow should be used to send more of a shop-included product.
+public record InventoryAddItemsRequest(IReadOnlyList<InventoryAddItem> Items);
+
+public record InventoryAddItem(Guid ProductId, int RequestedQty);
