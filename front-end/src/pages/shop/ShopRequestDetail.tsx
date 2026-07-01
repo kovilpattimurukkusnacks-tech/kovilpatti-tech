@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableRow,
+  TableHead, TableRow,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -176,6 +176,18 @@ export default function ShopRequestDetail() {
 
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req) — surfaces what
+              the four numeric columns represent. Same widths as the body
+              cells below so alignment lines up. */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 120, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -220,7 +232,7 @@ export default function ShopRequestDetail() {
                               : 'transparent'
                   const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>

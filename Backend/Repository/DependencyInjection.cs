@@ -21,7 +21,11 @@ public static class DependencyInjection
         var dataSource = dsBuilder.Build();
 
         services.AddSingleton(dataSource);
-        services.AddSingleton<IDbConnectionFactory, NpgsqlConnectionFactory>();
+        // Scoped (not singleton) because the factory now depends on the
+        // request-scoped ICorrelationIdAccessor to tag application_name
+        // on each connection. Cost is negligible — factory is stateless
+        // apart from the accessor reference.
+        services.AddScoped<IDbConnectionFactory, NpgsqlConnectionFactory>();
 
         // Dapper: snake_case columns → PascalCase properties
         DefaultTypeMap.MatchNamesWithUnderscores = true;

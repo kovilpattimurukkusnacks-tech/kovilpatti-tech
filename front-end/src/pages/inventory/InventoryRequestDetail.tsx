@@ -4,7 +4,7 @@ import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2 } from 'lucide-react'
 import {
   Alert, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer,
-  TableRow, TextField,
+  TableHead, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -286,6 +286,11 @@ export default function InventoryRequestDetail() {
     }))
     try {
       await dispatchMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
+      // 30-Jun-2026: redirect back to Needs Action after a successful
+      // dispatch so the dispatcher lands on the next request to work on
+      // instead of the just-finalised one they can't edit anymore.
+      // /inventory/requests defaults to preset='pending' (= Needs Action).
+      navigate('/inventory/requests')
     } finally {
       setConfirmOpen(false)
     }
@@ -427,6 +432,17 @@ export default function InventoryRequestDetail() {
       </Box>
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req). Dispatched column
+              is center-aligned to match the qty input placement below. */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="center" sx={{ py: 0.75, width: 130, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -473,7 +489,7 @@ export default function InventoryRequestDetail() {
                               : 'transparent'
                   const totalColor = rowShort ? '#C62828' : rowOver ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>

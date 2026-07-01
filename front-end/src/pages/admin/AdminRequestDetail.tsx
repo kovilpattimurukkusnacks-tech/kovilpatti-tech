@@ -1,9 +1,9 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, Pencil, Printer } from 'lucide-react'
+import { ArrowLeft, Ban, Pencil, Printer, Undo2 } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableRow,
+  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
@@ -14,6 +14,7 @@ import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
+  useRevokeStockRequest,
 } from '../../hooks/useStockRequests'
 import type { RequestStatus, StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
@@ -48,7 +49,9 @@ export default function AdminRequestDetail() {
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
   const editQtyMutation = useEditDispatchedQty()
+  const revokeMutation  = useRevokeStockRequest()
   const [cancelConfirm, setCancelConfirm]   = useState(false)
+  const [revokeConfirm, setRevokeConfirm]   = useState(false)
   // Post-completion qty edit dialog state. `editingItem` is the row being
   // edited (null = dialog closed). The qty field is a string so we can
   // distinguish "" (untouched / cleared) from "0" (valid edit to zero).
@@ -114,6 +117,16 @@ export default function AdminRequestDetail() {
   // (Received Orders + Accepted Returns). Phase 3 accounts uses the audit
   // trail this writes to post reconciliation entries.
   const canEditQty = request.status === 'Received' || request.status === 'Accepted'
+  // Revoke — undo an accidental Approve, Reject, or Cancel and flip back
+  // to Pending (30-Jun-2026 & 01-Jul-2026 client req: inventory rejects
+  // by mistake; shop users cancel by mistake; admin needs a recovery
+  // path in both cases). Order-only for now; Returns are a separate flow.
+  const isReturn      = request.requestType === 'Return'
+  const canRevoke     = !isReturn && (
+    request.status === 'Approved' ||
+    request.status === 'Rejected' ||
+    request.status === 'Cancelled'
+  )
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
@@ -123,6 +136,11 @@ export default function AdminRequestDetail() {
   const handleCancel = async () => {
     try { await cancelMutation.mutateAsync(request.id) }
     finally { setCancelConfirm(false) }
+  }
+
+  const handleRevoke = async () => {
+    try { await revokeMutation.mutateAsync(request.id) }
+    finally { setRevokeConfirm(false) }
   }
 
   const openQtyEdit = (item: StockRequestItemDto) => {
@@ -182,6 +200,19 @@ export default function AdminRequestDetail() {
       </Box>
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req). */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 120, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+              {canEditQty && (
+                <TableCell align="center" sx={{ py: 0.75, width: 48, borderBottom: '1px solid rgba(31,31,31,0.15)' }} />
+              )}
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -220,7 +251,7 @@ export default function AdminRequestDetail() {
                               : 'transparent'
                   const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
                       </TableCell>
@@ -307,11 +338,69 @@ export default function AdminRequestDetail() {
         )}
       </Box>
 
-      {/* Legacy: historical rows from before approval-step removal may still
-          carry a rejection reason; show it if present. */}
-      {request.status === 'Rejected' && request.rejectionReason && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          <strong>Rejected:</strong> {request.rejectionReason}
+      {/* Rejected banner — surfaces the rejection reason (when present) and
+          exposes the Undo Rejection action right here at the top so admin
+          sees the corrective path immediately, without scrolling to the
+          action row (30-Jun-2026 client req). */}
+      {request.status === 'Rejected' && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2, '& .MuiAlert-action': { pt: 0, alignItems: 'center' } }}
+          action={canRevoke ? (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<Undo2 className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeConfirm(true)}
+              disabled={revokeMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                bgcolor: '#1F1F1F',
+                color: '#FFFFFF',
+                '&:hover': { bgcolor: '#0A0A0A' },
+              }}
+            >
+              Undo Rejection
+            </Button>
+          ) : undefined}
+        >
+          <strong>Rejected</strong>
+          {request.rejectionReason ? `: ${request.rejectionReason}` : ''}
+        </Alert>
+      )}
+
+      {/* Cancelled banner — same UX shape as Rejected. Warning colour (not
+          error) because a cancel isn't a failure, just the shop backing
+          out. Undo Cancel restores the row to Pending so the shop can
+          continue where they left off. (01-Jul-2026 client req.) */}
+      {request.status === 'Cancelled' && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2, '& .MuiAlert-action': { pt: 0, alignItems: 'center' } }}
+          action={canRevoke ? (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<Undo2 className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeConfirm(true)}
+              disabled={revokeMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                bgcolor: '#1F1F1F',
+                color: '#FFFFFF',
+                '&:hover': { bgcolor: '#0A0A0A' },
+              }}
+            >
+              Undo Cancel
+            </Button>
+          ) : undefined}
+        >
+          <strong>Cancelled</strong>
+          {request.cancelledAt ? ` on ${formatIstDateTime(request.cancelledAt)}` : ''}
         </Alert>
       )}
 
@@ -405,7 +494,7 @@ export default function AdminRequestDetail() {
         </Paper>
       )}
 
-      {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error)]
+      {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error), flatErr(revokeMutation.error)]
         .filter(Boolean)
         .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
 
@@ -422,6 +511,25 @@ export default function AdminRequestDetail() {
             }}
           >
             Edit Items
+          </Button>
+        )}
+        {/* Bottom-row Revoke button only renders for APPROVED state.
+            Rejected state's Undo Rejection lives inside the red alert
+            at the top of the page (more discoverable when admin lands
+            on a mistakenly-rejected request). */}
+        {canRevoke && request.status === 'Approved' && (
+          <Button
+            variant="outlined"
+            startIcon={<Undo2 className="w-4 h-4" />}
+            onClick={() => setRevokeConfirm(true)}
+            disabled={revokeMutation.isPending}
+            sx={{
+              textTransform: 'none', fontWeight: 600,
+              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
+              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+            }}
+          >
+            Revoke Approval
           </Button>
         )}
         {canCancel && (
@@ -449,6 +557,30 @@ export default function AdminRequestDetail() {
         cancelLabel="Keep it"
         onConfirm={handleCancel}
         onCancel={() => setCancelConfirm(false)}
+      />
+
+      <ConfirmDialog
+        open={revokeConfirm}
+        title={
+          request.status === 'Rejected'  ? 'Undo this rejection?'
+          : request.status === 'Cancelled' ? 'Undo this cancel?'
+          : 'Revoke this approval?'
+        }
+        message={
+          request.status === 'Rejected'
+            ? `This sends ${request.code} back to Pending and clears the rejection reason. The shop will see it as a fresh request again and the inventory can approve or reject it once more.`
+            : request.status === 'Cancelled'
+            ? `This sends ${request.code} back to Pending. The shop will be able to edit or submit the request again, and the inventory will see it in the Needs Action queue.`
+            : `This sends ${request.code} back to Pending. The shop will be able to edit it again, and the inventory can approve or reject it once more before dispatch.`
+        }
+        confirmLabel={
+          request.status === 'Rejected'  ? 'Yes, Undo Rejection'
+          : request.status === 'Cancelled' ? 'Yes, Undo Cancel'
+          : 'Yes, Revoke'
+        }
+        cancelLabel="Not yet"
+        onConfirm={handleRevoke}
+        onCancel={() => setRevokeConfirm(false)}
       />
 
       {/* Post-completion qty edit dialog. Opens when the admin clicks the

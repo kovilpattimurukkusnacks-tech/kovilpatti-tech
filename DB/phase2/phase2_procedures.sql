@@ -1026,10 +1026,12 @@ END
 $$;
 
 
--- Approved | Rejected → Pending (inventory user, admin)
--- "Undo" the Approve/Reject decision before dispatch happens. Clears the
--- audit fields so the request looks like it was never acted on; the next
--- Approve will write fresh timestamps.
+-- Approved | Rejected | Cancelled → Pending (inventory user, admin)
+-- "Undo" the Approve/Reject/Cancel decision before dispatch happens. Clears
+-- the corresponding audit fields so the request looks like it was never
+-- acted on; the next action writes fresh timestamps.
+-- Cancelled → Pending added 01-Jul-2026 (client req: shop users sometimes
+-- cancel by mistake; admin needs to recover).
 CREATE OR REPLACE FUNCTION fn_request_revoke(
   p_id      uuid,
   p_user_id uuid
@@ -1042,9 +1044,11 @@ BEGIN
       approved_at      = NULL,
       approved_by      = NULL,
       rejection_reason = NULL,
+      cancelled_at     = NULL,
+      cancelled_by     = NULL,
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status IN ('Approved', 'Rejected')
+    AND status IN ('Approved', 'Rejected', 'Cancelled')
     AND is_deleted = false;
   RETURN FOUND;
 END
