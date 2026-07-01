@@ -526,6 +526,66 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    public async Task<StockRequestDto> InventoryAddItemsAsync(
+        Guid id, InventoryAddItemsRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        if (request.Items is null || request.Items.Count == 0)
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("items", "At least one product is required.")
+            });
+        }
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Inventory can only add to their own godown's requests; admin may
+        // add to any. Returns aren't part of this flow — inventory Add
+        // Products is Order-only (Returns follow the accept-return path).
+        EnsureInventoryScope(existing);
+        if (existing.Request_Type == "Return")
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("requestType",
+                    "Cannot add items to a Return — this endpoint is Order-only.")
+            });
+        }
+
+        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
+        {
+            product_id     = i.ProductId,
+            requested_qty  = i.RequestedQty,
+        }), JsonOpts);
+
+        var ok = await requests.InventoryAddItemsAsync(id, userId, itemsJson, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot add items — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> InventoryRemoveItemAsync(
+        Guid id, Guid itemId, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.InventoryRemoveItemAsync(id, itemId, userId, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("itemId",
+                "Cannot remove — item not found, or it wasn't added by inventory, or the request is no longer editable.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     // ───────── Return Stock ─────────
 
     public async Task<StockRequestDto> CreateReturnAsync(CreateReturnRequest request, CancellationToken ct = default)
@@ -799,7 +859,8 @@ public class StockRequestService(
             i.id, i.product_id, i.product_code, i.product_name, i.category_name,
             i.weight_value, i.weight_unit,
             i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
-            i.unit_price, i.subtotal)).ToList();
+            i.unit_price, i.subtotal,
+            i.added_by ?? "Shop")).ToList();
     }
 
     // Matches the JSON keys returned by fn_request_get's jsonb_build_object.
@@ -808,5 +869,6 @@ public class StockRequestService(
         string category_name,
         decimal? weight_value, string? weight_unit,
         int requested_qty, int? dispatched_qty, int? draft_dispatched_qty,
-        decimal unit_price, decimal subtotal);
+        decimal unit_price, decimal subtotal,
+        string? added_by);
 }

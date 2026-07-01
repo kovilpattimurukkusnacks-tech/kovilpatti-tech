@@ -22,6 +22,12 @@ builder.Services.AddControllers(opts =>
 // Register Business → Repository (chained inside AddBusiness)
 builder.Services.AddBusiness(builder.Configuration);
 
+// Correlation ID accessor — scoped, holds the X-Correlation-Id for the
+// current request. See CorrelationIdMiddleware for the full end-to-end
+// tracing story (FE → BE logs → Postgres application_name).
+builder.Services.AddScoped<KovilpattiSnacks.Repository.Data.ICorrelationIdAccessor,
+                          KovilpattiSnacks.Repository.Data.CorrelationIdAccessor>();
+
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen(c =>
 {
@@ -68,13 +74,18 @@ builder.Services.AddCors(opts =>
                 Uri.TryCreate(origin, UriKind.Absolute, out var u)
                     && (u.Host == "localhost" || u.Host == "127.0.0.1"))
              .AllowAnyMethod()
-             .AllowAnyHeader();
+             .AllowAnyHeader()
+             // Expose X-Correlation-Id so the FE can read it back off the
+             // response (see CorrelationIdMiddleware — BE may mint a fresh
+             // ID if the FE sent an empty / malformed header).
+             .WithExposedHeaders("X-Correlation-Id");
         }
         else
         {
             p.WithOrigins(allowedOrigins)
              .AllowAnyMethod()
-             .AllowAnyHeader();
+             .AllowAnyHeader()
+             .WithExposedHeaders("X-Correlation-Id");
         }
     });
 });
@@ -116,6 +127,11 @@ if (enableSwagger)
 }
 
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+
+// Correlation ID — runs before everything else that logs or touches the
+// DB, so the scope is set for the entire request lifecycle. Placed AFTER
+// ExceptionHandling so an unhandled exception still reports with the ID.
+app.UseMiddleware<CorrelationIdMiddleware>();
 
 // CORS must run before HttpsRedirection / Authentication so preflight (OPTIONS)
 // responses include Access-Control-* headers and aren't redirected away.

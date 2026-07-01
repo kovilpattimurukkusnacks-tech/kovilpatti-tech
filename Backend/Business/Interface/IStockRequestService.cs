@@ -89,6 +89,19 @@ public interface IStockRequestService
     Task<StockRequestDto> PinDispatchDraftAsync(
         Guid id, PinDispatchDraftRequest request, CancellationToken ct = default);
 
+    /// Inventory / Admin appends new product lines to a Pending or Approved
+    /// request. Each new row is tagged added_by = 'Inventory'. SP rejects
+    /// duplicates (product already in the request). Returns the refreshed
+    /// DTO so caches stay in sync. 01-Jul-2026.
+    Task<StockRequestDto> InventoryAddItemsAsync(
+        Guid id, InventoryAddItemsRequest request, CancellationToken ct = default);
+
+    /// Inventory / Admin removes an inv-added line they appended by mistake.
+    /// Shop-added items are protected server-side (SP only deletes rows
+    /// with added_by = 'Inventory').
+    Task<StockRequestDto> InventoryRemoveItemAsync(
+        Guid id, Guid itemId, CancellationToken ct = default);
+
     /// List of incoming requests (Pending/Approved) that have a saved
     /// dispatch draft on at least one item. Inventory role scoped to own
     /// inventory; admin may pass inventoryId or NULL for tenant-wide;

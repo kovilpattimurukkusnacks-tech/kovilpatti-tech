@@ -3,11 +3,12 @@ import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableRow,
+  TableHead, TableRow,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -126,7 +127,12 @@ export default function ShopRequestDetail() {
   // editable_until is already in the past.
   const effectiveInWindow = inEditWindow || !lockEnabled
   const canEdit    = request.status === 'Pending' && effectiveInWindow
-  const canCancel  = (request.status === 'Pending' || request.status === 'Approved') && effectiveInWindow
+  // Cancel narrowed to Pending only (01-Jul-2026): once the godown has
+  // accepted a request they've committed prep effort, and a silent
+  // shop-side cancel would waste that. Shop must call the godown to
+  // revoke approval first (Inventory / Admin have Revoke buttons), then
+  // the request is back in Pending and can be cancelled here.
+  const canCancel  = request.status === 'Pending' && effectiveInWindow
   const canReceive = request.status === 'Dispatched'
 
   const cancelError =
@@ -176,6 +182,18 @@ export default function ShopRequestDetail() {
 
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req) — surfaces what
+              the four numeric columns represent. Same widths as the body
+              cells below so alignment lines up. */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 120, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -220,9 +238,12 @@ export default function ShopRequestDetail() {
                               : 'transparent'
                   const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>
+                          {item.productName}
+                          {item.addedBy === 'Inventory' && <InvBadge />}
+                        </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>

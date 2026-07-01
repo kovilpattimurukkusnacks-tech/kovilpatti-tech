@@ -215,7 +215,10 @@ export default function PrintRequestPicklist() {
                           return (
                             <tr key={it.id}>
                               <td>{idx}</td>
-                              <td><strong>{it.productName}</strong></td>
+                              <td>
+                                <strong>{it.productName}</strong>
+                                {it.addedBy === 'Inventory' && <span style={{ marginLeft: 4, padding: '0 3px', fontSize: 8, fontWeight: 700, color: '#0277BD', border: '1px solid #0277BD', borderRadius: 2 }}>INV</span>}
+                              </td>
                               <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
                               <td style={{ textAlign: 'right' }}>
                                 <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />

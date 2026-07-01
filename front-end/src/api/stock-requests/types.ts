@@ -32,6 +32,11 @@ export type StockRequestItemDto = {
   draftDispatchedQty: number | null
   unitPrice: number
   subtotal: number
+  /** 'Shop' (default) or 'Inventory'. Inv-tagged rows were appended by
+   *  the godown post-approval via the Add Products dialog. FE detail
+   *  pages / prints render an (inv) chip alongside these products so
+   *  the shop / picker can see which items came in later. */
+  addedBy: 'Shop' | 'Inventory'
 }
 
 // 'Order' = shop → godown (forward); 'Return' = goods back to godown.
@@ -126,6 +131,14 @@ export type RenameDispatchDraftRequest = { name: string | null }
 /** Pin / unpin a saved dispatch draft. Pinned drafts sort to the top of
  *  the resume strip. Re-pinning bumps the timestamp (re-prioritises). */
 export type PinDispatchDraftRequest = { pinned: boolean }
+
+/** Inventory / Admin appends new product lines to a Pending / Approved
+ *  request. Each row is inserted with addedBy='Inventory'. The BE rejects
+ *  duplicates — use the dispatch-qty flow to send more of a shop-included
+ *  product. */
+export type InventoryAddItemsRequest = {
+  items: { productId: string; requestedQty: number }[]
+}
 
 // Shop user creating a Return — items going BACK to the godown. SourceRequestId
 // is optional: when provided, links the Return to the past Order being reversed

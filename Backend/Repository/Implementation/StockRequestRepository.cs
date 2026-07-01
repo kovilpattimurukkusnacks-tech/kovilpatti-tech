@@ -307,6 +307,22 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             sql, new { p_id = id, p_user_id = userId, p_pinned = pinned }, cancellationToken: ct));
     }
 
+    public async Task<bool> InventoryAddItemsAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_inventory_add_items(@p_id, @p_user_id, @p_items::jsonb)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId, p_items = itemsJson }, cancellationToken: ct));
+    }
+
+    public async Task<bool> InventoryRemoveItemAsync(Guid id, Guid itemId, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_inventory_remove_item(@p_id, @p_item_id, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_item_id = itemId, p_user_id = userId }, cancellationToken: ct));
+    }
+
     public async Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default)
     {

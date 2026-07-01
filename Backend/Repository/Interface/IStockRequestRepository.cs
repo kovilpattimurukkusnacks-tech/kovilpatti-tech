@@ -84,6 +84,13 @@ public interface IStockRequestRepository
     /// (SP sets pinned_at = now()), `pinned=false` to unpin (clears pinned_at).
     Task<bool> PinDispatchDraftAsync(Guid id, Guid userId, bool pinned, CancellationToken ct = default);
 
+    /// Inventory appends items to a Pending/Approved request. `itemsJson`
+    /// is a JSON array of { product_id, requested_qty }.
+    Task<bool> InventoryAddItemsAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default);
+
+    /// Inventory removes a single inv-added line by item id.
+    Task<bool> InventoryRemoveItemAsync(Guid id, Guid itemId, Guid userId, CancellationToken ct = default);
+
     /// List of Pending/Approved requests in this inventory that have at least
     /// one item with draft_dispatched_qty set. Header-shaped (no items JSON).
     Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(

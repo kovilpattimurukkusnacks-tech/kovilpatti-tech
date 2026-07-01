@@ -1,14 +1,15 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2 } from 'lucide-react'
+import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2 } from 'lucide-react'
 import {
-  Alert, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer,
-  TableRow, TextField,
+  TableHead, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime, formatIstTime } from '../../utils/formatDate'
@@ -17,7 +18,9 @@ import {
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
   useSaveDispatchDraft, useClearDispatchDraft,
   useAcceptReturn,
+  useInventoryAddItems, useInventoryRemoveItem,
 } from '../../hooks/useStockRequests'
+import { useProducts } from '../../hooks/useProducts'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import type { RequestStatus } from '../../api/stock-requests/types'
@@ -46,6 +49,8 @@ export default function InventoryRequestDetail() {
   const revokeMutation       = useRevokeStockRequest()
   const saveDraftMutation    = useSaveDispatchDraft()
   const clearDraftMutation   = useClearDispatchDraft()
+  const addItemsMutation     = useInventoryAddItems()
+  const removeItemMutation   = useInventoryRemoveItem()
   // Accept Return — Pending Return → Accepted (terminal). Same per-item qty
   // payload as Dispatch but writes acceptedQty (BE maps to dispatched_qty
   // column; partial accept allowed if godown counts less).
@@ -60,6 +65,17 @@ export default function InventoryRequestDetail() {
   // close to Save / Mark as Dispatched, and an accidental click wipes
   // whatever dispatch qtys the godown has been typing in.
   const [discardConfirmOpen, setDiscardConfirmOpen] = useState(false)
+  // Add Products dialog (01-Jul-2026). Opens when inventory / admin wants
+  // to append lines to a Pending / Approved order. `addRows` holds the
+  // in-progress pick list; committed rows are POSTed together on Save.
+  const [addOpen, setAddOpen] = useState(false)
+  const [addRows, setAddRows] = useState<{ productId: string; requestedQty: number }[]>([])
+  const [addPickerProductId, setAddPickerProductId] = useState<string>('')
+  const [addPickerQty, setAddPickerQty] = useState<string>('')
+  // Product catalog for the picker — fetched once when the dialog opens.
+  // Kept simple: no search debounce; the Autocomplete does client-side
+  // filtering off the pre-fetched list, which is fine at this catalog size.
+  const productsQuery = useProducts({ pageSize: 500 })
   // True when dispatch qtys have changed since the last successful draft
   // save (or since the seed from a stored draft). Drives the Save as Draft
   // button's disabled state so the user can't redundantly re-save the
@@ -286,6 +302,11 @@ export default function InventoryRequestDetail() {
     }))
     try {
       await dispatchMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
+      // 30-Jun-2026: redirect back to Needs Action after a successful
+      // dispatch so the dispatcher lands on the next request to work on
+      // instead of the just-finalised one they can't edit anymore.
+      // /inventory/requests defaults to preset='pending' (= Needs Action).
+      navigate('/inventory/requests')
     } finally {
       setConfirmOpen(false)
     }
@@ -379,6 +400,10 @@ export default function InventoryRequestDetail() {
   const canApprove = !isReturn && request.status === 'Pending'
   const canReject  = request.status === 'Pending'
   const canRevoke  = !isReturn && (request.status === 'Approved' || request.status === 'Rejected')
+  // Inventory can append items post-approval (01-Jul-2026 client req).
+  // Order-only, and only while the request is still editable (Pending
+  // or Approved; once dispatched, the qty is frozen).
+  const canAddItems = !isReturn && (request.status === 'Pending' || request.status === 'Approved')
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
@@ -427,6 +452,17 @@ export default function InventoryRequestDetail() {
       </Box>
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req). Dispatched column
+              is center-aligned to match the qty input placement below. */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="center" sx={{ py: 0.75, width: 130, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right"  sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -473,9 +509,27 @@ export default function InventoryRequestDetail() {
                               : 'transparent'
                   const totalColor = rowShort ? '#C62828' : rowOver ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg }}>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, fontSize: 14 }}>
+                          <span>{item.productName}</span>
+                          {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Trash icon only for inv-added items while
+                              request is still editable — removes just
+                              this line via the inv-remove endpoint. */}
+                          {item.addedBy === 'Inventory' && canAddItems && (
+                            <IconButton
+                              size="small"
+                              onClick={() => removeItemMutation.mutate({ id: request.id, itemId: item.id })}
+                              disabled={removeItemMutation.isPending}
+                              aria-label="Remove this inv-added line"
+                              title="Remove this inv-added line"
+                              sx={{ p: 0.25, ml: 0.5, color: '#C62828' }}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </IconButton>
+                          )}
+                        </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
@@ -631,6 +685,28 @@ export default function InventoryRequestDetail() {
           </>
         )}
       </Box>
+
+      {/* Add Products — appears only when the request is still editable
+          (Pending / Approved, Order-only). Opens a dialog to append
+          lines with added_by='Inventory'. 01-Jul-2026 client req. */}
+      {canAddItems && (
+        <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 1.5 }}>
+          <Button
+            variant="outlined"
+            size="small"
+            startIcon={<Plus className="w-4 h-4" />}
+            onClick={() => { setAddRows([]); setAddPickerProductId(''); setAddPickerQty(''); setAddOpen(true) }}
+            sx={{
+              textTransform: 'none', fontWeight: 700,
+              bgcolor: '#FFF8E1', color: '#1F1F1F',
+              borderColor: '#C28A00', borderWidth: '1.5px',
+              '&:hover': { bgcolor: '#FCD835', borderColor: '#A07000', borderWidth: '1.5px' },
+            }}
+          >
+            Add Products
+          </Button>
+        </Box>
+      )}
 
       {/* Items — cream banner strip per root (mirrors Shop / Admin).
           Plain underline style is reserved for the print picklist. */}
@@ -945,6 +1021,168 @@ export default function InventoryRequestDetail() {
         onConfirm={handleDiscardDraft}
         onCancel={() => setDiscardConfirmOpen(false)}
       />
+
+      {/* Add Products dialog (01-Jul-2026). Godown picks products +
+          qtys → each row is queued in `addRows` in the dialog → Save
+          POSTs the batch through fn_request_inventory_add_items, which
+          rejects duplicates. Products already in the request are hidden
+          from the picker to short-circuit the duplicate case. */}
+      <Dialog
+        open={addOpen}
+        onClose={(_e, reason) => {
+          if (reason === 'backdropClick' || addItemsMutation.isPending) return
+          setAddOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Add products to {request.code}
+          <IconButton size="small" onClick={() => setAddOpen(false)} disabled={addItemsMutation.isPending}>
+            <X className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
+            These lines will be tagged <strong style={{ color: '#0277BD' }}>(inv)</strong> so the shop and admin see they came in post-approval.
+          </Box>
+
+          {/* Picker row — Autocomplete + qty + Add button.
+              Products already in the request OR already staged in
+              addRows are filtered out so the dispatcher can't create
+              a duplicate. */}
+          {(() => {
+            const inRequestIds = new Set((request.items ?? []).map(i => i.productId))
+            const stagedIds    = new Set(addRows.map(r => r.productId))
+            const eligible = (productsQuery.data?.items ?? [])
+              .filter(p => !inRequestIds.has(p.id) && !stagedIds.has(p.id))
+            const picked = eligible.find(p => p.id === addPickerProductId) ?? null
+            return (
+              <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2 }}>
+                <Autocomplete
+                  size="small"
+                  sx={{ flex: 1 }}
+                  options={eligible}
+                  value={picked}
+                  onChange={(_e, val) => setAddPickerProductId(val?.id ?? '')}
+                  getOptionLabel={(p) => `${p.code} — ${p.name}`}
+                  isOptionEqualToValue={(a, b) => a.id === b.id}
+                  loading={productsQuery.isLoading}
+                  renderInput={(params) => (
+                    <TextField {...params} placeholder="Search product…" />
+                  )}
+                />
+                <TextField
+                  size="small"
+                  type="number"
+                  placeholder="Qty"
+                  value={addPickerQty}
+                  onChange={e => setAddPickerQty(e.target.value)}
+                  slotProps={{ htmlInput: { min: 1, inputMode: 'numeric' } }}
+                  sx={{ width: 90 }}
+                />
+                <Button
+                  variant="outlined"
+                  size="small"
+                  onClick={() => {
+                    const qty = parseInt(addPickerQty, 10)
+                    if (!addPickerProductId || Number.isNaN(qty) || qty <= 0) return
+                    setAddRows(prev => [...prev, { productId: addPickerProductId, requestedQty: qty }])
+                    setAddPickerProductId('')
+                    setAddPickerQty('')
+                  }}
+                  disabled={!addPickerProductId || !addPickerQty || parseInt(addPickerQty, 10) <= 0}
+                  sx={{
+                    textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
+                    borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
+                    '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                  }}
+                >
+                  Add
+                </Button>
+              </Box>
+            )
+          })()}
+
+          {/* Staged rows — list of products the dispatcher queued for
+              this add batch. Remove icon dequeues; the whole list is
+              POSTed together on Save. */}
+          {addRows.length === 0 ? (
+            <Box sx={{ textAlign: 'center', color: '#1F1F1F99', fontSize: 13, py: 3, border: '1px dashed rgba(31,31,31,0.2)', borderRadius: 1 }}>
+              No products staged yet. Pick a product and quantity above, then Add.
+            </Box>
+          ) : (
+            <TableContainer sx={{ border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+              <Table size="small">
+                <TableHead>
+                  <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+                    <TableCell sx={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', color: '#1F1F1F99' }}>Product</TableCell>
+                    <TableCell align="right" sx={{ fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', color: '#1F1F1F99', width: 90 }}>Qty</TableCell>
+                    <TableCell sx={{ width: 40 }} />
+                  </TableRow>
+                </TableHead>
+                <TableBody>
+                  {addRows.map((row, idx) => {
+                    const p = (productsQuery.data?.items ?? []).find(pp => pp.id === row.productId)
+                    return (
+                      <TableRow key={row.productId}>
+                        <TableCell sx={{ fontSize: 13 }}>
+                          <strong>{p?.name ?? '?'}</strong>
+                          <Box component="span" sx={{ ml: 1, fontSize: 11, color: '#1F1F1F99' }}>{p?.code}</Box>
+                        </TableCell>
+                        <TableCell align="right" sx={{ fontSize: 13, fontWeight: 700 }}>{row.requestedQty}</TableCell>
+                        <TableCell align="center">
+                          <IconButton
+                            size="small"
+                            onClick={() => setAddRows(prev => prev.filter((_, i) => i !== idx))}
+                            aria-label="Remove from list"
+                            sx={{ color: '#C62828' }}
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </IconButton>
+                        </TableCell>
+                      </TableRow>
+                    )
+                  })}
+                </TableBody>
+              </Table>
+            </TableContainer>
+          )}
+
+          {addItemsMutation.isError && (
+            <Alert severity="error" sx={{ mt: 1.5 }}>
+              {(addItemsMutation.error as Error)?.message ?? 'Failed to add products.'}
+            </Alert>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ px: 3, py: 2 }}>
+          <Button
+            onClick={() => setAddOpen(false)}
+            disabled={addItemsMutation.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600, color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            onClick={async () => {
+              if (addRows.length === 0) return
+              try {
+                await addItemsMutation.mutateAsync({
+                  id: request.id,
+                  req: { items: addRows },
+                })
+                setAddOpen(false)
+              } catch { /* surfaced in Alert above */ }
+            }}
+            disabled={addRows.length === 0 || addItemsMutation.isPending}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            {addItemsMutation.isPending ? 'Adding…' : `Add ${addRows.length} to request`}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }

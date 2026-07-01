@@ -5,6 +5,7 @@ import type {
   CumulativePendingLine, ShopRequestCount, RequestStatus, RequestType,
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
+  InventoryAddItemsRequest,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -90,6 +91,17 @@ export const stockRequestsApi = {
   // resume strip. Re-pinning bumps the timestamp (re-prioritises).
   pinDispatchDraft: (id: string, req: PinDispatchDraftRequest) =>
     apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft-pin`, req),
+
+  // Inventory appends items to a Pending/Approved request. Each row is
+  // tagged addedBy='Inventory'. BE rejects duplicates + returns the
+  // refreshed request DTO on success.
+  inventoryAddItems: (id: string, req: InventoryAddItemsRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/inventory-add-items`, req),
+
+  // Inventory removes a single inv-added item. Shop-added items are
+  // protected server-side.
+  inventoryRemoveItem: (id: string, itemId: string) =>
+    apiClient.delete<StockRequestDto>(`/api/stock-requests/${id}/inventory-items/${itemId}`),
 
   // Incoming requests with a saved dispatch draft (Inventory/Admin) — drives
   // the "Resume dispatch draft" strip on the inventory list page.
