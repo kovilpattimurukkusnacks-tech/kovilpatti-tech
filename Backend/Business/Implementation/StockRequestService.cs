@@ -546,7 +546,7 @@ public class StockRequestService(
         // add to any. Returns aren't part of this flow — inventory Add
         // Products is Order-only (Returns follow the accept-return path).
         EnsureInventoryScope(existing);
-        if (existing.RequestType == "Return")
+        if (existing.Request_Type == "Return")
         {
             throw new ValidationException(new[] {
                 new ValidationFailure("requestType",
