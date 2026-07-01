@@ -290,10 +290,10 @@ export default function AdminRequestDetail() {
   )
 
   return (
-    // pb leaves room for the fixed summary bar at the bottom + extra
-    // breathing space above it so action buttons don't sit flush against
-    // the footer (19-Jun-2026, client #14).
-    <Box sx={{ pb: 16 }}>
+    // pb leaves room for the fixed footer at the bottom. Footer stacks
+    // an action row (buttons) on top of the summary strip, so it's
+    // taller now — bumped from pb:16 to pb:22 (01-Jul-2026).
+    <Box sx={{ pb: 22 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} → ${request.inventoryCode} ${request.inventoryName}`}
@@ -471,26 +471,6 @@ export default function AdminRequestDetail() {
         ))}
       </Box>
 
-      {/* Fixed summary bar — same shape as the New Stock Request cart bar.
-          19-Jun-2026 (client #14). */}
-      <Paper
-        elevation={6}
-        sx={{
-          position: 'fixed',
-          bottom: 0,
-          left: { xs: 0, lg: 256 /* sidebar width */ },
-          right: 0,
-          zIndex: 20,
-          borderRadius: 0,
-          borderTop: '2px solid #1F1F1F',
-          bgcolor: '#FFFFFF',
-          px: { xs: 2, sm: 3 },
-          py: 1.5,
-        }}
-      >
-        <RequestSummary request={request} variant="footer" />
-      </Paper>
-
       {request.notes && (
         <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px dashed #1F1F1F' }}>
           <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', mb: 0.5 }}>Shop's Notes</Box>
@@ -502,56 +482,91 @@ export default function AdminRequestDetail() {
         .filter(Boolean)
         .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
 
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
-        {canEdit && (
-          <Button
-            variant="outlined"
-            startIcon={<Pencil className="w-4 h-4" />}
-            onClick={() => navigate(`/admin/requests/${request.id}/edit`)}
+      {/* Fixed footer bar (01-Jul-2026 client req: action buttons no longer
+          require scrolling). Stacks:
+            • top row  — Edit / Revoke / Cancel action buttons (right-aligned)
+            • bottom row — summary counts + amounts (as before)
+          Rendered as one Paper pinned to the viewport bottom. Actions
+          row hidden when no action applies (nothing to show → skip it). */}
+      <Paper
+        elevation={6}
+        sx={{
+          position: 'fixed',
+          bottom: 0,
+          left: { xs: 0, lg: 256 /* sidebar width */ },
+          right: 0,
+          zIndex: 20,
+          borderRadius: 0,
+          borderTop: '2px solid #1F1F1F',
+          bgcolor: '#FFFFFF',
+        }}
+      >
+        {(canEdit || (canRevoke && request.status === 'Approved') || canCancel) && (
+          <Box
             sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 1,
+              flexWrap: 'wrap',
+              px: { xs: 2, sm: 3 },
+              py: 1,
+              borderBottom: '1px solid rgba(31,31,31,0.15)',
+              bgcolor: '#FFF8E1',
             }}
           >
-            Edit Items
-          </Button>
+            {canEdit && (
+              <Button
+                variant="outlined"
+                startIcon={<Pencil className="w-4 h-4" />}
+                onClick={() => navigate(`/admin/requests/${request.id}/edit`)}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Edit Items
+              </Button>
+            )}
+            {/* Sticky-footer Revoke only for APPROVED. Rejected /
+                Cancelled variants live in their top-of-page alerts
+                (more discoverable there). */}
+            {canRevoke && request.status === 'Approved' && (
+              <Button
+                variant="outlined"
+                startIcon={<Undo2 className="w-4 h-4" />}
+                onClick={() => setRevokeConfirm(true)}
+                disabled={revokeMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Revoke Approval
+              </Button>
+            )}
+            {canCancel && (
+              <Button
+                variant="outlined"
+                startIcon={<Ban className="w-4 h-4" />}
+                onClick={() => setCancelConfirm(true)}
+                disabled={cancelMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Cancel Request
+              </Button>
+            )}
+          </Box>
         )}
-        {/* Bottom-row Revoke button only renders for APPROVED state.
-            Rejected state's Undo Rejection lives inside the red alert
-            at the top of the page (more discoverable when admin lands
-            on a mistakenly-rejected request). */}
-        {canRevoke && request.status === 'Approved' && (
-          <Button
-            variant="outlined"
-            startIcon={<Undo2 className="w-4 h-4" />}
-            onClick={() => setRevokeConfirm(true)}
-            disabled={revokeMutation.isPending}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Revoke Approval
-          </Button>
-        )}
-        {canCancel && (
-          <Button
-            variant="outlined"
-            startIcon={<Ban className="w-4 h-4" />}
-            onClick={() => setCancelConfirm(true)}
-            disabled={cancelMutation.isPending}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Cancel Request
-          </Button>
-        )}
-      </Box>
+        <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5 }}>
+          <RequestSummary request={request} variant="footer" />
+        </Box>
+      </Paper>
 
       <ConfirmDialog
         open={cancelConfirm}
