@@ -119,15 +119,15 @@ export default function AdminRequestDetail() {
   // trail this writes to post reconciliation entries.
   const canEditQty = request.status === 'Received' || request.status === 'Accepted'
   // Revoke — undo an accidental Approve, Reject, or Cancel and flip back
-  // to Pending (30-Jun-2026 & 01-Jul-2026 client req: inventory rejects
-  // by mistake; shop users cancel by mistake; admin needs a recovery
-  // path in both cases). Order-only for now; Returns are a separate flow.
+  // to Pending. Applies to both Orders and Returns for Rejected /
+  // Cancelled (client req 01-Jul-2026: godown rejecting a Return by
+  // mistake needs the same recovery path). Approved is Order-only —
+  // Returns have no Approved intermediate state.
   const isReturn      = request.requestType === 'Return'
-  const canRevoke     = !isReturn && (
-    request.status === 'Approved' ||
+  const canRevoke     =
+    (request.status === 'Approved' && !isReturn) ||
     request.status === 'Rejected' ||
     request.status === 'Cancelled'
-  )
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
