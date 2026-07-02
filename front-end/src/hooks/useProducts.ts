@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { productsApi } from '../api/products/api'
+import type { PagedResult } from '../api/types'
 import type {
-  CreateProductRequest, UpdateProductRequest, ProductListFilters, PagedResult, ProductDto,
+  CreateProductRequest, UpdateProductRequest, ProductListFilters, ProductDto,
 } from '../api/products/types'
 
 export const productsKeys = {

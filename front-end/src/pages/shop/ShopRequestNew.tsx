@@ -1,6 +1,6 @@
 import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight } from 'lucide-react'
+import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight, ChevronDown } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell,
@@ -18,13 +18,15 @@ import {
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
-import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { groupByCategoryWeight, compareWeightKeys } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
+import type { CategoryDto } from '../../api/categories/types'
 import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { formatIstTime } from '../../utils/formatDate'
+import { GOLD_GRADIENT } from '../../theme'
 
 type CartLine = { product: ProductDto; qty: number }
 
@@ -843,9 +845,19 @@ export default function ShopRequestNew() {
             alignItems: 'flex-start',
           }}
         >
-          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} />
+          <ProductsTable
+            catGroups={leftCatGroups}
+            autoExpandSingle={catGroups.length === 1}
+            cart={cart}
+            onSetQty={setQty}
+          />
           {rightCatGroups.length > 0 && (
-            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} />
+            <ProductsTable
+              catGroups={rightCatGroups}
+              autoExpandSingle={catGroups.length === 1}
+              cart={cart}
+              onSetQty={setQty}
+            />
           )}
         </Box>
       )}
@@ -1318,14 +1330,9 @@ function groupProductsByWeight(products: ProductDto[]): { label: string; items: 
     if (arr) arr.push(p)
     else groups.set(key, [p])
   }
-  const keys = Array.from(groups.keys()).sort((a, b) => {
-    if (a === NONE) return 1
-    if (b === NONE) return -1
-    const [av, au] = a.split('|')
-    const [bv, bu] = b.split('|')
-    if (au !== bu) return au.localeCompare(bu)
-    return Number(av) - Number(bv)
-  })
+  // Sort comparator shared with groupByCategoryWeight so this list can't
+  // drift from the cart-review / detail / picklist sort order.
+  const keys = Array.from(groups.keys()).sort(compareWeightKeys)
   return keys.map(k => {
     if (k === NONE) return { label: 'No weight specified', items: groups.get(k)! }
     const [v, u] = k.split('|')
@@ -1345,7 +1352,7 @@ type CategoryGroup = {
 }
 function groupProductsByCategoryThenWeight(
   products:        ProductDto[],
-  allCats:         { id: number; name: string; path: string | null; parentId: number | null }[],
+  allCats:         CategoryDto[],
   selectedRootId:  number | null,
 ): CategoryGroup[] {
   // catId → ProductDto[]
@@ -1387,18 +1394,47 @@ function groupProductsByCategoryThenWeight(
 
 function ProductsTable({
   catGroups,
+  autoExpandSingle,
   cart,
   onSetQty,
 }: {
   catGroups: CategoryGroup[]
+  // Whether the OVERALL (pre-column-split) filter result is a single
+  // category — decided once by the parent so the two side-by-side columns
+  // (or stacked sections on mobile) agree on it, instead of each column
+  // guessing from its own post-split slice (which can land exactly one
+  // category in a column purely from item-count balancing, causing one
+  // column to auto-expand while the other stays collapsed for no filter-
+  // related reason).
+  autoExpandSingle: boolean
   cart: Map<string, CartLine>
   onSetQty: (product: ProductDto, qty: number) => void
 }) {
-  // Always render sub-cat headings — when the parent screen splits cat-groups
-  // across two columns, a "hide when only one" rule on a per-column basis
-  // would make the left and right tables look inconsistent (one with headings,
-  // one without). Always-on is cheaper to reason about.
-  const showCatHeadings = true
+  // Collapsible category sections. Each gold category band is a toggle; its
+  // weight groups + product rows render only when expanded. Default is
+  // COLLAPSED so the shop user first sees a short, scannable menu of category
+  // headers and taps just the one they want — no scrolling past every product.
+  // Exception: when the current filter/search narrows to a single category,
+  // auto-expand it (nothing to choose between, so don't make them tap).
+  const [expanded, setExpanded] = useState<Set<number>>(
+    () => new Set(autoExpandSingle ? catGroups.map(g => g.catId) : []),
+  )
+  // Re-key on the SET of visible category ids (stable across qty edits, which
+  // re-render but keep the same groups). Resets expansion only when the filter
+  // result actually changes.
+  const groupSig = catGroups.map(g => g.catId).join(',')
+  useEffect(() => {
+    setExpanded(autoExpandSingle ? new Set(catGroups.map(g => g.catId)) : new Set())
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupSig, autoExpandSingle])
+  const toggle = (catId: number) =>
+    setExpanded(prev => {
+      const next = new Set(prev)
+      if (next.has(catId)) next.delete(catId)
+      else next.add(catId)
+      return next
+    })
+
   return (
     <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
       <TableContainer>
@@ -1413,35 +1449,54 @@ function ProductsTable({
           <TableBody>
             {catGroups.map(cg => {
               const itemCount = cg.weightGroups.reduce((n, g) => n + g.items.length, 0)
+              const isOpen = expanded.has(cg.catId)
               return (
                 <Fragment key={cg.catId}>
-                  {showCatHeadings && (
-                    <TableRow>
-                      <TableCell
-                        colSpan={3}
-                        sx={{
-                          // Metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
-                          // with dark text. Luxury brand-feel sweep; reads as
-                          // the OUTER grouping layer next to the cream weight bar.
-                          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
-                          color: '#1F1F1F',
-                          fontWeight: 800,
-                          textTransform: 'uppercase',
-                          letterSpacing: 0.8,
-                          fontSize: 13,
-                          py: 1.25,
-                          pl: 2,
-                          borderTop: '2px solid #1F1F1F',
-                        }}
-                      >
-                        {cg.catLabel}
-                        <Box component="span" sx={{ ml: 1.5, color: '#1F1F1F99', fontWeight: 600, fontSize: 11 }}>
+                  <TableRow
+                    onClick={() => toggle(cg.catId)}
+                    onKeyDown={e => {
+                      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(cg.catId) }
+                    }}
+                    role="button"
+                    tabIndex={0}
+                    aria-expanded={isOpen}
+                    sx={{ cursor: 'pointer' }}
+                  >
+                    <TableCell
+                      colSpan={3}
+                      sx={{
+                        // Metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
+                        // with dark text. Luxury brand-feel sweep; reads as
+                        // the OUTER grouping layer next to the cream weight bar.
+                        background: GOLD_GRADIENT,
+                        color: '#1F1F1F',
+                        fontWeight: 800,
+                        textTransform: 'uppercase',
+                        letterSpacing: 0.8,
+                        fontSize: 13,
+                        py: 1.25,
+                        pl: 1.5,
+                        borderTop: '2px solid #1F1F1F',
+                        userSelect: 'none',
+                      }}
+                    >
+                      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                        {isOpen
+                          ? <ChevronDown size={18} style={{ flexShrink: 0 }} />
+                          : <ChevronRight size={18} style={{ flexShrink: 0 }} />}
+                        <span>{cg.catLabel}</span>
+                        <Box component="span" sx={{ ml: 0.5, color: '#1F1F1F99', fontWeight: 600, fontSize: 11 }}>
                           · {itemCount} {itemCount === 1 ? 'product' : 'products'}
                         </Box>
-                      </TableCell>
-                    </TableRow>
-                  )}
-                  {cg.weightGroups.map(group => (
+                        {!isOpen && (
+                          <Box component="span" sx={{ ml: 'auto', color: '#1F1F1F99', fontWeight: 600, fontSize: 10, textTransform: 'none', letterSpacing: 0 }}>
+                            tap to open
+                          </Box>
+                        )}
+                      </Box>
+                    </TableCell>
+                  </TableRow>
+                  {isOpen && cg.weightGroups.map(group => (
                     <Fragment key={`${cg.catId}__${group.label}`}>
                       <TableRow>
                         <TableCell
@@ -1510,6 +1565,7 @@ const ProductRow = memo(function ProductRow({
       <TableCell align="center" sx={{ py: 0.5 }}>
         <input
           type="number"
+          aria-label={`Quantity for ${product.name}`}
           inputMode="numeric"
           min={0}
           max={1_000_000}

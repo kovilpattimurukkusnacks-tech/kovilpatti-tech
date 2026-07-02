@@ -44,10 +44,3 @@ export type UpdateShopRequest = {
 export type SetShopGstEnabledRequest = {
   enabled: boolean
 }
-
-export type PagedResult<T> = {
-  items: T[]
-  total: number
-  page: number
-  pageSize: number
-}

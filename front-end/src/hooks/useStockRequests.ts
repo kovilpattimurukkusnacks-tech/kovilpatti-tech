@@ -1,9 +1,10 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { stockRequestsApi } from '../api/stock-requests/api'
 import { NotFoundError } from '../api/errors'
+import type { PagedResult } from '../api/types'
 import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
-  RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
+  RejectRequest, DispatchRequest, StockRequestDto, RequestStatus,
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,

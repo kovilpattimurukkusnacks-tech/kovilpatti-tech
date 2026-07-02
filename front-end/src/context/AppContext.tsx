@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
+import { createContext, useContext, useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import type { CurrentUser } from '../types'
 import { authApi } from '../api/auth/api'
@@ -54,7 +54,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // client attaches it to subsequent requests automatically. Resolves to the
   // user on success; lets the error propagate on failure so the caller can
   // distinguish 401 (bad creds) from 429 (rate-limited) from a network error.
-  const login = async (username: string, password: string): Promise<LoggedInUser> => {
+  const login = useCallback(async (username: string, password: string): Promise<LoggedInUser> => {
     const res = await authApi.login({ username, password })
     tokenStore.set(res.token)
     const user: LoggedInUser = {
@@ -71,13 +71,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     queryClient.clear()
     setCurrentUser(user)
     return user
-  }
+  }, [queryClient])
 
-  const logout = () => {
+  const logout = useCallback(() => {
     tokenStore.clear()
     queryClient.clear()
     setCurrentUser(null)
-  }
+  }, [queryClient])
 
   // 401 handler — when any API call returns 401, the client clears the token
   // and dispatches this event. Drop currentUser so the auth guard (RoleGate)
@@ -92,8 +92,13 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, handler)
   }, [queryClient])
 
+  const value = useMemo(
+    () => ({ currentUser, login, logout }),
+    [currentUser, login, logout],
+  )
+
   return (
-    <AppContext.Provider value={{ currentUser, login, logout }}>
+    <AppContext.Provider value={value}>
       {children}
     </AppContext.Provider>
   )

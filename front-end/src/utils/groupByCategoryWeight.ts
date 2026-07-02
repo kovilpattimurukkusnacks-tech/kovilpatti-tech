@@ -19,6 +19,22 @@ export type GroupKey = {
 const NONE = '__none__'
 const NONE_LABEL = 'No weight'
 
+/**
+ * Shared "g before kg, then numeric" comparator for weight-bucket keys of
+ * the form `${weightValue}|${weightUnit}` (or the sentinel `__none__`,
+ * which always sorts last). Exported so other weight-grouping helpers
+ * (e.g. the shop new-request screen's category-then-weight grouping) can't
+ * drift from this sort order.
+ */
+export function compareWeightKeys(a: string, b: string): number {
+  if (a === NONE) return 1
+  if (b === NONE) return -1
+  const [av, au] = a.split('|')
+  const [bv, bu] = b.split('|')
+  if (au !== bu) return au.localeCompare(bu)
+  return Number(av) - Number(bv)
+}
+
 export function groupByCategoryWeight<T>(
   items: T[],
   pick: (item: T) => GroupKey,
@@ -47,14 +63,7 @@ export function groupByCategoryWeight<T>(
         if (arr) arr.push(it)
         else byWeight.set(key, [it])
       }
-      const sortedKeys = Array.from(byWeight.keys()).sort((a, b) => {
-        if (a === NONE) return 1
-        if (b === NONE) return -1
-        const [av, au] = a.split('|')
-        const [bv, bu] = b.split('|')
-        if (au !== bu) return au.localeCompare(bu)
-        return Number(av) - Number(bv)
-      })
+      const sortedKeys = Array.from(byWeight.keys()).sort(compareWeightKeys)
       const weightGroups = sortedKeys.map(k => {
         if (k === NONE) return { label: NONE_LABEL, items: byWeight.get(k)! }
         const [v, u] = k.split('|')

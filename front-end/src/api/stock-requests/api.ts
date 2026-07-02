@@ -1,7 +1,9 @@
 import { apiClient } from '../client'
+import { buildQuery } from '../queryString'
+import type { PagedResult } from '../types'
 import type {
   StockRequestDto, CreateStockRequestRequest, UpdateStockRequestRequest,
-  RejectRequest, DispatchRequest, StockRequestListFilters, PagedResult,
+  RejectRequest, DispatchRequest, StockRequestListFilters,
   CumulativePendingLine, ShopRequestCount, RequestStatus, RequestType,
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
@@ -11,18 +13,17 @@ import type {
 
 function toQuery(filters?: StockRequestListFilters): string {
   if (!filters) return ''
-  const p = new URLSearchParams()
-  if (filters.shopId)        p.set('shopId', filters.shopId)
-  if (filters.inventoryId)   p.set('inventoryId', filters.inventoryId)
-  if (filters.status)        p.set('status', filters.status)
-  if (filters.search)        p.set('search', filters.search)
-  if (filters.page != null)     p.set('page', String(filters.page))
-  if (filters.pageSize != null) p.set('pageSize', String(filters.pageSize))
-  if (filters.fromDate)         p.set('fromDate', filters.fromDate)
-  if (filters.toDate)           p.set('toDate', filters.toDate)
-  if (filters.requestType)      p.set('requestType', filters.requestType)
-  const qs = p.toString()
-  return qs ? `?${qs}` : ''
+  return buildQuery({
+    shopId: filters.shopId,
+    inventoryId: filters.inventoryId,
+    status: filters.status,
+    search: filters.search,
+    page: filters.page,
+    pageSize: filters.pageSize,
+    fromDate: filters.fromDate,
+    toDate: filters.toDate,
+    requestType: filters.requestType,
+  })
 }
 
 export const stockRequestsApi = {
@@ -52,14 +53,14 @@ export const stockRequestsApi = {
   // Per-shop request count for the active status filter (Inventory + Admin).
   // Drives the shop quick-filter chips below the status presets.
   countByShop: (args?: { status?: RequestStatus; inventoryId?: string; fromDate?: string; toDate?: string; requestType?: RequestType }) => {
-    const p = new URLSearchParams()
-    if (args?.status)      p.set('status', args.status)
-    if (args?.inventoryId) p.set('inventoryId', args.inventoryId)
-    if (args?.fromDate)    p.set('fromDate', args.fromDate)
-    if (args?.toDate)      p.set('toDate', args.toDate)
-    if (args?.requestType) p.set('requestType', args.requestType)
-    const qs = p.toString()
-    return apiClient.get<ShopRequestCount[]>(`/api/stock-requests/count-by-shop${qs ? `?${qs}` : ''}`)
+    const qs = buildQuery({
+      status: args?.status,
+      inventoryId: args?.inventoryId,
+      fromDate: args?.fromDate,
+      toDate: args?.toDate,
+      requestType: args?.requestType,
+    })
+    return apiClient.get<ShopRequestCount[]>(`/api/stock-requests/count-by-shop${qs}`)
   },
 
   // Detail (any role; BE enforces ownership)

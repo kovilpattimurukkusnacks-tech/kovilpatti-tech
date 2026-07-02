@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
+import type { PagedResult } from '../types'
 import type {
-  UserDto, CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest, PagedResult,
+  UserDto, CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest,
 } from './types'
 
 export const usersApi = {

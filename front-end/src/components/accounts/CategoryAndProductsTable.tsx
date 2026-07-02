@@ -12,6 +12,7 @@ import type {
 import type { CategoryDto } from '../../api/categories/types'
 import { accountsExport } from '../../api/accounts/api'
 import { formatINR } from '../../utils/format'
+import { useExcelExport } from '../../hooks/useExcelExport'
 
 type Props = {
   categoryRows: AccountsCategoryRowDto[] | undefined
@@ -51,7 +52,7 @@ export default function CategoryAndProductsTable({
   const [tab, setTab] = useState<'category' | 'top-products'>('category')
   // Excel export typically takes 2-5 seconds — spinner gives the admin
   // immediate feedback that the click registered.
-  const [exporting, setExporting] = useState(false)
+  const { exporting, handleExport } = useExcelExport()
 
   // Resolve the selected ids to full CategoryDto objects for the Autocomplete
   // `value` prop. The parent's `selectedCategoryIds` is the source of truth
@@ -171,6 +172,11 @@ export default function CategoryAndProductsTable({
               onChange={(_, vals) => onCategoryIdsChange(vals.map(v => v.id))}
               renderInput={(params) => <TextField {...params} label="Categories" />}
               renderOption={(props, option) => {
+                // React 19 spreads `key` into `props` internally for some
+                // element types, but `key` isn't part of the public
+                // HTMLAttributes type — cast so we can destructure it out
+                // instead of forwarding it via {...liProps} (which would
+                // warn/misbehave). Don't "fix" this by removing the cast.
                 const { key, ...liProps } = props as React.HTMLAttributes<HTMLLIElement> & { key?: React.Key }
                 return (
                   <li key={key} {...liProps} style={{ ...(liProps.style as object), paddingLeft: 8 + option.depth * 16 }}>
@@ -210,17 +216,11 @@ export default function CategoryAndProductsTable({
               size="small"
               variant="outlined"
               startIcon={exporting ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : <Download size={16} />}
-              onClick={async () => {
-                if (exporting) return
-                setExporting(true)
-                try {
-                  await (tab === 'category'
-                    ? accountsExport.byCategory(filters)
-                    : accountsExport.topProducts(filters))
-                } finally {
-                  setExporting(false)
-                }
-              }}
+              onClick={() => handleExport(() =>
+                tab === 'category'
+                  ? accountsExport.byCategory(filters)
+                  : accountsExport.topProducts(filters)
+              )}
               disabled={
                 exporting || (
                   tab === 'category'

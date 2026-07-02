@@ -1,4 +1,3 @@
-import { useState } from 'react'
 import { Box, Button, Card, CardContent, CircularProgress, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
@@ -6,6 +5,7 @@ import { useNavigate } from 'react-router-dom'
 import type { AccountsFilters, AccountsShopRowDto, AccountsView } from '../../api/accounts/types'
 import { accountsExport } from '../../api/accounts/api'
 import { formatINR } from '../../utils/format'
+import { useExcelExport } from '../../hooks/useExcelExport'
 
 type Props = {
   rows: AccountsShopRowDto[] | undefined
@@ -28,7 +28,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
   // Excel export typically takes 2-5 seconds (BE renders the .xlsx +
   // streams it). Show a spinner during that window so the admin knows
   // the click registered.
-  const [exporting, setExporting] = useState(false)
+  const { exporting, handleExport } = useExcelExport()
 
   // Full column set tagged by which view(s) it belongs to. Filtered before
   // handing to DataGrid so each view shows only its dimensional columns
@@ -78,12 +78,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
             size="small"
             variant="outlined"
             startIcon={exporting ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : <Download size={16} />}
-            onClick={async () => {
-              if (exporting) return
-              setExporting(true)
-              try { await accountsExport.byShop(filters) }
-              finally { setExporting(false) }
-            }}
+            onClick={() => handleExport(() => accountsExport.byShop(filters))}
             disabled={exporting || loading || !rows || rows.length === 0}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >

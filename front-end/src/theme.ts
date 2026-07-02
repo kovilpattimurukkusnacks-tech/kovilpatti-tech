@@ -25,6 +25,7 @@ export const theme = createTheme({
     warning: { main: '#FFA000' },
     success: { main: '#2E7D32' },
     info: { main: '#0277BD' },
+    // alpha 0: cream background is applied via global.css instead; this just documents the intended color
     background: { default: 'rgba(255, 248, 220, 0)', paper: '#FFFFFF' },
     text: { primary: '#1F1F1F', secondary: '#3D3D3D' },
   },

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useMemo } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useCumulativePending } from '../../hooks/useStockRequests'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
@@ -6,6 +6,8 @@ import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategory
 import { splitBalancedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
+import { BRAND_NAME } from '../../utils/brand'
+import { useAutoPrint, PrintButton } from '../../hooks/useAutoPrint'
 import './print.css'
 
 const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
@@ -14,7 +16,6 @@ const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
 // Brand block — mirrors the thermal receipt + per-request picklist so all
 // three printouts feel like the same family. Contact phone is per-shop on
 // the picklist; cumulative is cross-shop so we omit it here.
-const BRAND_NAME = 'Kovilpatti Murukku & Snacks'
 
 /**
  * Cumulative in-progress workload — one batch-plan report covering every
@@ -37,16 +38,9 @@ export default function PrintCumulative() {
   const requestIds = params.get('requestIds')?.split(',').map(s => s.trim()).filter(Boolean)
   const { data: rows, isLoading, error } = useCumulativePending(invId, requestIds)
 
-  // Fire the print dialog ONCE per page life. Without this guard, React
-  // Query data refetches (or StrictMode double-invoke) can queue multiple
-  // window.print() calls — which leaves stuck dialogs that lock the opener.
-  const printedRef = useRef(false)
-  useEffect(() => {
-    if (!rows || printedRef.current) return
-    printedRef.current = true
-    const t = setTimeout(() => window.print(), 300)
-    return () => clearTimeout(t)
-  }, [rows])
+  // Fire the print dialog ONCE per page life — see useAutoPrint for why the
+  // ref guard is needed (React Query refetches / StrictMode double-invoke).
+  useAutoPrint(!!rows)
 
   // Two-level grouping: sub-category (leaf) → weight → SKUs.
   const sections = useMemo(
@@ -251,7 +245,7 @@ export default function PrintCumulative() {
           repeating-header table so the button doesn't print as page chrome. */}
       <footer className="print-footer print-only">
         <div className="print-only">
-          <button onClick={() => window.print()} className="print-trigger">Print</button>
+          <PrintButton className="print-trigger" />
         </div>
       </footer>
     </div>

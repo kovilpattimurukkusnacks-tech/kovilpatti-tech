@@ -11,8 +11,9 @@
 
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { inventoriesApi } from '../api/inventories/api'
+import type { PagedResult } from '../api/types'
 import type {
-  CreateInventoryRequest, UpdateInventoryRequest, PagedResult, InventoryDto,
+  CreateInventoryRequest, UpdateInventoryRequest, InventoryDto,
 } from '../api/inventories/types'
 
 export const inventoriesKeys = {

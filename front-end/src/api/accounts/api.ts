@@ -1,6 +1,6 @@
-import { apiClient } from '../client'
+import { apiClient, getAuthHeaders, handleFailedResponse } from '../client'
 import { BASE_URL } from '../config'
-import { tokenStore } from '../tokenStore'
+import { buildQuery } from '../queryString'
 import type {
   AccountsAdjustmentRowDto,
   AccountsCategoryRowDto,
@@ -16,18 +16,21 @@ import type {
  *  values (matches the BE's CommaSeparatedArrayModelBinder). Empty arrays
  *  / undefined keys are omitted so the URL stays clean. */
 function toQuery(f: AccountsFilters): string {
-  const p = new URLSearchParams()
-  p.set('from', f.from)
-  p.set('to',   f.to)
-  if (f.grouping) p.set('grouping', f.grouping)
-  if (f.shopIds      && f.shopIds.length)      p.set('shopIds',      f.shopIds.join(','))
-  if (f.inventoryIds && f.inventoryIds.length) p.set('inventoryIds', f.inventoryIds.join(','))
-  if (f.categoryIds  && f.categoryIds.length)  p.set('categoryIds',  f.categoryIds.join(','))
-  if (f.limit != null) p.set('limit', String(f.limit))
-  // 19-Jun-2026 (client #13): view-mode lens — passed only when non-default so
-  // the URL stays clean. BE Excel exports drop columns based on this param.
-  if (f.view && f.view !== 'all') p.set('view', f.view)
-  return `?${p.toString()}`
+  const qs = buildQuery({
+    from: f.from,
+    to: f.to,
+    grouping: f.grouping,
+    shopIds: f.shopIds,
+    inventoryIds: f.inventoryIds,
+    categoryIds: f.categoryIds,
+    limit: f.limit,
+    // 19-Jun-2026 (client #13): view-mode lens — passed only when non-default so
+    // the URL stays clean. BE Excel exports drop columns based on this param.
+    view: f.view && f.view !== 'all' ? f.view : undefined,
+  })
+  // `from`/`to` are required — always present even if buildQuery's generic
+  // rules would otherwise omit them, so keep the leading '?' unconditional.
+  return qs || '?'
 }
 
 export const accountsApi = {
@@ -52,12 +55,11 @@ export const accountsApi = {
 // well under a few megabytes.
 
 async function streamDownload(path: string, filename: string): Promise<void> {
-  const token = tokenStore.get()
   const res = await fetch(`${BASE_URL}${path}`, {
-    headers: token ? { Authorization: `Bearer ${token}` } : undefined,
+    headers: getAuthHeaders(),
   })
   if (!res.ok) {
-    throw new Error(`Export failed with status ${res.status}`)
+    await handleFailedResponse(res)
   }
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)

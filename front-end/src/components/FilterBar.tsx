@@ -1,6 +1,7 @@
 import { Box, Button, Chip, Collapse, Paper } from '@mui/material'
 import { ListFilter, ChevronDown, ChevronUp } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { GOLD_GRADIENT } from '../theme'
 
 /**
  * Bordered container that groups the list-page filters (date / status / shop)
@@ -79,7 +80,7 @@ export function FilterPanel({
             sx={{
               borderRadius: 999,
               fontWeight: 600,
-              background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+              background: GOLD_GRADIENT,
               color: '#1F1F1F',
               border: '1px solid #C28A00',
               '& .MuiChip-deleteIcon': { color: '#1F1F1F', '&:hover': { color: '#7B1A1A' } },

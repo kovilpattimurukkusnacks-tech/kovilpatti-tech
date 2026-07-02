@@ -263,10 +263,3 @@ export type StockRequestListFilters = {
   // "Return" preset chip on ShopRequests + InventoryRequests.
   requestType?: RequestType
 }
-
-export type PagedResult<T> = {
-  items: T[]
-  total: number
-  page: number
-  pageSize: number
-}

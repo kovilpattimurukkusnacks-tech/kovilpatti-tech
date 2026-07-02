@@ -17,7 +17,7 @@ import type {
 } from '../api/users/types'
 import type { ShopDto } from '../api/shops/types'
 import type { InventoryDto } from '../api/inventories/types'
-import { ValidationError } from '../api/errors'
+import { mutationErrorMessage } from '../utils/mutationError'
 
 type FormMode =
   | { kind: 'closed' }
@@ -82,20 +82,14 @@ export default function Staff() {
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return
-    try {
-      await remove.mutateAsync(pendingDelete.id)
-    } finally {
-      setPendingDelete(null)
-    }
+    await remove.mutateAsync(pendingDelete.id)
+    setPendingDelete(null)
   }
 
   const handleResetPassword = async (newPassword: string) => {
     if (!resetTarget) return
-    try {
-      await resetPwd.mutateAsync({ id: resetTarget.id, req: { newPassword } })
-    } finally {
-      setResetTarget(null)
-    }
+    await resetPwd.mutateAsync({ id: resetTarget.id, req: { newPassword } })
+    setResetTarget(null)
   }
 
   const columns = useMemo<GridColDef<UserDto>[]>(() => [
@@ -131,19 +125,19 @@ export default function Staff() {
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => (
         <Box>
-          <IconButton size="small" title="Reset password" onClick={() => setResetTarget(row)}>
+          <IconButton size="small" title="Reset password" onClick={() => { resetPwd.reset(); setResetTarget(row) }}>
             <KeyRound className="w-4 h-4" />
           </IconButton>
           <IconButton size="small" title="Edit" onClick={() => setFormMode({ kind: 'edit', user: row })}>
             <Edit2 className="w-4 h-4" />
           </IconButton>
-          <IconButton size="small" color="error" title="Delete" onClick={() => setPendingDelete(row)}>
+          <IconButton size="small" color="error" title="Delete" onClick={() => { remove.reset(); setPendingDelete(row) }}>
             <Trash2 className="w-4 h-4" />
           </IconButton>
         </Box>
       ),
     },
-  ], [])
+  ], [remove, resetPwd])
 
   const canAdd = shops.length > 0 || inventories.length > 0
   const errorMessage = list.isError
@@ -224,18 +218,13 @@ export default function Staff() {
         title="Delete staff"
         message={`Are you sure you want to delete user "${pendingDelete?.username ?? ''}"? This will deactivate them.`}
         confirmLabel="Delete"
+        submitting={remove.isPending}
+        submitError={mutationErrorMessage(remove.error)}
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
     </div>
   )
-}
-
-function mutationErrorMessage(err: unknown): string | null {
-  if (!err) return null
-  if (err instanceof ValidationError) return err.flatten()
-  if (err instanceof Error)           return err.message
-  return 'Something went wrong.'
 }
 
 function StaffFormDialog({ open, user, shops, inventories, submitting, submitError, onClose, onSave }: {

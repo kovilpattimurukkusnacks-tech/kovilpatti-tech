@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react'
+import { useMemo, Fragment } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
 import { DispatchedCell } from '../../components/DispatchedCell'
@@ -8,6 +8,9 @@ import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategory
 import { splitBalancedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
+import { computeDeliveredAmount } from '../../utils/computeDeliveredAmount'
+import { BRAND_NAME } from '../../utils/brand'
+import { useAutoPrint, PrintButton } from '../../hooks/useAutoPrint'
 import './print.css'
 
 // Per-card height estimator — number of "rows" the card will occupy
@@ -19,7 +22,6 @@ const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
 // Brand block — mirrors the thermal receipt's centred header so admin/godown
 // prints feel like the same product. Name stays constant; contact comes from
 // the request's shopContactPhone (per-shop), falling back to em-dash.
-const BRAND_NAME = 'Kovilpatti Murukku & Snacks'
 
 /**
  * Single-request picklist. Standalone route, no sidebar/header chrome,
@@ -30,27 +32,15 @@ export default function PrintRequestPicklist() {
   const { id } = useParams<{ id: string }>()
   const { data: request, isLoading, error } = useStockRequest(id)
 
-  // Auto-open the browser print dialog ONCE when the data is ready.
-  // Without this ref guard, React Query data refetches (or StrictMode
-  // double-invoke in dev) can queue multiple window.print() calls — which
-  // leaves "ghost" dialogs that lock both this tab and its opener.
-  const printedRef = useRef(false)
-  useEffect(() => {
-    if (!request || printedRef.current) return
-    printedRef.current = true
-    const t = setTimeout(() => window.print(), 300)
-    return () => clearTimeout(t)
-  }, [request])
+  // Auto-open the browser print dialog ONCE when the data is ready — see
+  // useAutoPrint for why the ref guard is needed (React Query refetches /
+  // StrictMode double-invoke in dev would otherwise queue "ghost" dialogs
+  // that lock both this tab and its opener).
+  useAutoPrint(!!request)
 
   // Compute the delivered amount client-side so it always matches the items
   // table (totalDispatchedAmount on the DTO is null until dispatch happens).
-  const deliveredAmount = useMemo(() => {
-    if (!request) return 0
-    return (request.items ?? []).reduce(
-      (sum, it) => sum + (it.dispatchedQty ?? it.requestedQty) * it.unitPrice,
-      0,
-    )
-  }, [request])
+  const deliveredAmount = useMemo(() => computeDeliveredAmount(request?.items), [request])
 
   // Two-level grouping for the picklist: sub-category (leaf) → weight → items.
   const sections = useMemo(
@@ -337,7 +327,7 @@ export default function PrintRequestPicklist() {
           repeating-header table so the button doesn't print as page chrome. */}
       <footer className="print-footer print-only">
         <div className="print-only">
-          <button onClick={() => window.print()} className="print-trigger">Print</button>
+          <PrintButton className="print-trigger" />
         </div>
       </footer>
     </div>
