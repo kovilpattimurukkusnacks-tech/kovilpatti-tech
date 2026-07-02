@@ -290,6 +290,16 @@ public class StockRequestService(
         var validation = await dispatchValidator.ValidateAsync(request, ct);
         if (!validation.IsValid) throw new ValidationException(validation.Errors);
 
+        // DispatchedQty is nullable at the DTO level (save-draft path can
+        // send null to clear a persisted draft). The final /dispatch
+        // endpoint rejects null — every line needs an explicit qty (0 is
+        // a valid "out of stock" declaration).
+        if (request.Items.Any(i => i.DispatchedQty == null))
+            throw new ValidationException(new[] {
+                new ValidationFailure("Items",
+                    "Every item needs a dispatched qty. Use 0 for out-of-stock lines.")
+            });
+
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 

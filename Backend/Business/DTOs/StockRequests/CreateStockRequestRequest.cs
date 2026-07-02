@@ -27,9 +27,14 @@ public record RejectRequest(string Reason);
 
 public record DispatchRequest(IReadOnlyList<DispatchItem> Items);
 
+/// DispatchedQty is nullable ONLY for the save-dispatch-draft path:
+/// sending null tells the SP to clear this item's persisted draft (the
+/// godown erased the qty mid-edit). The final /dispatch endpoint still
+/// rejects null via DispatchValidator so the terminal state can't be
+/// reached with an unset qty.
 public record DispatchItem(
     Guid Id,           // stock_request_items.id
-    int  DispatchedQty
+    int? DispatchedQty
 );
 
 /// Inventory user renames a saved dispatch draft. Empty / whitespace-only

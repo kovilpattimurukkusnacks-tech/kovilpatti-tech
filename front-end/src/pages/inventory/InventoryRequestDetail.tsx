@@ -1,9 +1,9 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, Hourglass } from 'lucide-react'
+import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, Hourglass, ChevronUp, ChevronDown } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, Paper, Table, TableBody, TableCell, TableContainer,
+  IconButton, InputAdornment, Paper, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
@@ -138,7 +138,15 @@ export default function InventoryRequestDetail() {
     }
     setDispatchQtys(map)
     setIsDraftDirty(seededAsUnsavedDefaults)
-  }, [request])
+    // 02-Jul-2026: dependencies MUST be [id, status] only — NOT the whole
+    // request object. Auto-save mutations refetch the request and hand us a
+    // new object reference; re-running this seed on that refresh was
+    // overwriting the user's in-progress erase (they wiped a qty, auto-save
+    // fired 1.5s later, response came back with the old persisted draft
+    // still in it, and this effect re-filled the wiped cell). Same request
+    // id + same status → user's local state must NOT be reset.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [request?.id, request?.status])
 
   // Stats surfaced in the sticky bottom bar. Declared before any early return
   // so React's hooks order stays stable across renders.
@@ -154,14 +162,22 @@ export default function InventoryRequestDetail() {
   // The qty-input table is editable in either pre-finalisation mode.
   const canEditQty  = canDispatch || canAccept
   const stats = useMemo(() => {
-    let dispatchTotal = 0
-    let shortLines = 0
+    let dispatchTotal  = 0
+    let requestedTotal = 0
+    let shortLines     = 0
     for (const it of items) {
-      const q = dispatchQtys.get(it.id) ?? it.requestedQty
-      dispatchTotal += q * it.unitPrice
-      if (q < it.requestedQty) shortLines++
+      // dispatchTotal sums ONLY typed-in qtys (not a `?? requestedQty`
+      // fallback) so Pending-state (nothing typed yet) shows ₹0, not the
+      // requested total. On Approved the seed populates every entry so
+      // this still resolves to full requested amount by default.
+      const typed = dispatchQtys.get(it.id)
+      if (typed != null) {
+        dispatchTotal += typed * it.unitPrice
+        if (typed < it.requestedQty) shortLines++
+      }
+      requestedTotal += it.requestedQty * it.unitPrice
     }
-    return { dispatchTotal, shortLines }
+    return { dispatchTotal, requestedTotal, shortLines }
   }, [items, dispatchQtys])
 
   // Inventory user must enter a number on every line before dispatching (0
@@ -261,14 +277,19 @@ export default function InventoryRequestDetail() {
 
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
-      // Only save items the user has actually typed for — otherwise the
-      // `?? requestedQty` fallback used to silently pre-fill every other
-      // item with its full requested qty, which then re-seeded on next
-      // visit and made it look like the user had filled everything in.
-      const itemsPayload = items
-        .filter(it => dispatchQtys.has(it.id))
-        .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
-      if (itemsPayload.length === 0) return   // nothing to save
+      // Include every item in the request. Items the user has typed for →
+      // send their current value. Items the user erased (or never touched
+      // but had a persisted draft) → send null so the SP clears the DB
+      // draft. Without this, the persisted draft stays in the DB and
+      // silently re-fills the wiped cell on the next refetch.
+      const itemsPayload = items.map(it => ({
+        id: it.id,
+        dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
+      }))
+      // If NOTHING is set AND nothing to clear → skip the network round-trip.
+      const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null)
+      const hasDraftToClear = items.some(it => it.draftDispatchedQty != null && !dispatchQtys.has(it.id))
+      if (!hasAnyValue && !hasDraftToClear) return
       saveDraftMutation.mutate(
         { id: requestId, req: { items: itemsPayload } },
         {
@@ -363,12 +384,16 @@ export default function InventoryRequestDetail() {
    */
   const handleSaveDraft = async () => {
     const startCount = changeCountRef.current
-    // Same filter as the auto-save effect — only send items the user has
-    // typed for, never a requestedQty default for untouched items.
-    const itemsPayload = items
-      .filter(it => dispatchQtys.has(it.id))
-      .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
-    if (itemsPayload.length === 0) return
+    // Same "full manifest" strategy as the auto-save effect: send every
+    // item; erased ones go with dispatchedQty=null so the SP clears their
+    // persisted draft. See the auto-save comment for the rationale.
+    const itemsPayload = items.map(it => ({
+      id: it.id,
+      dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
+    }))
+    const hasAnyValue     = itemsPayload.some(p => p.dispatchedQty != null)
+    const hasDraftToClear = items.some(it => it.draftDispatchedQty != null && !dispatchQtys.has(it.id))
+    if (!hasAnyValue && !hasDraftToClear) return
     try {
       await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
       setDraftSavedAt(new Date())
@@ -561,15 +586,26 @@ export default function InventoryRequestDetail() {
                       <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
                         {canEditQty ? (
                           <TextField
-                            type="number"
+                            /* type="text" + inputMode="numeric" — no native
+                               spinner (that's the white-bg one we couldn't
+                               tame). Mobile keyboards still open numeric.
+                               Custom +/- buttons below sit in an
+                               InputAdornment so they inherit the wrapper's
+                               state colour cleanly. */
+                            type="text"
                             size="small"
                             value={dispatchQtys.get(item.id) ?? ''}
-                            onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
+                            onChange={e => {
+                              // Digits only — reject anything else at the
+                              // input layer since we no longer get type=number
+                              // filtering. Empty string = "cleared".
+                              const v = e.target.value
+                              if (v === '' || /^\d+$/.test(v)) {
+                                setItemQty(item.id, v, item.requestedQty)
+                              }
+                            }}
                             onKeyDown={e => {
                               if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
-                              // Enter → next qty input (same traversal as Tab).
-                              // .disp-qty-input is on every dispatch qty <input>
-                              // via slotProps.htmlInput.className below.
                               if (e.key === 'Enter') {
                                 e.preventDefault()
                                 const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.disp-qty-input'))
@@ -577,24 +613,63 @@ export default function InventoryRequestDetail() {
                                 inputs[idx + 1]?.focus()
                               }
                             }}
-                            // Block mouse-wheel stepping — see 02-Jul-2026 shop-side
-                            // comment. Blur so the page scrolls instead.
                             onWheel={e => (e.target as HTMLInputElement).blur()}
-                            // Tab-nav across a long product list moves focus to
-                            // qty inputs that sit off-screen — the dispatcher
-                            // couldn't tell where their cursor had jumped to.
-                            // Center the focused input in the viewport on
-                            // focus so tab is self-guiding both directions
-                            // (scrolls down as they walk down the list,
-                            // scrolls back up when tab wraps into the second
-                            // column). 02-Jul-2026.
-                            onFocus={e => (e.target as HTMLInputElement).scrollIntoView({ block: 'center', behavior: 'smooth' })}
-                            slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', className: 'disp-qty-input', style: { textAlign: 'center', padding: '4px 8px' } } }}
+                            onFocus={e => {
+                              const el = e.target as HTMLInputElement
+                              el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+                              el.select()
+                            }}
+                            slotProps={{
+                              htmlInput: { inputMode: 'numeric', className: 'disp-qty-input', style: { textAlign: 'center', padding: '4px 8px' } },
+                              input: {
+                                endAdornment: (
+                                  // Compact +/- stack; only visible on hover
+                                  // of the whole cell (see :hover rule in
+                                  // parent sx). Buttons inherit the wrapper's
+                                  // cream/red/amber bg via transparent bg.
+                                  <InputAdornment position="end" sx={{ ml: 0, mr: -0.5 }}>
+                                    <Box
+                                      className="qty-stepper"
+                                      sx={{ display: 'flex', flexDirection: 'column', opacity: 0, transition: 'opacity 120ms ease' }}
+                                    >
+                                      <IconButton
+                                        size="small"
+                                        tabIndex={-1}
+                                        onClick={() => {
+                                          const cur = dispatchQtys.get(item.id) ?? 0
+                                          setItemQty(item.id, String(cur + 1), item.requestedQty)
+                                        }}
+                                        sx={{ p: 0, height: 12, width: 16, borderRadius: 0, color: '#1F1F1F' }}
+                                      >
+                                        <ChevronUp className="w-3 h-3" />
+                                      </IconButton>
+                                      <IconButton
+                                        size="small"
+                                        tabIndex={-1}
+                                        onClick={() => {
+                                          const cur = dispatchQtys.get(item.id) ?? 0
+                                          if (cur > 0) setItemQty(item.id, String(cur - 1), item.requestedQty)
+                                        }}
+                                        sx={{ p: 0, height: 12, width: 16, borderRadius: 0, color: '#1F1F1F' }}
+                                      >
+                                        <ChevronDown className="w-3 h-3" />
+                                      </IconButton>
+                                    </Box>
+                                  </InputAdornment>
+                                ),
+                              },
+                            }}
                             sx={{
                               width: 86,
                               '& .MuiOutlinedInput-root': {
                                 bgcolor: isShort ? '#FFEBEE' : isOver ? '#FFE0B2' : '#FFF8DC',
                                 '& fieldset': { borderColor: isShort ? '#C62828' : isOver ? '#E65100' : '#1F1F1F' },
+                              },
+                              // Reveal the +/- stack when the input is hovered
+                              // or focused. Kept hidden otherwise so the
+                              // resting cell is clean state-colour only.
+                              '&:hover .qty-stepper, & .Mui-focused ~ .qty-stepper, & .MuiOutlinedInput-root.Mui-focused .qty-stepper': {
+                                opacity: 1,
                               },
                             }}
                           />
@@ -716,6 +791,23 @@ export default function InventoryRequestDetail() {
         )}
         {canAccept && (
           <Chip label="Ready to accept" color="primary" variant="outlined" size="small" />
+        )}
+        {/* Dispatch draft indicator — mirrors the list-row chip on
+            /inventory/requests + /admin/requests. Rendered whenever ANY
+            item on this request has a saved draft_dispatched_qty. */}
+        {items.some(it => it.draftDispatchedQty != null) && (
+          <Chip
+            label="Draft"
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: '#C28A00',
+              color: '#7C4A00',
+              bgcolor: '#FFF8E1',
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          />
         )}
 
         <Box sx={{ flex: 1 }} />
@@ -972,20 +1064,52 @@ export default function InventoryRequestDetail() {
             flexWrap: 'wrap',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2, minWidth: 0 }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 2.5, minWidth: 0, flexWrap: 'wrap' }}>
             <Badge badgeContent={stats.shortLines} color="error" max={99} invisible={stats.shortLines === 0}>
               <PackageCheck className="w-5 h-5 text-[#1F1F1F]" />
             </Badge>
+            {/* Requested (shop's original ask) — static, doesn't change as
+                the godown types. Left side per client req (02-Jul-2026).
+                Muted so the primary Dispatch total remains the eye-catch. */}
             <Box sx={{ minWidth: 0 }}>
-              <Box sx={{ fontSize: 13, color: '#1F1F1F99' }}>
+              <Box sx={{ fontSize: 10.5, fontWeight: 700, color: '#1F1F1F99', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                Requested
+              </Box>
+              <Box sx={{ fontSize: 16, fontWeight: 700, color: '#1F1F1F99' }}>
+                {formatINR(stats.requestedTotal)}
+              </Box>
+            </Box>
+            {/* Vertical hairline separator so the two totals read as a
+                paired unit (₹requested → ₹dispatched) rather than
+                separate chips. */}
+            <Box sx={{ width: '1px', alignSelf: 'stretch', bgcolor: 'rgba(31,31,31,0.15)' }} />
+            <Box sx={{ minWidth: 0 }}>
+              <Box sx={{ fontSize: 10.5, fontWeight: 700, color: '#1F1F1F', textTransform: 'uppercase', letterSpacing: 0.6 }}>
+                {isReturn ? 'Return' : 'Dispatch'}
+                {/* Show short/over as soon as the godown starts dispatching
+                    (dispatchTotal > 0). Resting state (nothing typed →
+                    dispatchTotal = 0) suppresses the label so it doesn't
+                    read as "everything's short" on a fresh screen. */}
+                {stats.dispatchTotal > 0 && stats.dispatchTotal < stats.requestedTotal && (
+                  <Box component="span" sx={{ ml: 0.75, color: '#C62828', fontSize: 10 }}>
+                    · short {formatINR(stats.requestedTotal - stats.dispatchTotal)}
+                  </Box>
+                )}
+                {stats.dispatchTotal > stats.requestedTotal && (
+                  <Box component="span" sx={{ ml: 0.75, color: '#E65100', fontSize: 10 }}>
+                    · over {formatINR(stats.dispatchTotal - stats.requestedTotal)}
+                  </Box>
+                )}
+              </Box>
+              <Box sx={{ fontSize: 18, fontWeight: 700, color: '#1F1F1F' }}>
+                {formatINR(stats.dispatchTotal)}
+              </Box>
+              <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
                 {!allLinesFilled
                   ? `Enter qty for ${items.length - dispatchQtys.size} more line${items.length - dispatchQtys.size === 1 ? '' : 's'}`
                   : stats.shortLines > 0
                     ? `${stats.shortLines} line${stats.shortLines === 1 ? '' : 's'} short of requested`
                     : 'All lines at requested qty'}
-              </Box>
-              <Box sx={{ fontSize: 18, fontWeight: 700, color: '#1F1F1F' }}>
-                {isReturn ? 'Return total' : 'Dispatch total'} {formatINR(stats.dispatchTotal)}
               </Box>
               {/* Quiet draft state hint — Order-only (Returns have no draft). */}
               {canDispatch && (draftSavedAt || hasInitialDraft) && (
@@ -1147,13 +1271,14 @@ export default function InventoryRequestDetail() {
         open={guard.state === 'blocked'}
         onSaveDraft={canDispatch
           ? async () => {
-              // Same payload-shape rule as the auto-save effect — only the
-              // items the user has typed for. No requestedQty fallback for
-              // untouched items.
-              const itemsPayload = items
-                .filter(it => dispatchQtys.has(it.id))
-                .map(it => ({ id: it.id, dispatchedQty: dispatchQtys.get(it.id)! }))
-              if (itemsPayload.length === 0) {
+              // Full-manifest payload (matches auto-save + handleSaveDraft)
+              // so erased items clear their persisted draft on the DB side.
+              const itemsPayload = items.map(it => ({
+                id: it.id,
+                dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
+              }))
+              const hasAnyValue = itemsPayload.some(p => p.dispatchedQty != null)
+              if (!hasAnyValue) {
                 throw new Error('Enter at least one quantity before saving.')
               }
               await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
@@ -1236,6 +1361,7 @@ export default function InventoryRequestDetail() {
                   value={addPickerQty}
                   onChange={e => setAddPickerQty(e.target.value)}
                   onWheel={e => (e.target as HTMLInputElement).blur()}
+                  onFocus={e => (e.target as HTMLInputElement).select()}
                   slotProps={{ htmlInput: { min: 1, inputMode: 'numeric' } }}
                   sx={{ width: 90 }}
                 />
@@ -1447,6 +1573,7 @@ export default function InventoryRequestDetail() {
                     }}
                     onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
                     onWheel={e => (e.target as HTMLInputElement).blur()}
+                    onFocus={e => (e.target as HTMLInputElement).select()}
                     slotProps={{
                       htmlInput: {
                         min: 1, max: it.requestedQty, inputMode: 'numeric',
