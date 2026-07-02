@@ -52,12 +52,18 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     }
 
     public async Task<IReadOnlyList<CumulativePendingLine>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default)
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id)";
+        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id, @p_request_ids)";
         var rows = await conn.QueryAsync<CumulativePendingLine>(new CommandDefinition(
-            sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+            sql, new
+            {
+                p_inventory_id = inventoryId,
+                p_request_ids  = requestIds?.ToArray(),
+            }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -291,6 +297,38 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
 
+    public async Task<bool> RenameDispatchDraftAsync(Guid id, Guid userId, string? name, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_rename_dispatch_draft(@p_id, @p_user_id, @p_name)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId, p_name = name }, cancellationToken: ct));
+    }
+
+    public async Task<bool> PinDispatchDraftAsync(Guid id, Guid userId, bool pinned, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_pin_dispatch_draft(@p_id, @p_user_id, @p_pinned)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId, p_pinned = pinned }, cancellationToken: ct));
+    }
+
+    public async Task<bool> InventoryAddItemsAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_inventory_add_items(@p_id, @p_user_id, @p_items::jsonb)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId, p_items = itemsJson }, cancellationToken: ct));
+    }
+
+    public async Task<bool> InventoryRemoveItemAsync(Guid id, Guid itemId, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_inventory_remove_item(@p_id, @p_item_id, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_item_id = itemId, p_user_id = userId }, cancellationToken: ct));
+    }
+
     public async Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default)
     {
@@ -298,6 +336,39 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         const string sql = "SELECT * FROM fn_request_list_inventory_dispatch_drafts(@p_inventory_id)";
         var rows = await conn.QueryAsync<StockRequest>(new CommandDefinition(
             sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    // ── Back-order (02-Jul-2026) ──────────────────────────────────
+
+    public async Task<Guid> MoveToBackorderAsync(
+        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
+        Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = @"
+            SELECT fn_request_move_to_backorder(
+                @p_id, @p_items::jsonb, @p_user_id, @p_eta)";
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+        {
+            p_id       = id,
+            p_items    = itemsJson,
+            p_user_id  = userId,
+            p_eta      = expectedArrivalAt,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<OutstandingBackorderRow>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, IReadOnlyList<Guid>? shopIds,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_request_list_outstanding_backorders(@p_inventory_id, @p_shop_ids)";
+        var rows = await conn.QueryAsync<OutstandingBackorderRow>(new CommandDefinition(sql, new
+        {
+            p_inventory_id = inventoryId,
+            p_shop_ids     = shopIds?.ToArray(),
+        }, cancellationToken: ct));
         return rows.ToList();
     }
 }

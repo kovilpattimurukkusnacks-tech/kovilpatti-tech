@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Plus, Edit2, Trash2, X, Package, Upload, Filter as FilterIcon, Tag, CornerDownRight } from 'lucide-react'
+import { Plus, Edit2, Trash2, X, Package, Upload, Tag, CornerDownRight, Search } from 'lucide-react'
 import {
-  Alert, Badge, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, MenuItem, Paper, TextField,
+  Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  IconButton, InputAdornment, MenuItem, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
 import { useProducts, useCreateProduct, useUpdateProduct, useDeleteProduct, useImportProducts } from '../hooks/useProducts'
 import { useCategories } from '../hooks/useCategories'
+import { useGstEnabled } from '../hooks/useSettings'
 import type {
   ProductDto, CreateProductRequest, UpdateProductRequest, ImportProductsResult, ProductListFilters,
 } from '../api/products/types'
@@ -17,6 +18,9 @@ import type { CategoryDto } from '../api/categories/types'
 import { ValidationError } from '../api/errors'
 import { formatINR } from '../utils/format'
 import { mutationErrorMessage } from '../utils/mutationError'
+import { useDebouncedValue } from '../hooks/useDebouncedValue'
+import { CategoryTreeFilter } from '../components/CategoryTreeFilter'
+import { buildRootLookup, rootPriorityIndex } from '../utils/rootCategoryPriority'
 import './Products.css'
 
 type FormMode =
@@ -34,6 +38,14 @@ type FormValues = {
   mrp: string
   purchasePrice: string
   active: boolean
+  /** GST percent (0..100), raw input. Only surfaced when the global
+   *  `gst_enabled` app-setting is true (19-Jun-2026, client #15).
+   *  Empty string → send null to BE (preserves the existing strategy). */
+  gst: string
+  /** True → SKU is procured from a vendor (not made in-house). Off by
+   *  default on Create; preserves prior value on Edit. Drives the amber
+   *  badge on the grid + the pre-check in Move-to-back-order. 02-Jul-2026. */
+  isVendorProcured: boolean
 }
 
 export default function Products() {
@@ -42,10 +54,14 @@ export default function Products() {
   // DataGrid uses 0-indexed pages; BE uses 1-indexed. Convert on the wire.
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
 
+  // 01-Jul-2026: fetch all matching products in one shot so we can sort
+  // by the hard-coded root-category priority (client req). DataGrid then
+  // handles pagination client-side. At the current catalog size (~300)
+  // this is well within budget; re-visit if the catalog grows past ~2000.
   const list = useProducts({
     ...filters,
-    page: paginationModel.page + 1,
-    pageSize: paginationModel.pageSize,
+    page: 1,
+    pageSize: 500,
   })
   const categoriesQuery = useCategories()
   const create = useCreateProduct()
@@ -55,14 +71,46 @@ export default function Products() {
   const [formMode, setFormMode] = useState<FormMode>({ kind: 'closed' })
   const [pendingDelete, setPendingDelete] = useState<ProductDto | null>(null)
   const [importOpen, setImportOpen] = useState(false)
-  const [filterOpen, setFilterOpen] = useState(false)
 
-  const activeFilterCount =
-    (filters.search ? 1 : 0) + (filters.categoryIds?.length ? 1 : 0)
+  // Inline search (01-Jul-2026 client req): the old Filter button opened
+  // a dialog which felt slow to the admin. Now a plain search box sits in
+  // the header; typing 300ms → BE query. Category filter dropped as part
+  // of the same cleanup — admin can eyeball category via the grid column.
+  const [searchInput, setSearchInput] = useState('')
+  const debouncedSearch = useDebouncedValue(searchInput, 300)
+  useEffect(() => {
+    setFilters(prev => ({ ...prev, search: debouncedSearch.trim() || undefined }))
+    setPaginationModel(m => ({ ...m, page: 0 }))
+  }, [debouncedSearch])
 
-  const products  = list.data?.items ?? []
-  const total     = list.data?.total ?? 0
-  const categories = categoriesQuery.data ?? []
+  const rawProducts = list.data?.items ?? []
+  const total       = list.data?.total ?? 0
+  const categories  = categoriesQuery.data ?? []
+
+  // Sort products by root-category priority (1kg Snacks → Packing Items
+  // → … → Shop Needs), then by leaf-category name, then by code within
+  // a leaf. Client-side sort — the BE list SP returns in code order,
+  // but the admin wants the same top-level hierarchy the shop / godown
+  // sees on every other screen (01-Jul-2026).
+  const products = useMemo(() => {
+    if (rawProducts.length === 0) return rawProducts
+    const lookup = buildRootLookup(categories)
+    // Cache root-name + priority per product so we don't re-resolve on
+    // every comparator call (N log N calls otherwise).
+    const decorated = rawProducts.map(p => {
+      const root = lookup(p.categoryName)
+      return { p, root, priority: rootPriorityIndex(root) }
+    })
+    decorated.sort((a, b) => {
+      if (a.priority !== b.priority) return a.priority - b.priority
+      if (a.root !== b.root)         return a.root.localeCompare(b.root)
+      if (a.p.categoryName !== b.p.categoryName) {
+        return a.p.categoryName.localeCompare(b.p.categoryName)
+      }
+      return a.p.code.localeCompare(b.p.code)
+    })
+    return decorated.map(d => d.p)
+  }, [rawProducts, categories])
 
   // Whenever filters change, jump back to page 0 so the user lands on the
   // first page of the newly-filtered result set instead of an empty page N.
@@ -79,6 +127,14 @@ export default function Products() {
     // through JSON would serialize the key and confuse the validator.
     const trimmedCode = values.code.trim()
     const code = trimmedCode ? { code: trimmedCode } : {}
+    // GST: empty input → null (clears the value); non-empty → number.
+    // The BE preserves the existing GST when the global gst_enabled is
+    // OFF (FE never collects + never sends the field in that mode), so
+    // disabling the master switch doesn't wipe historical GST data.
+    const trimmedGst = values.gst.trim()
+    const gstField = trimmedGst === ''
+      ? {}                                          // omit when blank
+      : { gst: Number(trimmedGst) }
     const common = {
       name: values.name,
       categoryId: values.categoryId,
@@ -90,10 +146,10 @@ export default function Products() {
     }
 
     if (formMode.kind === 'edit') {
-      const req: UpdateProductRequest = { ...code, ...common, active: values.active }
+      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active, isVendorProcured: values.isVendorProcured }
       await update.mutateAsync({ id: formMode.product.id, req })
     } else if (formMode.kind === 'create') {
-      const req: CreateProductRequest = { ...code, ...common, active: values.active }
+      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active, isVendorProcured: values.isVendorProcured }
       await create.mutateAsync(req)
     }
     closeForm()
@@ -105,12 +161,55 @@ export default function Products() {
     setPendingDelete(null)
   }
 
+  // buildRootLookup memoised over categories → passed into the Category
+  // column's renderCell so each row shows the leaf chip + its root
+  // category as a small muted line beneath (client req 01-Jul-2026).
+  const rootLookup = useMemo(() => buildRootLookup(categories), [categories])
+
   const columns = useMemo<GridColDef<ProductDto>[]>(() => [
     { field: 'code',         headerName: 'Code',         width: 100, sortable: false, filterable: false },
-    { field: 'name',         headerName: 'Product Name', flex: 1.5,  minWidth: 200, sortable: false, filterable: false },
     {
-      field: 'categoryName', headerName: 'Category',     width: 130, sortable: false, filterable: false,
-      renderCell: ({ value }) => <Chip label={value} size="small" variant="outlined" />,
+      field: 'name',
+      headerName: 'Product Name',
+      flex: 1.5,
+      minWidth: 200,
+      sortable: false,
+      filterable: false,
+      renderCell: ({ row, value }) => (
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+          <span>{value as string}</span>
+          {row.isVendorProcured && (
+            <Chip
+              label="Vendor"
+              size="small"
+              sx={{
+                height: 18, fontSize: 10, fontWeight: 700,
+                bgcolor: '#FFE0B2', color: '#7C4A00',
+                border: '1px solid #E8A758',
+              }}
+            />
+          )}
+        </Box>
+      ),
+    },
+    {
+      field: 'categoryName', headerName: 'Category',     width: 240, sortable: false, filterable: false,
+      renderCell: ({ value, row }) => {
+        const root = rootLookup(row.categoryName)
+        const showRoot = root && root !== row.categoryName
+        // Single-line breadcrumb chip: "1 KG Snacks › Chips 300". Root
+        // part rendered in a muted colour inside the label so admin
+        // scans both levels without the extra row height a stacked
+        // layout needed. 01-Jul-2026.
+        const label = showRoot ? (
+          <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5 }}>
+            <Box component="span" sx={{ color: '#1F1F1F99', fontWeight: 600 }}>{root}</Box>
+            <Box component="span" sx={{ color: '#1F1F1F55' }}>›</Box>
+            <Box component="span" sx={{ color: '#1F1F1F', fontWeight: 700 }}>{value}</Box>
+          </Box>
+        ) : value
+        return <Chip label={label} size="small" variant="outlined" />
+      },
     },
     { field: 'type',         headerName: 'Type',         width: 100, sortable: false, filterable: false },
     {
@@ -152,7 +251,7 @@ export default function Products() {
         </Box>
       ),
     },
-  ], [remove])
+  ], [remove, rootLookup])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load products.')
@@ -168,18 +267,7 @@ export default function Products() {
             : `${total} ${total === 1 ? 'product' : 'products'} in catalog`
         }
         action={
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Badge badgeContent={activeFilterCount} color="primary" overlap="rectangular">
-              <Button
-                variant="outlined"
-                color="primary"
-                startIcon={<FilterIcon className="w-4 h-4" />}
-                onClick={() => setFilterOpen(true)}
-                sx={{ textTransform: 'none', fontWeight: 600 }}
-              >
-                Filter
-              </Button>
-            </Badge>
+          <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
             <Button
               variant="outlined"
               color="primary"
@@ -235,31 +323,57 @@ export default function Products() {
         </Box>
       )}
 
-      {activeFilterCount > 0 && (
-        <Box sx={{ mb: 2, display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 1 }}>
-          {filters.search && (
-            <Chip
-              label={`Search: "${filters.search}"`}
-              size="small"
-              onDelete={() => setFilters(f => ({ ...f, search: undefined }))}
-            />
-          )}
-          {filters.categoryIds?.length ? (
-            <Chip
-              label={`Category: ${
-                filters.categoryIds
-                  .map(id => categories.find(c => c.id === id)?.name ?? id)
-                  .join(', ')
-              }`}
-              size="small"
-              onDelete={() => setFilters(f => ({ ...f, categoryIds: undefined }))}
-            />
-          ) : null}
-          <Button size="small" onClick={() => setFilters({})} sx={{ textTransform: 'none' }}>
-            Clear all
-          </Button>
-        </Box>
-      )}
+      {/* Filter strip — sits above the grid (01-Jul-2026). Search + a
+          multi-select Categories filter. Both changes fire immediately
+          and reset the grid to page 0 (via the searchInput useEffect
+          above, and inline for the category change). */}
+      <Paper
+        elevation={0}
+        sx={{
+          borderRadius: 2.5,
+          border: '2px solid #1F1F1F',
+          bgcolor: '#FFFBE6',
+          px: 2,
+          py: 1.5,
+          mb: 2,
+          display: 'flex',
+          gap: 1.5,
+          alignItems: 'center',
+          flexWrap: 'wrap',
+        }}
+      >
+        <TextField
+          size="small"
+          value={searchInput}
+          onChange={e => setSearchInput(e.target.value)}
+          placeholder="Search by name or code"
+          sx={{ minWidth: 260, flex: 1, maxWidth: 360, '& .MuiOutlinedInput-root': { bgcolor: '#FFFBE6' } }}
+          slotProps={{
+            input: {
+              startAdornment: (
+                <InputAdornment position="start">
+                  <Search className="w-4 h-4 text-[#1F1F1F]/70" />
+                </InputAdornment>
+              ),
+              endAdornment: searchInput ? (
+                <InputAdornment position="end">
+                  <IconButton size="small" onClick={() => setSearchInput('')} aria-label="Clear search">
+                    <X className="w-3.5 h-3.5" />
+                  </IconButton>
+                </InputAdornment>
+              ) : undefined,
+            },
+          }}
+        />
+        <CategoryTreeFilter
+          categories={categories}
+          value={filters.categoryIds ?? []}
+          onChange={(ids) => {
+            setFilters(prev => ({ ...prev, categoryIds: ids.length ? ids : undefined }))
+            setPaginationModel(m => ({ ...m, page: 0 }))
+          }}
+        />
+      </Paper>
 
       <Paper className="products-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <DataGrid
@@ -271,8 +385,6 @@ export default function Products() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          paginationMode="server"
-          rowCount={total}
           paginationModel={paginationModel}
           onPaginationModelChange={setPaginationModel}
           pageSizeOptions={[10, 25, 50, 100]}
@@ -305,13 +417,6 @@ export default function Products() {
         onClose={() => setImportOpen(false)}
       />
 
-      <FilterProductsDialog
-        open={filterOpen}
-        filters={filters}
-        categories={categories}
-        onClose={() => setFilterOpen(false)}
-        onApply={(next) => { setFilters(next); setFilterOpen(false) }}
-      />
     </div>
   )
 }
@@ -335,6 +440,14 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
+  const [isVendorProcured, setIsVendorProcured] = useState(false)
+  // GST percent — only rendered + collected when the global gst_enabled
+  // app-setting is true (19-Jun-2026, client #15). Stored values are
+  // preserved across toggles: when global GST is OFF the input isn't
+  // shown, the field isn't sent on save, and the BE keeps the existing
+  // gst value silently.
+  const [gst, setGst] = useState('')
+  const gstEnabled = useGstEnabled().enabled
 
   // Direct child count per category — used by the dropdown to show a chip
   // next to parent rows, mirroring the Manage Categories table. Built once
@@ -376,6 +489,10 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
+    setIsVendorProcured(product?.isVendorProcured ?? false)
+    // Prefill GST if the product already has one (even if global is now OFF —
+    // value persists silently so admin can toggle back without re-entering).
+    setGst(product?.gst != null ? String(product.gst) : '')
     setErr(null)
     // 50 ms gives the Dialog's transition + focus trap time to finish,
     // so our .focus() wins the final placement.
@@ -441,6 +558,11 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
         mrp: mrpNum.toString(),
         purchasePrice: ppNum.toString(),
         active,
+        // Only send GST when the global master is ON. When OFF, the dialog
+        // doesn't render the input and we omit the field entirely → BE
+        // preserves whatever was already stored on the product.
+        gst: gstEnabled ? gst.trim() : '',
+        isVendorProcured,
       })
     } catch {
       // Surfaces via submitError prop
@@ -603,17 +725,58 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               disabled={submitting}
             />
           </Box>
+
+          {/* GST row — only renders when the global GST master switch is ON
+              (19-Jun-2026, client #15). Hiding the input also stops it from
+              being sent on save (handleSubmit conditional), so stored GST
+              values are preserved when admin disables the master and
+              re-enables later. */}
+          {gstEnabled && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              <TextField
+                label="GST (%)"
+                type="number"
+                slotProps={{
+                  htmlInput: { step: 0.01, min: 0, max: 100, inputMode: 'decimal' },
+                  inputLabel: { shrink: gst !== '' || undefined },
+                }}
+                value={gst}
+                onChange={numericInput(setGst, { max: 100, decimals: 2 })}
+                onKeyDown={blockNonNumericKeys}
+                size="small"
+                disabled={submitting}
+                helperText="0–100. Leave blank to clear."
+                placeholder="5"
+              />
+            </Box>
+          )}
+
           {/* Manual layout instead of FormControlLabel so only the checkbox itself toggles,
               not the label text or surrounding whitespace. */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
-            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+            </Box>
+            {/* Vendor-procured flag (02-Jul-2026). Godown pre-checks these
+                lines in the Move-to-back-order dialog. Independent of Active. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox
+                checked={isVendorProcured}
+                onChange={e => setIsVendorProcured(e.target.checked)}
+                disabled={submitting}
+                sx={{ p: 0.5 }}
+              />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>
+                Vendor procured
+              </Box>
+            </Box>
           </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={onClose} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+          <Button onClick={onClose} variant="outlined" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
             {submitting ? 'Saving…' : (isEdit ? 'Update' : 'Create')}
           </Button>
@@ -786,7 +949,7 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
       <DialogActions sx={{ p: 2 }}>
         {!result && (
           <>
-            <Button onClick={handleClose} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+            <Button onClick={handleClose} variant="outlined" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
             <Button onClick={handleSubmit} variant="contained" disabled={!file || submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
               {submitting ? 'Importing…' : 'Import'}
             </Button>
@@ -800,89 +963,7 @@ function ImportProductsDialog({ open, onClose }: { open: boolean; onClose: () =>
   )
 }
 
-function FilterProductsDialog({ open, filters, categories, onClose, onApply }: {
-  open: boolean
-  filters: ProductListFilters
-  categories: CategoryDto[]
-  onClose: () => void
-  onApply: (filters: ProductListFilters) => void
-}) {
-  const [search, setSearch] = useState('')
-  const [categoryId, setCategoryId] = useState<number | ''>('')
-
-  useEffect(() => {
-    if (!open) return
-    setSearch(filters.search ?? '')
-    // Admin filter dialog is single-select; we keep the first of the array for UI,
-    // then re-wrap as a 1-element array when applying.
-    setCategoryId(filters.categoryIds?.[0] ?? '')
-  }, [open, filters])
-
-  const handleApply = (e: React.FormEvent) => {
-    e.preventDefault()
-    onApply({
-      search: search.trim() || undefined,
-      categoryIds: typeof categoryId === 'number' ? [categoryId] : undefined,
-    })
-  }
-
-  const handleClear = () => {
-    setSearch('')
-    setCategoryId('')
-    onApply({})
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onClose={(_e, reason) => {
-        if (reason === 'backdropClick') return
-        onClose()
-      }}
-      maxWidth="xs"
-      fullWidth
-      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
-    >
-      <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-          <FilterIcon className="w-5 h-5" />
-          Filter Products
-        </Box>
-        <IconButton size="small" onClick={onClose}><X className="w-4 h-4" /></IconButton>
-      </DialogTitle>
-      <form onSubmit={handleApply}>
-        <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          <TextField
-            label="Search by name or code"
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            size="small"
-            placeholder="e.g. Murukku or P001"
-            autoFocus
-          />
-          <TextField
-            select
-            label="Category"
-            value={categoryId}
-            onChange={e => setCategoryId(e.target.value === '' ? '' : Number(e.target.value))}
-            size="small"
-          >
-            <MenuItem value="">All categories</MenuItem>
-            {categories.map(c => (
-              <MenuItem key={c.id} value={c.id} sx={{ pl: 2 + c.depth * 2 }}>
-                {c.name}
-              </MenuItem>
-            ))}
-          </TextField>
-        </DialogContent>
-        <DialogActions sx={{ p: 2, justifyContent: 'space-between' }}>
-          <Button onClick={handleClear} sx={{ textTransform: 'none', fontWeight: 500 }}>Clear all</Button>
-          <Box sx={{ display: 'flex', gap: 1 }}>
-            <Button onClick={onClose} variant="outlined" color="secondary" sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
-            <Button type="submit" variant="contained" sx={{ textTransform: 'none', fontWeight: 600 }}>Apply</Button>
-          </Box>
-        </DialogActions>
-      </form>
-    </Dialog>
-  )
-}
+// FilterProductsDialog removed 01-Jul-2026 (client req — the dialog felt
+// slow; the header now has an inline debounced search box that filters
+// live). Category filter dropped too — admin can eyeball category via
+// the grid column.

@@ -1,25 +1,29 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, Pencil, Printer } from 'lucide-react'
+import { ArrowLeft, Ban, Pencil, Printer, Undo2 } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableRow,
+  IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
+  useRevokeStockRequest,
 } from '../../hooks/useStockRequests'
 import type { StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { STATUS_COLOR } from '../../utils/statusColor'
 import { GOLD_GRADIENT } from '../../theme'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { useCategories } from '../../hooks/useCategories'
 
 export default function AdminRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -37,7 +41,9 @@ export default function AdminRequestDetail() {
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
   const editQtyMutation = useEditDispatchedQty()
+  const revokeMutation  = useRevokeStockRequest()
   const [cancelConfirm, setCancelConfirm]   = useState(false)
+  const [revokeConfirm, setRevokeConfirm]   = useState(false)
   // Post-completion qty edit dialog state. `editingItem` is the row being
   // edited (null = dialog closed). The qty field is a string so we can
   // distinguish "" (untouched / cleared) from "0" (valid edit to zero).
@@ -54,6 +60,31 @@ export default function AdminRequestDetail() {
     ),
     [request?.items],
   )
+
+  // Two-level grouping: outer = root category (1 KG Snacks, Pickle/Thokku/Podi…)
+  // in hard-coded priority order; inner = leaf-cat cards (existing layout).
+  // Mirrors ShopRequestDetail / InventoryRequestDetail so every detail page
+  // shows the same top-level hierarchy (30-Jun-2026 client req).
+  const categoriesQuery = useCategories()
+  const rootGroups = useMemo(() => {
+    const lookup = buildRootLookup(categoriesQuery.data)
+    const byRoot = new Map<string, typeof grouped>()
+    for (const cg of grouped) {
+      const root = lookup(cg.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(cg)
+      else byRoot.set(root, [cg])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, cg) => sum + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [grouped, categoriesQuery.data])
 
   // Layout note: cards flow into a CSS `column-count` container below — the
   // browser auto-balances across 2 columns (1 on mobile). break-inside keeps
@@ -78,6 +109,16 @@ export default function AdminRequestDetail() {
   // (Received Orders + Accepted Returns). Phase 3 accounts uses the audit
   // trail this writes to post reconciliation entries.
   const canEditQty = request.status === 'Received' || request.status === 'Accepted'
+  // Revoke — undo an accidental Approve, Reject, or Cancel and flip back
+  // to Pending. Applies to both Orders and Returns for Rejected /
+  // Cancelled (client req 01-Jul-2026: godown rejecting a Return by
+  // mistake needs the same recovery path). Approved is Order-only —
+  // Returns have no Approved intermediate state.
+  const isReturn      = request.requestType === 'Return'
+  const canRevoke     =
+    (request.status === 'Approved' && !isReturn) ||
+    request.status === 'Rejected' ||
+    request.status === 'Cancelled'
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
@@ -87,6 +128,11 @@ export default function AdminRequestDetail() {
   const handleCancel = async () => {
     try { await cancelMutation.mutateAsync(request.id) }
     finally { setCancelConfirm(false) }
+  }
+
+  const handleRevoke = async () => {
+    try { await revokeMutation.mutateAsync(request.id) }
+    finally { setRevokeConfirm(false) }
   }
 
   const openQtyEdit = (item: StockRequestItemDto) => {
@@ -146,6 +192,19 @@ export default function AdminRequestDetail() {
       </Box>
       <TableContainer>
         <Table size="small">
+          {/* Column headers row (30-Jun-2026 client req). */}
+          <TableHead>
+            <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+              <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
+              <TableCell align="right" sx={{ py: 0.75, width: 120, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
+              {canEditQty && (
+                <TableCell align="center" sx={{ py: 0.75, width: 48, borderBottom: '1px solid rgba(31,31,31,0.15)' }} />
+              )}
+            </TableRow>
+          </TableHead>
           <TableBody>
             {catGroup.weightGroups.map((wg, wIdx) => (
               <Fragment key={`${catGroup.category}__${wg.label}`}>
@@ -175,17 +234,28 @@ export default function AdminRequestDetail() {
                   const effectiveQty = item.dispatchedQty ?? item.requestedQty
                   const effectiveSubtotal = effectiveQty * item.unitPrice
                   const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  // Mirrors ShopRequestDetail — over flag + row tint so the
+                  // shop/admin/inventory pages tell the same story when an
+                  // order ended up under or over the original request.
+                  const over  = item.dispatchedQty != null && item.dispatchedQty > item.requestedQty
+                  const rowBg = short ? 'rgba(198,40,40,0.06)'
+                              : over  ? 'rgba(230,81,0,0.07)'
+                              : 'transparent'
+                  const totalColor = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
                   return (
-                    <TableRow key={item.id} hover>
+                    <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
                       <TableCell sx={{ pl: 3, py: 1.25 }}>
-                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>{item.productName}</Box>
+                        <Box sx={{ fontWeight: 600, fontSize: 14 }}>
+                          {item.productName}
+                          {item.addedBy === 'Inventory' && <InvBadge />}
+                        </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
                         <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
-                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: short ? '#C62828' : '#1F1F1F' }}>
+                      <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
                         {formatINR(effectiveSubtotal)}
                       </TableCell>
                       {canEditQty && (
@@ -211,10 +281,10 @@ export default function AdminRequestDetail() {
   )
 
   return (
-    // pb leaves room for the fixed summary bar at the bottom + extra
-    // breathing space above it so action buttons don't sit flush against
-    // the footer (19-Jun-2026, client #14).
-    <Box sx={{ pb: 16 }}>
+    // pb leaves room for the fixed footer at the bottom. Footer stacks
+    // an action row (buttons) on top of the summary strip, so it's
+    // taller now — bumped from pb:16 to pb:22 (01-Jul-2026).
+    <Box sx={{ pb: 22 }}>
       <PageHeader
         title={request.code}
         subtitle={`${request.shopCode} ${request.shopName} → ${request.inventoryCode} ${request.inventoryName}`}
@@ -226,7 +296,7 @@ export default function AdminRequestDetail() {
               onClick={() => window.open(`/print/request/${request.id}`, '_blank', 'noopener,noreferrer')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                 '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
               }}
             >
@@ -263,11 +333,69 @@ export default function AdminRequestDetail() {
         )}
       </Box>
 
-      {/* Legacy: historical rows from before approval-step removal may still
-          carry a rejection reason; show it if present. */}
-      {request.status === 'Rejected' && request.rejectionReason && (
-        <Alert severity="error" sx={{ mb: 2 }}>
-          <strong>Rejected:</strong> {request.rejectionReason}
+      {/* Rejected banner — surfaces the rejection reason (when present) and
+          exposes the Undo Rejection action right here at the top so admin
+          sees the corrective path immediately, without scrolling to the
+          action row (30-Jun-2026 client req). */}
+      {request.status === 'Rejected' && (
+        <Alert
+          severity="error"
+          sx={{ mb: 2, '& .MuiAlert-action': { pt: 0, alignItems: 'center' } }}
+          action={canRevoke ? (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<Undo2 className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeConfirm(true)}
+              disabled={revokeMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                bgcolor: '#1F1F1F',
+                color: '#FFFFFF',
+                '&:hover': { bgcolor: '#0A0A0A' },
+              }}
+            >
+              Undo Rejection
+            </Button>
+          ) : undefined}
+        >
+          <strong>Rejected</strong>
+          {request.rejectionReason ? `: ${request.rejectionReason}` : ''}
+        </Alert>
+      )}
+
+      {/* Cancelled banner — same UX shape as Rejected. Warning colour (not
+          error) because a cancel isn't a failure, just the shop backing
+          out. Undo Cancel restores the row to Pending so the shop can
+          continue where they left off. (01-Jul-2026 client req.) */}
+      {request.status === 'Cancelled' && (
+        <Alert
+          severity="warning"
+          sx={{ mb: 2, '& .MuiAlert-action': { pt: 0, alignItems: 'center' } }}
+          action={canRevoke ? (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<Undo2 className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeConfirm(true)}
+              disabled={revokeMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                bgcolor: '#1F1F1F',
+                color: '#FFFFFF',
+                '&:hover': { bgcolor: '#0A0A0A' },
+              }}
+            >
+              Undo Cancel
+            </Button>
+          ) : undefined}
+        >
+          <strong>Cancelled</strong>
+          {request.cancelledAt ? ` on ${formatIstDateTime(request.cancelledAt)}` : ''}
         </Alert>
       )}
 
@@ -291,19 +419,66 @@ export default function AdminRequestDetail() {
         </Box>
       </Paper>
 
-      {/* Items — CSS column-count masonry; cards auto-balanced. */}
-      <Box
-        sx={{
-          columnCount: { xs: 1, md: 2 },
-          columnGap: 2,
-          '& > *': { breakInside: 'avoid', display: 'block' },
-        }}
-      >
-        {grouped.map(cg => renderCatGroup(cg))}
+      {/* Items — cream banner strip per root (mirrors ShopRequestDetail).
+          Plain underline style is reserved for the print picklist. */}
+      <Box sx={{ mb: 3 }}>
+        {rootGroups.map(rg => (
+          <Box key={rg.root} sx={{ mb: 2.5 }}>
+            <Box
+              sx={{
+                background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                border: '2px solid #1F1F1F',
+                borderRadius: 1,
+                boxShadow: '2px 2px 0 0 rgba(31,31,31,0.15)',
+                px: 2,
+                py: 1.1,
+                mb: 1.5,
+                textAlign: 'center',
+                fontSize: { xs: 13.5, sm: 14.5 },
+                fontWeight: 800,
+                textTransform: 'uppercase',
+                letterSpacing: 1.2,
+                color: '#1F1F1F',
+              }}
+            >
+              {rg.root}
+              <Box
+                component="span"
+                sx={{ ml: 1, fontSize: 11.5, color: 'rgba(31,31,31,0.65)', fontWeight: 600, letterSpacing: 0.4 }}
+              >
+                · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+              </Box>
+            </Box>
+            <Box
+              sx={{
+                columnCount: { xs: 1, md: 2 },
+                columnGap: 2,
+                '& > *': { breakInside: 'avoid', display: 'block' },
+              }}
+            >
+              {rg.children.map(cg => renderCatGroup(cg))}
+            </Box>
+          </Box>
+        ))}
       </Box>
 
-      {/* Fixed summary bar — same shape as the New Stock Request cart bar.
-          19-Jun-2026 (client #14). */}
+      {request.notes && (
+        <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px dashed #1F1F1F' }}>
+          <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', mb: 0.5 }}>Shop's Notes</Box>
+          <Box sx={{ fontSize: 14, color: '#1F1F1F', whiteSpace: 'pre-wrap' }}>{request.notes}</Box>
+        </Paper>
+      )}
+
+      {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error), flatErr(revokeMutation.error)]
+        .filter(Boolean)
+        .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
+
+      {/* Fixed footer bar (01-Jul-2026 client req: action buttons no longer
+          require scrolling). Stacks:
+            • top row  — Edit / Revoke / Cancel action buttons (right-aligned)
+            • bottom row — summary counts + amounts (as before)
+          Rendered as one Paper pinned to the viewport bottom. Actions
+          row hidden when no action applies (nothing to show → skip it). */}
       <Paper
         elevation={6}
         sx={{
@@ -315,55 +490,74 @@ export default function AdminRequestDetail() {
           borderRadius: 0,
           borderTop: '2px solid #1F1F1F',
           bgcolor: '#FFFFFF',
-          px: { xs: 2, sm: 3 },
-          py: 1.5,
         }}
       >
-        <RequestSummary request={request} variant="footer" />
+        {(canEdit || (canRevoke && request.status === 'Approved') || canCancel) && (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 1,
+              flexWrap: 'wrap',
+              px: { xs: 2, sm: 3 },
+              py: 1,
+              borderBottom: '1px solid rgba(31,31,31,0.15)',
+              bgcolor: '#FFF8E1',
+            }}
+          >
+            {canEdit && (
+              <Button
+                variant="outlined"
+                startIcon={<Pencil className="w-4 h-4" />}
+                onClick={() => navigate(`/admin/requests/${request.id}/edit`)}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Edit Items
+              </Button>
+            )}
+            {/* Sticky-footer Revoke only for APPROVED. Rejected /
+                Cancelled variants live in their top-of-page alerts
+                (more discoverable there). */}
+            {canRevoke && request.status === 'Approved' && (
+              <Button
+                variant="outlined"
+                startIcon={<Undo2 className="w-4 h-4" />}
+                onClick={() => setRevokeConfirm(true)}
+                disabled={revokeMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Revoke Approval
+              </Button>
+            )}
+            {canCancel && (
+              <Button
+                variant="outlined"
+                startIcon={<Ban className="w-4 h-4" />}
+                onClick={() => setCancelConfirm(true)}
+                disabled={cancelMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Cancel Request
+              </Button>
+            )}
+          </Box>
+        )}
+        <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5 }}>
+          <RequestSummary request={request} variant="footer" />
+        </Box>
       </Paper>
-
-      {request.notes && (
-        <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px dashed #1F1F1F' }}>
-          <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', mb: 0.5 }}>Shop's Notes</Box>
-          <Box sx={{ fontSize: 14, color: '#1F1F1F', whiteSpace: 'pre-wrap' }}>{request.notes}</Box>
-        </Paper>
-      )}
-
-      {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error)]
-        .filter(Boolean)
-        .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
-
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
-        {canEdit && (
-          <Button
-            variant="outlined"
-            startIcon={<Pencil className="w-4 h-4" />}
-            onClick={() => navigate(`/admin/requests/${request.id}/edit`)}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Edit Items
-          </Button>
-        )}
-        {canCancel && (
-          <Button
-            variant="outlined"
-            startIcon={<Ban className="w-4 h-4" />}
-            onClick={() => setCancelConfirm(true)}
-            disabled={cancelMutation.isPending}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Cancel Request
-          </Button>
-        )}
-      </Box>
 
       <ConfirmDialog
         open={cancelConfirm}
@@ -373,6 +567,30 @@ export default function AdminRequestDetail() {
         cancelLabel="Keep it"
         onConfirm={handleCancel}
         onCancel={() => setCancelConfirm(false)}
+      />
+
+      <ConfirmDialog
+        open={revokeConfirm}
+        title={
+          request.status === 'Rejected'  ? 'Undo this rejection?'
+          : request.status === 'Cancelled' ? 'Undo this cancel?'
+          : 'Revoke this approval?'
+        }
+        message={
+          request.status === 'Rejected'
+            ? `This sends ${request.code} back to Pending and clears the rejection reason. The shop will see it as a fresh request again and the inventory can approve or reject it once more.`
+            : request.status === 'Cancelled'
+            ? `This sends ${request.code} back to Pending. The shop will be able to edit or submit the request again, and the inventory will see it in the Needs Action queue.`
+            : `This sends ${request.code} back to Pending. The shop will be able to edit it again, and the inventory can approve or reject it once more before dispatch.`
+        }
+        confirmLabel={
+          request.status === 'Rejected'  ? 'Yes, Undo Rejection'
+          : request.status === 'Cancelled' ? 'Yes, Undo Cancel'
+          : 'Yes, Revoke'
+        }
+        cancelLabel="Not yet"
+        onConfirm={handleRevoke}
+        onCancel={() => setRevokeConfirm(false)}
       />
 
       {/* Post-completion qty edit dialog. Opens when the admin clicks the
@@ -458,7 +676,7 @@ export default function AdminRequestDetail() {
 function BackButton({ onClick }: { onClick: () => void }) {
   return (
     <Button variant="outlined" startIcon={<ArrowLeft className="w-4 h-4" />} onClick={onClick}
-      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
+      sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>
       Back to list
     </Button>
   )

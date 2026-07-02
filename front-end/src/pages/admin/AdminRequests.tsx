@@ -6,6 +6,7 @@ import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
+import { BackorderChip } from '../../components/BackorderChip'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
@@ -33,6 +34,7 @@ const PRESETS: Preset[] = [
   { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
   { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
   { key: 'return',     label: 'Return',     requestType: 'Return' },
+  { key: 'backorder',  label: 'Back-order', requestType: 'Backorder' },
 ]
 
 export default function AdminRequests() {
@@ -142,6 +144,7 @@ export default function AdminRequests() {
               }}
             />
           )}
+          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
         </Box>
       ),
     },
@@ -360,12 +363,12 @@ export default function AdminRequests() {
                         }
                     : isReturn
                     ? {
-                        bgcolor: '#FFFFFF', color: '#C62828',
+                        bgcolor: '#FFF8E1', color: '#C62828',
                         borderColor: 'rgba(198,40,40,0.45)',
                         '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
                       }
                     : {
-                        bgcolor: '#FFFFFF', color: '#1F1F1F',
+                        bgcolor: '#FFF8E1', color: '#1F1F1F',
                         borderColor: 'rgba(31,31,31,0.25)',
                         '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                       }),
@@ -406,7 +409,7 @@ export default function AdminRequests() {
                           },
                         }
                       : {
-                          bgcolor: '#FFFFFF', color: '#1F1F1F',
+                          bgcolor: '#FFF8E1', color: '#1F1F1F',
                           borderColor: 'rgba(31,31,31,0.2)',
                           '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
                         }),

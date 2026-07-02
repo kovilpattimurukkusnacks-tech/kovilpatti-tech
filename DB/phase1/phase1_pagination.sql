@@ -23,6 +23,9 @@ DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int, int, int);
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
 DROP FUNCTION IF EXISTS fn_product_count(varchar, int);
 DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
+-- 02-Jul-2026 — RETURNS TABLE gained is_vendor_procured. Re-run of this
+-- file needs to drop the prior shape before CREATE OR REPLACE can install
+-- the new one. (Same signature; PG blocks a RETURN-shape change.)
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
   p_search       varchar    DEFAULT NULL,
@@ -32,23 +35,24 @@ CREATE OR REPLACE FUNCTION fn_product_list_paged(
   p_page_size    int        DEFAULT 25
 )
 RETURNS TABLE (
-  id             uuid,
-  code           varchar,
-  name           varchar,
-  category_id    int,
-  category_name  varchar,
-  type           varchar,
-  weight_value   numeric,
-  weight_unit    varchar,
-  mrp            numeric,
-  purchase_price numeric,
-  gst            numeric,
-  active         boolean
+  id                 uuid,
+  code               varchar,
+  name               varchar,
+  category_id        int,
+  category_name      varchar,
+  type               varchar,
+  weight_value       numeric,
+  weight_unit        varchar,
+  mrp                numeric,
+  purchase_price     numeric,
+  gst                numeric,
+  active             boolean,
+  is_vendor_procured boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
@@ -122,6 +126,10 @@ $$;
 -- ------------------------------------------------------------
 -- SHOPS
 -- ------------------------------------------------------------
+-- 19-Jun-2026 (client #15): return shape gained gst_enabled. Drop the old
+-- shape first so the new CREATE OR REPLACE can land the new return-type.
+DROP FUNCTION IF EXISTS fn_shop_list_paged(int, int);
+
 CREATE OR REPLACE FUNCTION fn_shop_list_paged(
   p_page      int DEFAULT 1,
   p_page_size int DEFAULT 25
@@ -136,12 +144,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.is_deleted = false

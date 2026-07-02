@@ -5,7 +5,9 @@
   background: #FFFFFF;
   color: #1F1F1F;
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  padding: 24px 32px;
+  /* Side padding bumped 32px → 56px (30-Jun-2026) so on-screen preview
+   * breathes against the white panel edges. Vertical kept at 24px. */
+  padding: 24px 56px;
   max-width: 960px;
   margin: 0 auto;
 }
@@ -40,12 +42,16 @@
   margin-top: 4px;
 }
 
-/* Meta strip — single-band fact row that replaces the old timestamps row
- * + parties block. Splits onto multiple lines on narrow widths via flex
- * wrap; on a wide A4 page everything sits in a single line. */
+/* Meta strip — single-band fact row used by the cumulative batch plan.
+ * Items push to opposite ends of the row via justify-content:space-between
+ * so "Generated:" sits on the left and "Sourced from:" on the right
+ * (30-Jun-2026 client req). On narrow widths flex-wrap stacks them; the
+ * wrap rule preserves readability if the print is generated at an unusual
+ * width. */
 .print-meta-strip {
   display: flex;
   flex-wrap: wrap;
+  justify-content: space-between;
   gap: 4px 14px;
   font-size: 12px;
   margin-bottom: 10px;
@@ -55,6 +61,50 @@
 .print-meta-strip > div {
   white-space: nowrap;
 }
+
+/* Repeating-header wrapper (30-Jun-2026 — client req: header missing on
+ * page 2+). Wrapping the whole sheet in a 1-column <table> lets the
+ * browser repeat the <thead> (brand block + meta grid) at the top of
+ * every printed page automatically. Pure HTML / CSS — no Paged.js. */
+.print-page-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+.print-page-table > thead { display: table-header-group; }
+.print-page-table > tbody { display: table-row-group; }
+.print-page-table > thead > tr > td,
+.print-page-table > tbody > tr > td {
+  padding: 0;
+  /* Reset default <td> vertical-align so block-level content (the brand
+   * header + meta grid + item sections) starts at the top of the cell. */
+  vertical-align: top;
+}
+
+/* Per-request picklist meta block (30-Jun-2026). Two grid rows with
+ * fixed slot alignment so the fields read like a form header instead
+ * of a wrapping fact list:
+ *   Row 1 — Code (left)      · Shop + by name (center) · Godown (right)
+ *   Row 2 — Submitted (left)                            · Dispatched (right)
+ * Distinct from .print-meta-strip (used by the cumulative report) so the
+ * two layouts can evolve independently. */
+.print-meta-grid {
+  border-bottom: 1px solid rgba(31, 31, 31, 0.15);
+  padding-bottom: 6px;
+  margin-bottom: 10px;
+  font-size: 12px;
+}
+.print-meta-grid-row {
+  display: grid;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 2px;
+}
+.print-meta-grid-row:last-child { margin-bottom: 0; }
+.print-meta-grid-row.three-col { grid-template-columns: 1fr 1fr 1fr; }
+.print-meta-grid-row.two-col   { grid-template-columns: 1fr 1fr; }
+.print-meta-grid-row > .left   { text-align: left;   white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.print-meta-grid-row > .center { text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.print-meta-grid-row > .right  { text-align: right;  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 .print-header {
   display: flex;
@@ -340,11 +390,78 @@
      • Dropped the 'From Requests' per-row column — surfaced in the page
        summary instead.
    ───────────────────────────────────────────────────────────────────────── */
+/* Root-category section (30-Jun-2026, second pass). Wraps one root's
+ * sub-cat banner cards under an underline-style heading.
+ *
+ * Implemented as a 1-column <table> so the heading (in <thead>) repeats
+ * at the top of every page when the root's cards spill across multiple
+ * sheets — same trick the outer .print-page-table uses for the brand
+ * block. Without this, page 3 would start mid-cards with no clue which
+ * root the cards belong to (client report 30-Jun-2026: "MILLET FOODS
+ * heading missing on page 3"). */
+.print-root-section {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 14px;
+  page-break-inside: auto;        /* root can spill across pages, sub-cats can't */
+}
+.print-root-section > thead { display: table-header-group; }
+.print-root-section > tbody { display: table-row-group; }
+.print-root-section > thead > tr > td,
+.print-root-section > tbody > tr > td {
+  padding: 0;
+  vertical-align: top;
+}
+
+.print-root-heading {
+  margin: 10px 0 6px 0;
+  padding: 0 0 4px 0;
+  font-size: 13.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #1F1F1F;
+  /* 30-Jun-2026 — centered the title so the root heading reads like a
+   * section banner spanning the full sheet, not a left-anchored label. */
+  text-align: center;
+  border-bottom: 2px solid #1F1F1F;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-root-heading .muted {
+  color: rgba(31, 31, 31, 0.55);
+  font-weight: 600;
+  margin-left: 8px;
+  font-size: 11px;
+  letter-spacing: 0.02em;
+}
+
+/* 30-Jun-2026 (third pass) — two flex columns with FE-side balancing.
+ *
+ * History:
+ *   • Was `column-count: 2`. Problem: short content stays in col 1, col 2
+ *     empty. Wasted paper.
+ *   • Then CSS Grid `repeat(2, 1fr)` with `align-items: start`. Problem:
+ *     when one card in row 1 is much taller (e.g. REGULAR with 7 items
+ *     vs CHIPS with 1), the next card on the short side starts BELOW
+ *     the tall card, leaving a big vertical gap above it.
+ *   • Now: render two flex columns side-by-side and let JS (see
+ *     splitBalancedColumns in utils) assign each card to whichever
+ *     column is currently shorter. Both columns end at roughly the
+ *     same height with no row-induced gaps. */
 .print-dense-grid {
-  column-count: 2;
-  column-gap: 18px;
-  column-fill: balance;
+  display: flex;
+  gap: 18px;
+  align-items: flex-start;
   margin-top: 4px;
+}
+
+.print-dense-col {
+  flex: 1 1 0;
+  min-width: 0;       /* allow shrinking; long names ellipsis cleanly */
+  display: flex;
+  flex-direction: column;
+  gap: 12px;          /* vertical gap between cards within the column */
 }
 
 .print-dense-section {
@@ -352,9 +469,7 @@
      a column or page boundary unless it's genuinely too tall for one page. */
   break-inside: avoid;
   page-break-inside: avoid;
-  margin-bottom: 12px;
-  display: inline-block;
-  width: 100%;
+  min-width: 0;
 }
 
 .print-dense-banner {
@@ -387,6 +502,14 @@
   padding: 3px 6px;
   border-bottom: 1px solid rgba(31, 31, 31, 0.1);
   vertical-align: top;
+}
+
+/* Never split a single product row across a page boundary — was clipping
+ * the last row on a page in half so the bottom looked "erased" on paper.
+ * 02-Jul-2026. */
+.print-dense-table tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
 }
 
 /* Weight subheading inside a category — slim eyebrow, no background. */
@@ -446,6 +569,13 @@
   }
   @page {
     size: A4;
-    margin: 12mm;
+    /* 18mm sides for breathing room (client req 30-Jun-2026). Top 12mm.
+     * Bottom bumped to 18mm 02-Jul-2026 — consumer printers reserve a
+     * ~6-10mm non-printable strip at the paper edge, and the 12mm we
+     * had was letting the last row on a page get clipped ("words look
+     * erased" on the printed cumulative). Extra 6mm buys margin of
+     * safety across every printer without wasting a row of real
+     * content (page-break-inside on rows keeps splits above the gap). */
+    margin: 12mm 18mm 18mm 18mm;
   }
 }

@@ -46,7 +46,18 @@ export default function ConfirmDialog({
         {submitError && <Alert severity="error" sx={{ mt: 1.5, whiteSpace: 'pre-line' }}>{submitError}</Alert>}
       </DialogContent>
       <DialogActions sx={{ p: 2 }}>
-        <Button onClick={onCancel} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>{cancelLabel}</Button>
+        <Button
+          onClick={onCancel}
+          variant="outlined"
+          disabled={submitting}
+          sx={{
+            textTransform: 'none', fontWeight: 600,
+            borderColor: '#1F1F1F', color: '#1F1F1F',
+            '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+          }}
+        >
+          {cancelLabel}
+        </Button>
         <Button onClick={onConfirm} variant="contained" color="error" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
           {submitting ? 'Working…' : confirmLabel}
         </Button>

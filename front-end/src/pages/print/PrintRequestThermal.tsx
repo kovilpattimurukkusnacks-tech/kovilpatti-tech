@@ -7,6 +7,8 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { computeDeliveredAmount } from '../../utils/computeDeliveredAmount'
 import { BRAND_NAME } from '../../utils/brand'
 import { useAutoPrint, PrintButton } from '../../hooks/useAutoPrint'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { useCategories } from '../../hooks/useCategories'
 import './thermal.css'
 
 /**
@@ -35,8 +37,7 @@ export default function PrintRequestThermal() {
   // was actually delivered, pre-dispatch shows what the shop asked for.
   const deliveredAmount = useMemo(() => computeDeliveredAmount(request?.items), [request])
 
-  // Two-level grouping — category → weight → items. Same shape as the
-  // A4 picklist; we render it more densely below to fit 72mm.
+  // Two-level grouping — sub-category (leaf) → weight → items.
   const sections = useMemo(
     () => groupByCategoryWeight(
       request?.items ?? [],
@@ -44,6 +45,32 @@ export default function PrintRequestThermal() {
     ),
     [request],
   )
+
+  // 30-Jun-2026 — also bucket sections under their ROOT category and order
+  // by the hard-coded priority list (1 KG Snacks → Packing Items → … →
+  // Shop Needs). Mirrors the on-screen detail page hierarchy so the printed
+  // slip walks the picker through the categories in the same physical order
+  // the godown stores them.
+  const categoriesQuery = useCategories()
+  const rootGroups = useMemo(() => {
+    const lookup = buildRootLookup(categoriesQuery.data)
+    const byRoot = new Map<string, typeof sections>()
+    for (const sec of sections) {
+      const root = lookup(sec.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(sec)
+      else byRoot.set(root, [sec])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, sec) => sum + sec.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        return { root, children, productCount }
+      })
+  }, [sections, categoriesQuery.data])
 
   if (isLoading) {
     return <div className="thermal-preview"><div className="thermal-page">Loading…</div></div>
@@ -68,7 +95,9 @@ export default function PrintRequestThermal() {
             Contact: {request.shopContactPhone ?? BRAND_CONTACT_FALLBACK}
           </div>
           <div className="thermal-title">
-            {request.requestType === 'Return' ? 'Return Bill' : 'Stock Request'}
+            {request.requestType === 'Return'   ? 'Return Bill'
+              : request.requestType === 'Backorder' ? 'Back-order'
+              : 'Stock Request'}
           </div>
         </div>
 
@@ -100,6 +129,21 @@ export default function PrintRequestThermal() {
               <span className="value">{request.submittedByName}</span>
             </>
           )}
+          {/* Back-order lineage on the thermal slip too. */}
+          {request.requestType === 'Backorder' && request.parentRequestCode && (
+            <>
+              <span className="label">Of:</span>
+              <span className="value">{request.parentRequestCode}</span>
+              {request.expectedArrivalAt && (
+                <>
+                  <span className="label">ETA:</span>
+                  <span className="value">
+                    {new Date(request.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </span>
+                </>
+              )}
+            </>
+          )}
         </div>
 
         <div className="thermal-rule" />
@@ -121,44 +165,62 @@ export default function PrintRequestThermal() {
             </tr>
           </thead>
           <tbody>
-            {sections.map(section => (
-              <Fragment key={section.category}>
-                {/* Outer dark box — the (sub-)category heading. */}
-                <tr className="cat-row">
-                  <td colSpan={4}>{section.category}</td>
+            {rootGroups.map(rg => (
+              <Fragment key={rg.root}>
+                {/* Root heading — outlined bar (heavy top + bottom rule).
+                    Distinct from the sub-cat band below (solid black) so
+                    the picker sees the hierarchy at a glance even on a
+                    low-res thermal print. */}
+                <tr className="root-row">
+                  <td colSpan={4}>
+                    {rg.root}
+                    <span className="root-count">
+                      · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+                    </span>
+                  </td>
                 </tr>
-                {/* Inner weight strips — one per pack-weight bucket, each
-                    followed by its items. Mirrors the new-request screen's
-                    two-layer hierarchy. Weight already appears on this row,
-                    so we drop the per-item weight sub-line below to avoid
-                    the same info showing twice. */}
-                {section.weightGroups.map(wg => (
-                  <Fragment key={`${section.category}__${wg.label}`}>
-                    <tr className="weight-row">
-                      <td colSpan={4}>
-                        {wg.label}
-                        <span className="weight-count">
-                          · {wg.items.length} {wg.items.length === 1 ? 'product' : 'products'}
-                        </span>
-                      </td>
+                {rg.children.map(section => (
+                  <Fragment key={`${rg.root}__${section.category}`}>
+                    {/* Sub-category band — solid black, white text. */}
+                    <tr className="cat-row">
+                      <td colSpan={4}>{section.category}</td>
                     </tr>
-                    {wg.items.map(it => {
-                      const qty = it.dispatchedQty ?? it.requestedQty
-                      const amt = qty * it.unitPrice
-                      return (
-                        <tr key={it.id}>
-                          <td>
-                            <div className="item-name">{it.productName}</div>
+                    {/* Weight strips — one per pack-weight bucket. Weight
+                        appears here so the per-item sub-line is dropped to
+                        avoid duplicating the same info. */}
+                    {section.weightGroups.map(wg => (
+                      <Fragment key={`${rg.root}__${section.category}__${wg.label}`}>
+                        <tr className="weight-row">
+                          <td colSpan={4}>
+                            {wg.label}
+                            <span className="weight-count">
+                              · {wg.items.length} {wg.items.length === 1 ? 'product' : 'products'}
+                            </span>
                           </td>
-                          <td className="num">{qty}</td>
-                          {/* Indian comma grouping (1,200.00 / 1,23,456.00) via
-                              formatINR — prefix:false drops the ₹ since the
-                              column header already labels the unit. */}
-                          <td className="num">{formatINR(it.unitPrice, { prefix: false })}</td>
-                          <td className="num">{formatINR(amt,          { prefix: false })}</td>
                         </tr>
-                      )
-                    })}
+                        {wg.items.map(it => {
+                          const qty = it.dispatchedQty ?? it.requestedQty
+                          const amt = qty * it.unitPrice
+                          return (
+                            <tr key={it.id}>
+                              <td>
+                                <div className="item-name">
+                                  {it.productName}
+                                  {it.addedBy === 'Inventory' && <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700, letterSpacing: 0.3 }}>(INV)</span>}
+                                </div>
+                              </td>
+                              <td className="num">{qty}</td>
+                              {/* Indian comma grouping (1,200.00 / 1,23,456.00)
+                                  via formatINR — prefix:false drops the ₹
+                                  since the column header already labels the
+                                  unit. */}
+                              <td className="num">{formatINR(it.unitPrice, { prefix: false })}</td>
+                              <td className="num">{formatINR(amt,          { prefix: false })}</td>
+                            </tr>
+                          )
+                        })}
+                      </Fragment>
+                    ))}
                   </Fragment>
                 ))}
               </Fragment>

@@ -11,6 +11,10 @@ export type ShopDto = {
   inventoryId: string                // FK → inventories.id
   inventoryName: string              // joined from inventories.name
   active: boolean
+  /** 19-Jun-2026 (client #15): per-shop GST flag. Driven by the
+   *  AdminSettings per-shop toggle when the global gst_enabled
+   *  app-setting is true. */
+  gstEnabled: boolean
 }
 
 export type CreateShopRequest = {
@@ -22,6 +26,7 @@ export type CreateShopRequest = {
   gstin?: string                     // 15-char Indian GSTIN when provided
   inventoryId: string                // required
   active?: boolean
+  gstEnabled?: boolean               // 19-Jun-2026 (client #15). Defaults true on BE.
 }
 
 export type UpdateShopRequest = {
@@ -32,4 +37,10 @@ export type UpdateShopRequest = {
   gstin?: string
   inventoryId: string
   active: boolean
+  gstEnabled?: boolean               // 19-Jun-2026 (client #15)
+}
+
+/** PATCH /api/shops/{id}/gst-enabled body. Single bool. */
+export type SetShopGstEnabledRequest = {
+  enabled: boolean
 }

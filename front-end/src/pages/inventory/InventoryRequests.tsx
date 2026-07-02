@@ -1,14 +1,18 @@
-import { useMemo, useState } from 'react'
+import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp } from 'lucide-react'
-import { Alert, Box, Button, Chip, Collapse, InputAdornment, Paper, TextField } from '@mui/material'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff, Hourglass } from 'lucide-react'
+import { BackorderChip } from '../../components/BackorderChip'
+import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
-  useInventoryDispatchDrafts,
+  useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
+  useOutstandingBackorders,
 } from '../../hooks/useStockRequests'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
@@ -35,11 +39,14 @@ type Preset = {
   requestType?: RequestType
 }
 const PRESETS: Preset[] = [
-  { key: 'pending',  label: 'Needs Action', status: 'Pending'  },
-  { key: 'approved', label: 'In-Progress',  status: 'Approved' },
-  { key: 'received', label: 'Delivered',    status: 'Received' },
-  { key: 'all',      label: 'All',          status: undefined  },
-  { key: 'return',   label: 'Return',       requestType: 'Return' },
+  { key: 'pending',    label: 'Needs Action',  status: 'Pending'  },
+  { key: 'approved',   label: 'In-Progress',   status: 'Approved' },
+  { key: 'received',   label: 'Delivered',     status: 'Received' },
+  { key: 'all',        label: 'All',           status: undefined  },
+  { key: 'return',     label: 'Return',        requestType: 'Return' },
+  // Procurement preset (02-Jul-2026) — filters to Backorder requests
+  // regardless of status so the godown can see the whole vendor queue.
+  { key: 'procurement', label: 'Procurement',  requestType: 'Backorder' },
 ]
 
 export default function InventoryRequests() {
@@ -54,6 +61,12 @@ export default function InventoryRequests() {
   // eats most of the viewport; we keep it collapsed by default and let the
   // user expand on demand.
   const [draftsOpen, setDraftsOpen] = useState(false)
+  // Draft-list search box (30-Jun-2026). FE-only filter over the already-loaded
+  // dispatch-drafts list — at ≤10 max drafts there's no point fetching
+  // server-side. Debounced 150ms so a quick burst of keystrokes doesn't
+  // re-filter on every char.
+  const [draftFilter, setDraftFilter] = useState('')
+  const debouncedDraftFilter = useDebouncedValue(draftFilter, 150)
 
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
@@ -74,16 +87,121 @@ export default function InventoryRequests() {
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
 
+  // Outstanding back-orders — persistent banner even when the godown is on
+  // Needs Action / In-Progress, so a Procurement queue can't be forgotten.
+  const backordersQuery = useOutstandingBackorders()
+  const outstandingBackorders = backordersQuery.data ?? []
+
   // Per-shop chips for the active preset. BE forces the inventory scope to
   // this user's godown — so we only see shops served by it. When the Return
   // chip is active, both status and requestType collapse to a single filter
   // (requestType='Return', no status) so the chip row mirrors the table.
   const shopCounts = useRequestCountByShop({ status: currentStatus, requestType: currentRequestType })
 
+  // Standalone Pending count (independent of the active preset) — drives the
+  // confirmation dialog on the Print Cumulative button so the dispatcher
+  // knows "X requests are still pending and won't be in this print" before
+  // a tab opens. Same hook the shop-chip badges use, just filtered to
+  // status='Pending' and summed across shops.
+  const pendingShopCounts = useRequestCountByShop({ status: 'Pending' })
+  const totalPending = useMemo(
+    () => (pendingShopCounts.data ?? []).reduce((sum, r) => sum + r.requestCount, 0),
+    [pendingShopCounts.data],
+  )
+
+  // Print Cumulative gating (30-Jun-2026): only enabled on the In-Progress
+  // tab — the report itself is scoped to status='Approved' (= In-Progress)
+  // rows, so allowing the print from other tabs is semantically wrong.
+  // Other tabs render the button disabled with a tooltip explaining how
+  // to enable it.
+  const isInProgressTab = activePreset === 'approved'
+  const canPrintCumulative = isInProgressTab && hasPending
+  const printCumulativeTooltip =
+    !isInProgressTab ? 'Switch to In-Progress tab to print the batch plan'
+    : !hasPending    ? 'No in-progress requests to print'
+    : totalPending > 0
+      ? `${totalPending} request${totalPending === 1 ? ' is' : 's are'} still pending — you'll get a confirmation first`
+      : undefined
+
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
+  // Selection dialog state (02-Jul-2026). Shop dropdown narrows the visible
+  // request list; user then picks specific requests within that filter.
+  // `printShopFilter = ''` → all shops.
+  const [printSelectionOpen, setPrintSelectionOpen] = useState(false)
+  const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set())
+  const [printShopFilter, setPrintShopFilter] = useState<string>('')
+  // Fetch the Approved request list ONLY when the selection dialog is open —
+  // keeps the list page's query pool lean. pageSize 200 covers realistic
+  // inventory queues without paging.
+  const approvedForSelection = useIncomingStockRequests(
+    { status: 'Approved', pageSize: 200 },
+  )
+  const approvedRows = approvedForSelection.data?.items ?? []
+
+  // Distinct shops present in the approved queue — populates the filter
+  // dropdown at the top of the selection dialog. `sort` gives a stable
+  // alphabetical order regardless of the request-fetch ordering.
+  const shopsInApproved = useMemo(() => {
+    const map = new Map<string, string>()  // shopId → shopName
+    for (const r of approvedRows) map.set(r.shopId, r.shopName)
+    return Array.from(map.entries())
+      .map(([shopId, shopName]) => ({ shopId, shopName }))
+      .sort((a, b) => a.shopName.localeCompare(b.shopName))
+  }, [approvedRows])
+
+  // Rows visible under the currently-selected shop filter. Empty filter →
+  // every approved row.
+  const visibleApprovedRows = useMemo(
+    () => printShopFilter
+      ? approvedRows.filter(r => r.shopId === printShopFilter)
+      : approvedRows,
+    [approvedRows, printShopFilter],
+  )
+  const openPrintCumulative = (ids?: string[]) => {
+    const qs = new URLSearchParams()
+    if (ids && ids.length) qs.set('requestIds', ids.join(','))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    window.open(`/print/cumulative${suffix}`, '_blank', 'noopener,noreferrer')
+  }
+  const openPrintSelection = () => {
+    // Pre-check every request so the "Print all" flow stays a single click.
+    // Reset the shop dropdown to "All".
+    setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    setPrintShopFilter('')
+    setPrintSelectionOpen(true)
+  }
+  const onPrintCumulativeClick = () => {
+    if (totalPending > 0) setPrintConfirmOpen(true)
+    else openPrintSelection()
+  }
+  // Re-seed selection whenever approved rows arrive (or the dialog opens
+  // before the query resolves).
+  useEffect(() => {
+    if (!printSelectionOpen) return
+    if (selectedRequestIds.size === 0 && approvedRows.length > 0) {
+      setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printSelectionOpen, approvedRows.length])
+
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
   // dispatch session in one click.
   const dispatchDrafts = useInventoryDispatchDrafts()
+  // Apply the draft-list filter. Matches against (case-insensitive) draft
+  // name, REQ code, and shop name — that way un-named drafts can still be
+  // searched by code/shop without forcing the user to name them first.
+  const filteredDrafts = useMemo(() => {
+    const all = dispatchDrafts.data ?? []
+    const q = debouncedDraftFilter.trim().toLowerCase()
+    if (!q) return all
+    return all.filter(d => {
+      const haystack = `${d.draftName ?? ''} ${d.code} ${d.shopName}`.toLowerCase()
+      return haystack.includes(q)
+    })
+  }, [dispatchDrafts.data, debouncedDraftFilter])
+  const renameDraft = useRenameDispatchDraft()
+  const pinDraft    = usePinDispatchDraft()
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -111,6 +229,7 @@ export default function InventoryRequests() {
               }}
             />
           )}
+          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
         </Box>
       ),
     }
@@ -222,17 +341,41 @@ export default function InventoryRequests() {
       <PageHeader
         title="Incoming Requests"
         subtitle={list.isLoading ? 'Loading…' : `${total} ${total === 1 ? 'request' : 'requests'}`}
+        // MUI Tooltip wraps a <span> so hover fires even when the Button
+        // underneath is disabled — browsers swallow pointer events on
+        // disabled buttons, so a native `title` attribute (or a Tooltip
+        // directly on the button) never shows in the wrong-tab case.
         action={
-          <Button
-            variant="contained"
-            startIcon={<Printer className="w-4 h-4" />}
-            onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
-            disabled={!hasPending}
-            title={hasPending ? undefined : 'No in-progress requests to print'}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Print Cumulative
-          </Button>
+          <Tooltip title={printCumulativeTooltip ?? ''} placement="bottom" arrow>
+            <span style={{ display: 'inline-block' }}>
+              <Button
+                variant="outlined"
+                startIcon={<Printer className="w-4 h-4" />}
+                onClick={onPrintCumulativeClick}
+                disabled={!canPrintCumulative}
+                sx={{
+                  textTransform: 'none',
+                  fontWeight: 700,
+                  bgcolor: '#FFF8E1',
+                  color: '#1F1F1F',
+                  borderColor: '#C28A00',
+                  borderWidth: '1.5px',
+                  '&:hover': {
+                    bgcolor: '#FCD835',
+                    borderColor: '#A07000',
+                    borderWidth: '1.5px',
+                  },
+                  '&.Mui-disabled': {
+                    bgcolor: '#FFFBE6',
+                    color: 'rgba(31,31,31,0.4)',
+                    borderColor: 'rgba(194,138,0,0.45)',
+                  },
+                }}
+              >
+                Print Cumulative
+              </Button>
+            </span>
+          </Tooltip>
         }
       />
 
@@ -278,47 +421,105 @@ export default function InventoryRequests() {
 
           <Collapse in={draftsOpen} timeout="auto" unmountOnExit>
             <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              {dispatchDrafts.data!.map(d => (
-                <Paper
-                  key={d.id}
-                  elevation={0}
-                  sx={{
-                    borderRadius: 2,
-                    border: '2px solid #1F1F1F',
-                    bgcolor: '#FFF8DC',
-                    px: 2,
-                    py: 1.25,
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 2,
-                    flexWrap: 'wrap',
+              {/* Filter search (30-Jun-2026). FE-only, debounced; matches
+                  name + code + shop so un-named drafts can still be found
+                  by their REQ code or shop. Hidden when there's only 1
+                  draft — no point filtering a list of one. */}
+              {dispatchDrafts.data!.length > 1 && (
+                <TextField
+                  size="small"
+                  value={draftFilter}
+                  onChange={e => setDraftFilter(e.target.value)}
+                  placeholder="Filter by name, code, or shop…"
+                  slotProps={{
+                    input: {
+                      startAdornment: (
+                        <InputAdornment position="start">
+                          <Search className="w-4 h-4 text-[#1F1F1F]/60" />
+                        </InputAdornment>
+                      ),
+                      endAdornment: draftFilter ? (
+                        <InputAdornment position="end">
+                          <IconButton size="small" onClick={() => setDraftFilter('')}>
+                            <XIcon className="w-3.5 h-3.5" />
+                          </IconButton>
+                        </InputAdornment>
+                      ) : undefined,
+                    },
                   }}
-                >
-                  <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
-                  <Box sx={{ flex: 1, minWidth: 0 }}>
-                    <Box sx={{ fontWeight: 700, fontSize: 14 }}>
-                      Resume dispatch draft — {d.code}
-                    </Box>
-                    <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
-                      {d.shopCode} · {d.shopName}
-                      · {d.totalItems} {d.totalItems === 1 ? 'product' : 'products'}
-                      · {d.totalQty} {d.totalQty === 1 ? 'unit' : 'units'}
-                      · Last saved {formatIstDateTime(d.updatedAt)}
-                    </Box>
-                  </Box>
-                  <Button
-                    variant="contained"
-                    size="small"
-                    onClick={() => navigate(`/inventory/requests/${d.id}`)}
-                    sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
-                  >
-                    Resume
-                  </Button>
-                </Paper>
+                  // bgcolor on the OutlinedInput slot (not the TextField root)
+                  // so the whole field — icon adornment, input, clear button —
+                  // shares one cream background. Setting it on the root left
+                  // the input wrapper transparent → adornment patches showed
+                  // through with the page bg. (30-Jun-2026 fix.)
+                  sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFBE6' } }}
+                />
+              )}
+              {filteredDrafts.length === 0 ? (
+                <Box sx={{ textAlign: 'center', color: '#1F1F1F99', fontSize: 13, py: 2 }}>
+                  No drafts match "{draftFilter}".
+                </Box>
+              ) : filteredDrafts.map(d => (
+                <DraftRow
+                  key={d.id}
+                  draft={d}
+                  renameInFlight={renameDraft.isPending}
+                  pinInFlight={pinDraft.isPending}
+                  onResume={() => navigate(`/inventory/requests/${d.id}`)}
+                  onRename={(name) => renameDraft.mutate({ id: d.id, req: { name } })}
+                  onTogglePin={() => pinDraft.mutate({ id: d.id, req: { pinned: !d.pinnedAt } })}
+                />
               ))}
             </Box>
           </Collapse>
         </Box>
+      )}
+
+      {/* Outstanding back-orders — persistent banner (02-Jul-2026). Even
+          when the godown is on Needs Action or In-Progress tabs, the
+          Procurement queue can't slip out of sight. Clicking View switches
+          to the Procurement preset. */}
+      {outstandingBackorders.length > 0 && activePreset !== 'procurement' && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2, borderRadius: 2,
+            border: '1px solid #E8A758', bgcolor: '#FFE0B2',
+            px: 2, py: 1.5,
+            display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
+          }}
+        >
+          <Hourglass className="w-5 h-5" style={{ color: '#7C4A00' }} />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ fontWeight: 700, fontSize: 14, color: '#7C4A00' }}>
+              {outstandingBackorders.length} back-order{outstandingBackorders.length === 1 ? '' : 's'} awaiting vendor stock
+            </Box>
+            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
+              {outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length > 0 && (
+                <>
+                  <strong>{outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length}</strong> waiting {'>'}3 days ·{' '}
+                </>
+              )}
+              oldest: {outstandingBackorders[0]?.code} ({outstandingBackorders[0]?.daysSinceSubmitted} day{outstandingBackorders[0]?.daysSinceSubmitted === 1 ? '' : 's'})
+            </Box>
+          </Box>
+          <Button
+            variant="contained"
+            color="success"
+            size="small"
+            onClick={() => { setActivePreset('procurement'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) }}
+            sx={{
+              textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
+              // color="success" escapes the theme's gold-gradient override on
+              // contained+primary; use `background:` (not `bgcolor:`) so sx
+              // wins over any gradient shorthand set on the class.
+              background: '#7C4A00', color: '#FFFFFF',
+              '&:hover': { background: '#5A3600' },
+            }}
+          >
+            View procurement queue
+          </Button>
+        </Paper>
       )}
 
       {/* Status chips + search — inline single row. Inventory filters per
@@ -363,12 +564,12 @@ export default function InventoryRequests() {
                       }
                   : isReturn
                   ? {
-                      bgcolor: '#FFFFFF', color: '#C62828',
+                      bgcolor: '#FFF8E1', color: '#C62828',
                       borderColor: 'rgba(198,40,40,0.45)',
                       '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
                     }
                   : {
-                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      bgcolor: '#FFF8E1', color: '#1F1F1F',
                       borderColor: 'rgba(31,31,31,0.25)',
                       '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                     }),
@@ -433,7 +634,7 @@ export default function InventoryRequests() {
                         },
                       }
                     : {
-                        bgcolor: '#FFFFFF', color: '#1F1F1F',
+                        bgcolor: '#FFF8E1', color: '#1F1F1F',
                         borderColor: 'rgba(31,31,31,0.2)',
                         '&:hover': { bgcolor: '#FFF8DC', borderColor: '#1F1F1F' },
                       }),
@@ -471,6 +672,326 @@ export default function InventoryRequests() {
           }}
         />
       </Paper>
+
+      {/* Print Cumulative confirmation — fires only when there are Pending
+          requests that won't be included in the print (which sources only
+          Approved/In-Progress data). Lets the dispatcher decide whether to
+          wait for more approvals or print the current set as-is. */}
+      <ConfirmDialog
+        open={printConfirmOpen}
+        title={`${totalPending} ${totalPending === 1 ? 'request is' : 'requests are'} still pending`}
+        message={`Only the in-progress (approved) requests will be included in this batch plan. Pending requests won't appear here until they're approved. Print anyway?`}
+        confirmLabel="Yes, choose requests"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setPrintConfirmOpen(false)
+          openPrintSelection()
+        }}
+        onCancel={() => setPrintConfirmOpen(false)}
+      />
+
+      {/* Selection dialog (02-Jul-2026). Lists every Approved request in
+          scope; user un-checks the ones they don't want to pack in this
+          batch. Print button opens the cumulative report scoped to only
+          those IDs. Default: everything checked → one-click "Print all". */}
+      <Dialog
+        open={printSelectionOpen}
+        onClose={(_e, reason) => {
+          // Never close on backdrop or Escape — global rule; only the
+          // explicit Cancel / X buttons should dismiss.
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          setPrintSelectionOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Select requests for the batch plan
+          <IconButton size="small" onClick={() => setPrintSelectionOpen(false)}>
+            <XIcon className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {approvedForSelection.isLoading ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>Loading approved requests…</Box>
+          ) : approvedRows.length === 0 ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+              No approved requests in the queue.
+            </Box>
+          ) : (
+            <>
+              {/* Shop filter dropdown — narrows the visible request list.
+                  Doesn't touch selection: unchecked requests in a hidden
+                  shop stay unchecked; checked ones stay checked. Plain
+                  MUI Select — themed rounded menu, no search input. */}
+              <TextField
+                select
+                size="small"
+                fullWidth
+                label="Shop"
+                value={printShopFilter}
+                onChange={e => setPrintShopFilter(e.target.value)}
+                sx={{ mb: 1.5 }}
+                slotProps={{
+                  // Force the label to shrink so it doesn't sit on top of
+                  // the "All shops (N)" text when the empty-string value
+                  // is selected (default state).
+                  inputLabel: { shrink: true },
+                  select: {
+                    // displayEmpty tells Select to render the MenuItem with
+                    // value="" as the visible selection — otherwise MUI hides
+                    // it and shows a blank input on the default state.
+                    displayEmpty: true,
+                    // Round the menu surface + soft shadow so it matches the
+                    // dialog's rounded look. Native <select> would render
+                    // OS-square corners, so we deliberately DON'T use it.
+                    MenuProps: {
+                      slotProps: {
+                        paper: {
+                          sx: {
+                            borderRadius: 2,
+                            boxShadow: '0 6px 18px rgba(31,31,31,0.18)',
+                            border: '1px solid rgba(31,31,31,0.12)',
+                          },
+                        },
+                      },
+                    },
+                  },
+                }}
+              >
+                <MenuItem value="">All shops ({approvedRows.length})</MenuItem>
+                {shopsInApproved.map(s => {
+                  const count = approvedRows.filter(r => r.shopId === s.shopId).length
+                  return (
+                    <MenuItem key={s.shopId} value={s.shopId}>
+                      {s.shopName} ({count})
+                    </MenuItem>
+                  )
+                })}
+              </TextField>
+
+              <Box sx={{ mb: 1, fontSize: 12, color: '#1F1F1F99' }}>
+                {selectedRequestIds.size} of {approvedRows.length} selected
+                {printShopFilter && ` · showing ${visibleApprovedRows.length} in filter`}
+              </Box>
+
+              <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+                {visibleApprovedRows.map(r => {
+                  const checked = selectedRequestIds.has(r.id)
+                  return (
+                    <Box
+                      key={r.id}
+                      onClick={() => {
+                        setSelectedRequestIds(prev => {
+                          const n = new Set(prev)
+                          if (n.has(r.id)) n.delete(r.id); else n.add(r.id)
+                          return n
+                        })
+                      }}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        px: 1.5, py: 0.75,
+                        borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        '&:last-child': { borderBottom: 'none' },
+                        cursor: 'pointer',
+                        bgcolor: checked ? '#FFFBE6' : 'transparent',
+                        '&:hover': { bgcolor: '#FFF8DC' },
+                      }}
+                    >
+                      <Box
+                        component="input"
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {}}
+                        sx={{ pointerEvents: 'none' }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ fontSize: 13, fontWeight: 700 }}>
+                          {r.code}
+                          {!printShopFilter && (
+                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}> · {r.shopName}</Box>
+                          )}
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {r.totalItems} items · {r.totalQty} units · {formatIstDateTime(r.submittedAt)}
+                        </Box>
+                      </Box>
+                    </Box>
+                  )
+                })}
+                {visibleApprovedRows.length === 0 && (
+                  <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+                    No approved requests for this shop.
+                  </Box>
+                )}
+              </Box>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setPrintSelectionOpen(false)}
+            variant="outlined"
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={selectedRequestIds.size === 0}
+            onClick={() => {
+              const ids = Array.from(selectedRequestIds)
+              // If user kept EVERY request selected, drop the filter entirely
+              // so the SP takes the fast path (no ANY() lookup on ~50 UUIDs).
+              const allSelected = ids.length === approvedRows.length
+              openPrintCumulative(allSelected ? undefined : ids)
+              setPrintSelectionOpen(false)
+            }}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            Print {selectedRequestIds.size} selected
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
+  )
+}
+
+// ───────────────────────────────────────────────────────────────
+// Resume-strip row (30-Jun-2026). Owns the inline rename state so each row
+// can be in its own edit mode independently. Click pencil → switch to
+// TextField. Enter / blur commits (calls onRename with trimmed value).
+// Esc / X reverts to the saved name. Empty / whitespace clears the name.
+// Length cap matches the DB column (varchar(60)).
+
+const DRAFT_NAME_MAX = 60
+
+function DraftRow({ draft, renameInFlight, pinInFlight, onResume, onRename, onTogglePin }: {
+  draft: StockRequestDto
+  renameInFlight: boolean
+  pinInFlight: boolean
+  onResume: () => void
+  onRename: (name: string | null) => void
+  onTogglePin: () => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [value, setValue] = useState(draft.draftName ?? '')
+  const inputRef = useRef<HTMLInputElement | null>(null)
+
+  // When the underlying name changes (after a successful save), keep the
+  // local input in sync — handles the case where the optimistic update
+  // beats the server response.
+  useEffect(() => {
+    if (!editing) setValue(draft.draftName ?? '')
+  }, [draft.draftName, editing])
+
+  // Focus + select-all when entering edit mode so the user can immediately
+  // overwrite an existing name without manually clearing it.
+  useEffect(() => {
+    if (editing) {
+      inputRef.current?.focus()
+      inputRef.current?.select()
+    }
+  }, [editing])
+
+  const titleText = draft.draftName?.trim()
+    ? draft.draftName
+    : `Resume dispatch draft — ${draft.code}`
+
+  const commit = () => {
+    const trimmed = value.trim()
+    const next = trimmed === '' ? null : trimmed
+    // Skip the round-trip if nothing changed.
+    if ((draft.draftName ?? null) !== next) {
+      onRename(next)
+    }
+    setEditing(false)
+  }
+
+  const cancel = () => {
+    setValue(draft.draftName ?? '')
+    setEditing(false)
+  }
+
+  return (
+    <Paper
+      elevation={0}
+      sx={{
+        borderRadius: 2,
+        border: '2px solid #1F1F1F',
+        bgcolor: '#FFF8DC',
+        px: 2,
+        py: 1.25,
+        display: 'flex',
+        alignItems: 'center',
+        gap: 2,
+        flexWrap: 'wrap',
+      }}
+    >
+      <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
+      {/* Pin toggle — pinned drafts sort to the top of the resume strip.
+          Filled gold icon when pinned, muted outline when unpinned. */}
+      <IconButton
+        size="small"
+        onClick={onTogglePin}
+        disabled={pinInFlight}
+        aria-label={draft.pinnedAt ? 'Unpin draft' : 'Pin draft to top'}
+        title={draft.pinnedAt ? 'Unpin' : 'Pin to top'}
+        sx={{
+          p: 0.5,
+          color: draft.pinnedAt ? '#C28A00' : 'rgba(31,31,31,0.4)',
+          '&:hover': { bgcolor: 'rgba(31,31,31,0.06)', color: draft.pinnedAt ? '#A07000' : '#1F1F1F' },
+        }}
+      >
+        {draft.pinnedAt
+          ? <Pin    className="w-4 h-4" fill="currentColor" />
+          : <PinOff className="w-4 h-4" />}
+      </IconButton>
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        {editing ? (
+          <TextField
+            inputRef={inputRef}
+            size="small"
+            value={value}
+            onChange={e => setValue(e.target.value)}
+            onBlur={commit}
+            onKeyDown={e => {
+              if (e.key === 'Enter') { e.preventDefault(); commit() }
+              else if (e.key === 'Escape') { e.preventDefault(); cancel() }
+            }}
+            placeholder="Name this draft (optional)"
+            disabled={renameInFlight}
+            slotProps={{ htmlInput: { maxLength: DRAFT_NAME_MAX } }}
+            sx={{ width: '100%', maxWidth: 480, bgcolor: '#FFFBE6', '& .MuiInputBase-input': { fontWeight: 700, fontSize: 14 } }}
+          />
+        ) : (
+          <Box
+            sx={{ display: 'flex', alignItems: 'center', gap: 0.75, cursor: 'pointer' }}
+            onClick={() => setEditing(true)}
+            title="Click to rename"
+          >
+            <Box sx={{ fontWeight: 700, fontSize: 14 }}>{titleText}</Box>
+            <IconButton size="small" sx={{ p: 0.25 }} aria-label="Rename draft">
+              <Pencil className="w-3.5 h-3.5 text-[#1F1F1F]/60" />
+            </IconButton>
+          </Box>
+        )}
+        <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+          {draft.code} · {draft.shopCode} · {draft.shopName}
+          · {draft.totalItems} {draft.totalItems === 1 ? 'product' : 'products'}
+          · {draft.totalQty} {draft.totalQty === 1 ? 'unit' : 'units'}
+          · Last saved {formatIstDateTime(draft.updatedAt)}
+        </Box>
+      </Box>
+      <Button
+        variant="contained"
+        size="small"
+        onClick={onResume}
+        sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+      >
+        Resume
+      </Button>
+    </Paper>
   )
 }

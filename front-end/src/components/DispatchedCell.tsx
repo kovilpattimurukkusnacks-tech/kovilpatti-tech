@@ -7,6 +7,10 @@ import { Box, Chip } from '@mui/material'
  *   • qty === 0              → "0 · Out of stock" (inventory had nothing)
  *   • 0 < qty < requested    → red bold number    (partial fulfilment)
  *   • qty === requested      → plain number       (fully delivered)
+ *   • qty > requested        → amber bold number  (over-dispatched — noted
+ *                                                  29-Jun-2026 client req,
+ *                                                  not an error but worth
+ *                                                  surfacing)
  *
  * Used in detail items tables and list grids' Dispatched columns.
  */
@@ -36,6 +40,9 @@ export function DispatchedCell({ qty, requested }: { qty: number | null; request
   }
   if (qty < requested) {
     return <span style={{ color: '#C62828', fontWeight: 600 }}>{qty}</span>
+  }
+  if (qty > requested) {
+    return <span style={{ color: '#E65100', fontWeight: 600 }}>{qty}</span>
   }
   return <>{qty}</>
 }

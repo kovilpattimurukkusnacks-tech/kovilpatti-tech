@@ -6,6 +6,9 @@ import type {
   RejectRequest, DispatchRequest, StockRequestListFilters,
   CumulativePendingLine, ShopRequestCount, RequestStatus, RequestType,
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
+  RenameDispatchDraftRequest, PinDispatchDraftRequest,
+  InventoryAddItemsRequest,
+  MoveToBackorderRequest, OutstandingBackorderDto,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -33,11 +36,19 @@ export const stockRequestsApi = {
   // Inventory user — incoming for own godown
   listIncoming: (f?: StockRequestListFilters)      => apiClient.get<PagedResult<StockRequestDto>>(`/api/stock-requests/incoming${toQuery(f)}`),
 
-  // Cumulative-pending workload report (Inventory + Admin)
-  cumulative:   (inventoryId?: string)             =>
-    apiClient.get<CumulativePendingLine[]>(
-      `/api/stock-requests/print/cumulative${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
-    ),
+  // Cumulative-pending workload report (Inventory + Admin). requestIds
+  // (optional) narrows the aggregation to just those requests — powers
+  // the selection dialog on the inventory list page. Empty/omitted =
+  // every Approved request in scope (legacy behaviour).
+  cumulative:   (inventoryId?: string, requestIds?: string[])   => {
+    const p = new URLSearchParams()
+    if (inventoryId)                     p.set('inventoryId', inventoryId)
+    if (requestIds && requestIds.length) p.set('requestIds', requestIds.join(','))
+    const qs = p.toString()
+    return apiClient.get<CumulativePendingLine[]>(
+      `/api/stock-requests/print/cumulative${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   // Per-shop request count for the active status filter (Inventory + Admin).
   // Drives the shop quick-filter chips below the status presets.
@@ -76,9 +87,31 @@ export const stockRequestsApi = {
   saveDispatchDraft: (id: string, req: DispatchRequest)    =>
     apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft`, req),
 
-  // Discard the dispatch draft — clears every item's draft_dispatched_qty.
+  // Discard the dispatch draft — clears every item's draft_dispatched_qty
+  // AND the draft_name label.
   clearDispatchDraft: (id: string) =>
     apiClient.delete<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft`),
+
+  // Set / clear the godown's free-text label on a saved dispatch draft.
+  // Empty / whitespace-only name clears the existing label.
+  renameDispatchDraft: (id: string, req: RenameDispatchDraftRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft-name`, req),
+
+  // Pin / unpin a saved dispatch draft so it sorts to the top of the
+  // resume strip. Re-pinning bumps the timestamp (re-prioritises).
+  pinDispatchDraft: (id: string, req: PinDispatchDraftRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch-draft-pin`, req),
+
+  // Inventory appends items to a Pending/Approved request. Each row is
+  // tagged addedBy='Inventory'. BE rejects duplicates + returns the
+  // refreshed request DTO on success.
+  inventoryAddItems: (id: string, req: InventoryAddItemsRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/inventory-add-items`, req),
+
+  // Inventory removes a single inv-added item. Shop-added items are
+  // protected server-side.
+  inventoryRemoveItem: (id: string, itemId: string) =>
+    apiClient.delete<StockRequestDto>(`/api/stock-requests/${id}/inventory-items/${itemId}`),
 
   // Incoming requests with a saved dispatch draft (Inventory/Admin) — drives
   // the "Resume dispatch draft" strip on the inventory list page.
@@ -104,5 +137,19 @@ export const stockRequestsApi = {
     apiClient.patch<StockRequestDto>(
       `/api/stock-requests/${requestId}/items/${itemId}/dispatched-qty`,
       req,
+    ),
+
+  // ── Back-order (02-Jul-2026) ─────────────────────────────────
+  // Godown carves items off a parent Order into a Backorder sibling.
+  // Returns the refreshed PARENT DTO (its items list drops the moved
+  // lines; backorderChildren gains the new child).
+  moveToBackorder: (id: string, req: MoveToBackorderRequest) =>
+    apiClient.post<StockRequestDto>(`/api/stock-requests/${id}/move-to-backorder`, req),
+
+  // Pipeline snapshot of Pending Backorders. inventoryId only meaningful
+  // for admin — Inventory/ShopUser roles are scoped server-side.
+  outstandingBackorders: (inventoryId?: string) =>
+    apiClient.get<OutstandingBackorderDto[]>(
+      `/api/stock-requests/outstanding-backorders${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
     ),
 }

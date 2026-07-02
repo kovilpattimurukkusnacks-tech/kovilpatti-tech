@@ -305,29 +305,34 @@ DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeri
 -- lists so we drop every prior shape. IF EXISTS keeps each safe.
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
+-- 02-Jul-2026 — is_vendor_procured added. Drop the pre-flag Create/Update
+-- shapes so the new CREATE OR REPLACE below can install the extended signature.
+DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
 
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search      varchar DEFAULT NULL,
   p_category_id int     DEFAULT NULL
 )
 RETURNS TABLE (
-  id             uuid,
-  code           varchar,
-  name           varchar,
-  category_id    int,
-  category_name  varchar,
-  type           varchar,
-  weight_value   numeric,
-  weight_unit    varchar,
-  mrp            numeric,
-  purchase_price numeric,
-  gst            numeric,
-  active         boolean
+  id                 uuid,
+  code               varchar,
+  name               varchar,
+  category_id        int,
+  category_name      varchar,
+  type               varchar,
+  weight_value       numeric,
+  weight_unit        varchar,
+  mrp                numeric,
+  purchase_price     numeric,
+  gst                numeric,
+  active             boolean,
+  is_vendor_procured boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
@@ -340,23 +345,24 @@ $$;
 
 CREATE OR REPLACE FUNCTION fn_product_get(p_id uuid)
 RETURNS TABLE (
-  id             uuid,
-  code           varchar,
-  name           varchar,
-  category_id    int,
-  category_name  varchar,
-  type           varchar,
-  weight_value   numeric,
-  weight_unit    varchar,
-  mrp            numeric,
-  purchase_price numeric,
-  gst            numeric,
-  active         boolean
+  id                 uuid,
+  code               varchar,
+  name               varchar,
+  category_id        int,
+  category_name      varchar,
+  type               varchar,
+  weight_value       numeric,
+  weight_unit        varchar,
+  mrp                numeric,
+  purchase_price     numeric,
+  gst                numeric,
+  active             boolean,
+  is_vendor_procured boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.id = p_id AND p.is_deleted = false
@@ -392,17 +398,18 @@ END;
 $$;
 
 CREATE OR REPLACE FUNCTION fn_product_create(
-  p_code           varchar,
-  p_name           varchar,
-  p_category_id    int,
-  p_type           varchar,
-  p_weight_value   numeric,
-  p_weight_unit    varchar,
-  p_mrp            numeric,
-  p_purchase_price numeric,
-  p_gst            numeric,
-  p_active         boolean,
-  p_user_id        uuid
+  p_code               varchar,
+  p_name               varchar,
+  p_category_id        int,
+  p_type               varchar,
+  p_weight_value       numeric,
+  p_weight_unit        varchar,
+  p_mrp                numeric,
+  p_purchase_price     numeric,
+  p_gst                numeric,
+  p_active             boolean,
+  p_is_vendor_procured boolean,
+  p_user_id            uuid
 )
 RETURNS uuid
 LANGUAGE plpgsql AS $$
@@ -411,28 +418,29 @@ DECLARE
 BEGIN
   INSERT INTO products (code, name, category_id, type,
                         weight_value, weight_unit, mrp, purchase_price,
-                        gst, active, created_by, updated_by)
+                        gst, active, is_vendor_procured, created_by, updated_by)
   VALUES (p_code, p_name, p_category_id, p_type,
           p_weight_value, p_weight_unit, p_mrp, p_purchase_price,
-          p_gst, p_active, p_user_id, p_user_id)
+          p_gst, p_active, COALESCE(p_is_vendor_procured, false), p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
 
 CREATE OR REPLACE FUNCTION fn_product_update(
-  p_id             uuid,
-  p_code           varchar,
-  p_name           varchar,
-  p_category_id    int,
-  p_type           varchar,
-  p_weight_value   numeric,
-  p_weight_unit    varchar,
-  p_mrp            numeric,
-  p_purchase_price numeric,
-  p_gst            numeric,
-  p_active         boolean,
-  p_user_id        uuid
+  p_id                 uuid,
+  p_code               varchar,
+  p_name               varchar,
+  p_category_id        int,
+  p_type               varchar,
+  p_weight_value       numeric,
+  p_weight_unit        varchar,
+  p_mrp                numeric,
+  p_purchase_price     numeric,
+  p_gst                numeric,
+  p_active             boolean,
+  p_is_vendor_procured boolean,
+  p_user_id            uuid
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
@@ -441,19 +449,22 @@ BEGIN
   -- by the UNIQUE constraint on products.code — service does a pre-check
   -- against OTHER rows for a clean error; this insert/update still trips
   -- the constraint if a concurrent writer collides.
+  --
+  -- p_is_vendor_procured NULL → keep existing (COALESCE fallback).
   UPDATE products
-  SET code           = p_code,
-      name           = p_name,
-      category_id    = p_category_id,
-      type           = p_type,
-      weight_value   = p_weight_value,
-      weight_unit    = p_weight_unit,
-      mrp            = p_mrp,
-      purchase_price = p_purchase_price,
-      gst            = p_gst,
-      active         = p_active,
-      updated_by     = p_user_id,
-      updated_at     = now()
+  SET code               = p_code,
+      name               = p_name,
+      category_id        = p_category_id,
+      type               = p_type,
+      weight_value       = p_weight_value,
+      weight_unit        = p_weight_unit,
+      mrp                = p_mrp,
+      purchase_price     = p_purchase_price,
+      gst                = p_gst,
+      active             = p_active,
+      is_vendor_procured = COALESCE(p_is_vendor_procured, is_vendor_procured),
+      updated_by         = p_user_id,
+      updated_at         = now()
   WHERE id = p_id;
 
   RETURN FOUND;
@@ -597,6 +608,12 @@ $$;
 
 -- ============== Shops ============================================
 
+-- fn_shop_list / fn_shop_get return shapes gained gst_enabled (19-Jun-2026,
+-- client #15). Drop the old shapes so CREATE OR REPLACE can land the new
+-- return-type. Safe via IF EXISTS.
+DROP FUNCTION IF EXISTS fn_shop_list();
+DROP FUNCTION IF EXISTS fn_shop_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_list()
 RETURNS TABLE (
   id              uuid,
@@ -608,12 +625,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.is_deleted = false
@@ -631,12 +649,13 @@ RETURNS TABLE (
   gstin           varchar,
   inventory_id    uuid,
   inventory_name  varchar,
-  active          boolean
+  active          boolean,
+  gst_enabled     boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT s.id, s.code, s.name, s.address,
          s.contact_phone_1, s.contact_phone_2, s.gstin,
-         s.inventory_id, i.name AS inventory_name, s.active
+         s.inventory_id, i.name AS inventory_name, s.active, s.gst_enabled
   FROM shops s
   INNER JOIN inventories i ON i.id = s.inventory_id
   WHERE s.id = p_id AND s.is_deleted = false
@@ -671,6 +690,10 @@ BEGIN
 END;
 $$;
 
+-- fn_shop_create signature gained p_gst_enabled (19-Jun-2026, client #15).
+-- Drop the old 9-arg version so the new 10-arg CREATE OR REPLACE can land.
+DROP FUNCTION IF EXISTS fn_shop_create(varchar, varchar, varchar, varchar, varchar, varchar, uuid, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_create(
   p_code            varchar,
   p_name            varchar,
@@ -680,6 +703,7 @@ CREATE OR REPLACE FUNCTION fn_shop_create(
   p_gstin           varchar,
   p_inventory_id    uuid,
   p_active          boolean,
+  p_gst_enabled     boolean,
   p_user_id         uuid
 )
 RETURNS uuid
@@ -688,9 +712,9 @@ DECLARE
   v_id uuid;
 BEGIN
   INSERT INTO shops (code, name, address, contact_phone_1, contact_phone_2,
-                     gstin, inventory_id, active, created_by, updated_by)
+                     gstin, inventory_id, active, gst_enabled, created_by, updated_by)
   VALUES (p_code, p_name, p_address, p_contact_phone_1, p_contact_phone_2,
-          p_gstin, p_inventory_id, p_active, p_user_id, p_user_id)
+          p_gstin, p_inventory_id, p_active, COALESCE(p_gst_enabled, true), p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -709,6 +733,10 @@ $$;
 -- Dispatched/Received/Rejected/Cancelled stay frozen to the original godown
 -- because those rows represent goods that physically left that godown — the
 -- audit trail must remain consistent. Pre-dispatch rows follow the shop.
+-- fn_shop_update signature gained p_gst_enabled (19-Jun-2026, client #15).
+-- Drop the old 9-arg version so the new 10-arg CREATE OR REPLACE can land.
+DROP FUNCTION IF EXISTS fn_shop_update(uuid, varchar, varchar, varchar, varchar, varchar, uuid, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_shop_update(
   p_id              uuid,
   p_name            varchar,
@@ -718,6 +746,7 @@ CREATE OR REPLACE FUNCTION fn_shop_update(
   p_gstin           varchar,
   p_inventory_id    uuid,
   p_active          boolean,
+  p_gst_enabled     boolean,
   p_user_id         uuid
 )
 RETURNS boolean
@@ -731,9 +760,30 @@ BEGIN
       gstin           = p_gstin,
       inventory_id    = p_inventory_id,
       active          = p_active,
+      gst_enabled     = COALESCE(p_gst_enabled, gst_enabled),
       updated_by      = p_user_id,
       updated_at      = now()
   WHERE id = p_id;
+
+  RETURN FOUND;
+END;
+$$;
+
+-- Fast-path SP for the AdminSettings per-shop GST toggle. Single column
+-- update, no need to send the whole shop payload.
+CREATE OR REPLACE FUNCTION fn_shop_set_gst_enabled(
+  p_id          uuid,
+  p_gst_enabled boolean,
+  p_user_id     uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE shops
+  SET gst_enabled = p_gst_enabled,
+      updated_by  = p_user_id,
+      updated_at  = now()
+  WHERE id = p_id AND is_deleted = false;
 
   RETURN FOUND;
 END;

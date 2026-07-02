@@ -133,7 +133,7 @@ export default function Categories() {
               onClick={() => navigate('/admin/products')}
               sx={{
                 textTransform: 'none', fontWeight: 600,
-                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
                 '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
               }}
             >
@@ -424,7 +424,7 @@ function CategoryFormDialog({
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={onClose} variant="outlined" color="secondary" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 500 }}>Cancel</Button>
+          <Button onClick={onClose} variant="outlined" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F', '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' } }}>Cancel</Button>
           <Button type="submit" variant="contained" disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
             {submitting ? 'Saving…' : (isEdit ? 'Update' : 'Create')}
           </Button>

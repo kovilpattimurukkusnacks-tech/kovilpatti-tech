@@ -66,8 +66,24 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<IReadOnlyList<CumulativePendingLineDto>>> Cumulative(
         [FromQuery] Guid? inventoryId,
+        // Comma-separated request UUIDs; empty / omitted = aggregate every
+        // Approved request in scope (legacy behaviour). Powers the FE's
+        // "select which requests to cumulate" dialog (02-Jul-2026).
+        [FromQuery] string? requestIds,
         CancellationToken ct)
-        => Ok(await requests.GetPendingCumulativeAsync(inventoryId, ct));
+    {
+        IReadOnlyList<Guid>? ids = null;
+        if (!string.IsNullOrWhiteSpace(requestIds))
+        {
+            ids = requestIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+                .Where(g => g.HasValue)
+                .Select(g => g!.Value)
+                .ToList();
+        }
+        return Ok(await requests.GetPendingCumulativeAsync(inventoryId, ids, ct));
+    }
 
     // ─── Per-shop request counts (Inventory + Admin) ─────────
     // Drives the list page's shop quick-filter chips. status=… mirrors the
@@ -186,14 +202,62 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         => Ok(await requests.SaveDispatchDraftAsync(id, request, ct));
 
     // ─── Discard dispatch draft (Inventory + Admin) ──────────
-    // Clears draft_dispatched_qty on every item of the request, leaving
-    // the request itself in the same Pending/Approved state.
+    // Clears draft_dispatched_qty on every item AND the draft_name label,
+    // leaving the request itself in the same Pending/Approved state.
     [HttpDelete("{id:guid}/dispatch-draft")]
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<StockRequestDto>> ClearDispatchDraft(
         Guid id,
         CancellationToken ct)
         => Ok(await requests.ClearDispatchDraftAsync(id, ct));
+
+    // ─── Rename dispatch draft (Inventory + Admin) ───────────
+    // Set or clear the godown's free-text label on a saved dispatch draft.
+    // Empty / whitespace-only name in the body clears the label. Separate
+    // endpoint from save-dispatch-draft so qty auto-saves and rename events
+    // can't accidentally collide.
+    [HttpPatch("{id:guid}/dispatch-draft-name")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> RenameDispatchDraft(
+        Guid id,
+        [FromBody] RenameDispatchDraftRequest request,
+        CancellationToken ct)
+        => Ok(await requests.RenameDispatchDraftAsync(id, request, ct));
+
+    // ─── Pin / unpin dispatch draft (Inventory + Admin) ───────
+    // Pinned drafts sort to the top of the resume strip. Pass {pinned:true}
+    // to pin, {pinned:false} to unpin. Re-pinning bumps the timestamp.
+    [HttpPatch("{id:guid}/dispatch-draft-pin")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> PinDispatchDraft(
+        Guid id,
+        [FromBody] PinDispatchDraftRequest request,
+        CancellationToken ct)
+        => Ok(await requests.PinDispatchDraftAsync(id, request, ct));
+
+    // ─── Inventory adds items (Inventory + Admin) ─────────────
+    // Appends new product lines to a Pending or Approved request. Each row
+    // is inserted with added_by = 'Inventory' so downstream views can
+    // badge them "(inv)". Rejects duplicates — use the dispatch-qty flow
+    // to send more of a shop-included product. (01-Jul-2026 client req.)
+    [HttpPatch("{id:guid}/inventory-add-items")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> InventoryAddItems(
+        Guid id,
+        [FromBody] InventoryAddItemsRequest request,
+        CancellationToken ct)
+        => Ok(await requests.InventoryAddItemsAsync(id, request, ct));
+
+    // ─── Inventory removes an inv-added item (Inventory + Admin) ─
+    // Removes ONLY items the godown appended. Shop-added items are
+    // protected server-side — use dispatch_qty = 0 to skip a shop item.
+    [HttpDelete("{id:guid}/inventory-items/{itemId:guid}")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> InventoryRemoveItem(
+        Guid id,
+        Guid itemId,
+        CancellationToken ct)
+        => Ok(await requests.InventoryRemoveItemAsync(id, itemId, ct));
 
     // ─── Return Stock ─────────────────────────────────────────
     // Shop user creates a Return (items back to godown). Optional
@@ -233,6 +297,27 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromBody] EditDispatchedQtyRequest request,
         CancellationToken ct)
         => Ok(await requests.EditDispatchedQtyAsync(id, itemId, request, ct));
+
+    // ─── Back-order (02-Jul-2026) ─────────────────────────────
+    // Godown carves selected items off a parent Order into a linked
+    // Backorder sibling (item moves out of the parent, new REQxxxx-B row
+    // is created). Only Orders in Pending/Approved may be carved.
+    [HttpPost("{id:guid}/move-to-backorder")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> MoveToBackorder(
+        Guid id,
+        [FromBody] MoveToBackorderRequest request,
+        CancellationToken ct)
+        => Ok(await requests.MoveToBackorderAsync(id, request, ct));
+
+    // Pipeline snapshot of Pending Backorders. Never date-filtered. Role
+    // scoping (own shop / own inv / tenant-wide) is service-side.
+    [HttpGet("outstanding-backorders")]
+    [Authorize]
+    public async Task<ActionResult<IReadOnlyList<OutstandingBackorderDto>>> OutstandingBackorders(
+        [FromQuery] Guid? inventoryId,
+        CancellationToken ct)
+        => Ok(await requests.ListOutstandingBackordersAsync(inventoryId, ct));
 
     // ─── Inventory dispatch drafts list (Inventory + Admin) ──
     // Returns Pending/Approved requests that have at least one item with a

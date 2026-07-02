@@ -1,13 +1,15 @@
 import { Fragment, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Plus, Search } from 'lucide-react'
+import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Package, Plus, Search } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper,
   Table, TableBody, TableCell, TableContainer, TableHead, TablePagination, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
+import { useMyStockRequests, useShopDraft, useOutstandingBackorders } from '../../hooks/useStockRequests'
+import { BackorderChip } from '../../components/BackorderChip'
+import { Hourglass } from 'lucide-react'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { StockRequestDto, RequestStatus, RequestType, StockRequestListFilters } from '../../api/stock-requests/types'
@@ -25,10 +27,14 @@ type Preset = {
   requestType?: RequestType
 }
 const PRESETS: Preset[] = [
-  { key: 'all',      label: 'All',      status: undefined },
-  { key: 'pending',  label: 'Pending',  status: 'Pending'  },
-  { key: 'received', label: 'Received', status: 'Received' },
-  { key: 'return',   label: 'Return',   requestType: 'Return' },
+  { key: 'all',        label: 'All',        status: undefined },
+  { key: 'pending',    label: 'Pending',    status: 'Pending'    },
+  // Dispatched preset (01-Jul-2026 client req) — target of the "orders
+  // awaiting your receipt" banner. Lets shop staff drill straight to the
+  // list they need to confirm receipt on.
+  { key: 'dispatched', label: 'Dispatched', status: 'Dispatched' },
+  { key: 'received',   label: 'Received',   status: 'Received'   },
+  { key: 'return',     label: 'Return',     requestType: 'Return' },
 ]
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
@@ -49,8 +55,9 @@ const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'e
 
 export default function ShopRequests() {
   const navigate = useNavigate()
-  // Default to All — shop user usually wants the full list of their requests.
-  const [activePreset, setActivePreset] = useState<string>('all')
+  // Default to Pending — shop user lands on what's still outstanding
+  // (29-Jun-2026 client follow-up); they can switch to All any time.
+  const [activePreset, setActivePreset] = useState<string>('pending')
   const [search, setSearch] = useState<string>('')
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
@@ -75,6 +82,7 @@ export default function ShopRequests() {
   const mutedDash = <span className="text-[#1F1F1F]/40">—</span>
   const extraCol: { header: string; render: (r: StockRequestDto) => React.ReactNode } | null =
       activePreset === 'received'   ? { header: 'Received',   render: r => r.receivedAt   ? formatIstDateTime(r.receivedAt)   : mutedDash }
+    : activePreset === 'dispatched' ? { header: 'Dispatched', render: r => r.dispatchedAt ? formatIstDateTime(r.dispatchedAt) : mutedDash }
     : null
   // Total column count — used by the empty-state row and the expansion-row
   // colSpan so the layout stays correct whichever chip is active.
@@ -83,6 +91,27 @@ export default function ShopRequests() {
   // Shop's single live draft (or null). Resume Draft strip renders only when
   // this resolves to non-null.
   const draftQuery = useShopDraft()
+
+  // Dispatched-orders peek (01-Jul-2026): a tiny page-size:1 query only to
+  // read `total`. Powers the "N orders awaiting your receipt" banner at
+  // the top of the page. Runs alongside the main list — different query
+  // key, so no interference with the current-tab filter. Refetches
+  // whenever the main list is mutated (React Query auto-invalidates
+  // stock-requests queries on receive/dispatch actions).
+  const dispatchedPeek = useMyStockRequests({
+    status: 'Dispatched',
+    page: 1,
+    pageSize: 1,
+  } satisfies StockRequestListFilters)
+  const dispatchedCount = dispatchedPeek.data?.total ?? 0
+  // Only surface the banner when there IS something to confirm AND the
+  // user isn't already on the Dispatched tab (would be redundant).
+  const showDispatchedBanner = dispatchedCount > 0 && activePreset !== 'dispatched'
+
+  // Outstanding back-orders (02-Jul-2026). Pipeline snapshot — never date-
+  // filtered so month-end back-orders stay visible until they close.
+  const backordersQuery = useOutstandingBackorders()
+  const outstandingBackorders = backordersQuery.data ?? []
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -109,6 +138,80 @@ export default function ShopRequests() {
       />
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
+
+      {/* Awaiting-receipt banner (01-Jul-2026 client req). Renders when the
+          shop has Dispatched orders that they haven't confirmed yet — so
+          shop staff can't miss the "you have work" signal even when their
+          default Pending tab is empty. Clicking View jumps them straight
+          to the Dispatched tab so the list is exactly what they need. */}
+      {/* Outstanding back-orders banner (02-Jul-2026). Shows any Pending
+          Backorder requests belonging to this shop — the godown is waiting
+          on vendor stock. Pipeline-scoped, cross-month. */}
+      {outstandingBackorders.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2, borderRadius: 2,
+            border: '1px solid #E8A758',
+            bgcolor: '#FFE0B2',
+            px: 2, py: 1.5,
+            display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
+          }}
+        >
+          <Hourglass className="w-5 h-5" style={{ color: '#7C4A00' }} />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ fontWeight: 700, fontSize: 14, color: '#7C4A00' }}>
+              {outstandingBackorders.length} back-order{outstandingBackorders.length === 1 ? '' : 's'} outstanding
+            </Box>
+            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
+              Items the godown is waiting to receive from vendors. You'll be notified when they're dispatched.
+              {outstandingBackorders.some(b => b.expectedArrivalAt) && (
+                <> ETAs: {outstandingBackorders.filter(b => b.expectedArrivalAt).slice(0, 3).map(b => (
+                  <span key={b.id} style={{ marginRight: 8, fontWeight: 600 }}>
+                    {b.code} → {new Date(b.expectedArrivalAt!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </span>
+                ))}</>
+              )}
+            </Box>
+          </Box>
+        </Paper>
+      )}
+
+      {showDispatchedBanner && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2,
+            borderRadius: 2,
+            border: '2px solid #1F1F1F',
+            bgcolor: '#FFF8DC',
+            px: 2,
+            py: 1.5,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 2,
+            flexWrap: 'wrap',
+          }}
+        >
+          <Package className="w-5 h-5 text-[#1F1F1F]" />
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ fontWeight: 700, fontSize: 14 }}>
+              {dispatchedCount} {dispatchedCount === 1 ? 'order' : 'orders'} awaiting your receipt
+            </Box>
+            <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+              The godown has dispatched {dispatchedCount === 1 ? 'this order' : 'these orders'} — open each one and confirm you've received the goods.
+            </Box>
+          </Box>
+          <Button
+            variant="contained"
+            size="small"
+            onClick={() => { setActivePreset('dispatched'); setPage(0) }}
+            sx={{ textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap' }}
+          >
+            View
+          </Button>
+        </Paper>
+      )}
 
       {/* Resume Draft strip — visible only when the shop has a saved draft.
           Clicking takes the user to /new where the cart auto-seeds from
@@ -188,12 +291,12 @@ export default function ShopRequests() {
                     }
                   : isReturn
                   ? {
-                      bgcolor: '#FFFFFF', color: '#C62828',
+                      bgcolor: '#FFF8E1', color: '#C62828',
                       borderColor: 'rgba(198,40,40,0.45)',
                       '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.06)' },
                     }
                   : {
-                      bgcolor: '#FFFFFF', color: '#1F1F1F',
+                      bgcolor: '#FFF8E1', color: '#1F1F1F',
                       borderColor: 'rgba(31,31,31,0.25)',
                       '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FFF8DC' },
                     }),
@@ -293,6 +396,8 @@ export default function ShopRequests() {
                               }}
                             />
                           )}
+                          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+                          {row.parentRequestCode && row.requestType !== 'Backorder' && null}
                         </Box>
                       </TableCell>
                       <TableCell>{formatIstDateTime(row.submittedAt)}</TableCell>

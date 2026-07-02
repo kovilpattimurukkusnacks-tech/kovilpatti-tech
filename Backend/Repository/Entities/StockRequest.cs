@@ -72,6 +72,36 @@ public class StockRequest
     /// code (e.g. "REQ0042"). NULL when Source_Request_Id is NULL.
     public string? Source_Request_Code { get; set; }
 
+    /// Godown-supplied label on a saved dispatch draft. Populated by
+    /// fn_request_list_inventory_dispatch_drafts; NULL on every other list
+    /// SP today (other endpoints don't surface it, so Dapper leaves this
+    /// at its default null — that's fine, the DTO field is nullable too).
+    public string? Draft_Name { get; set; }
+
+    /// When the dispatch draft was pinned (NULL = not pinned). Used to
+    /// sort pinned drafts above unpinned ones on the resume strip.
+    /// Cleared on discard / dispatch alongside Draft_Name.
+    public DateTimeOffset? Pinned_At { get; set; }
+
+    /// Backorder-only: the parent Order this Backorder was carved off of.
+    /// NULL on Orders / Returns / free-form Backorders. Set by
+    /// fn_request_move_to_backorder. Populated by fn_request_get and
+    /// fn_request_list_paged; null on other list SPs (they don't SELECT it).
+    public Guid?   Parent_Request_Id { get; set; }
+    /// Joined from stock_requests on Parent_Request_Id — the parent Order's
+    /// code (e.g. "REQ0042"). NULL when Parent_Request_Id is NULL.
+    public string? Parent_Request_Code { get; set; }
+    /// Backorder-only: godown-supplied "expected arrival" ETA. Nullable —
+    /// blank means "no ETA yet". Rendered on all three roles' UIs so shop
+    /// knows when to expect the vendor-procured items.
+    public DateTimeOffset? Expected_Arrival_At { get; set; }
+
+    /// Only populated by fn_request_get on Order rows that have been carved.
+    /// JSON array of `{id, code, status, total_items, total_qty, total_amount,
+    /// expected_arrival_at, submitted_at}`. Null on list rows, on rows that
+    /// have no backorder children, and on Returns/Backorders themselves.
+    public string? Backorder_Children { get; set; }
+
     /// Only populated by fn_request_get. Null for list rows.
     public string? Items { get; set; }
 }

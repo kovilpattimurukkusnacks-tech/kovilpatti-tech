@@ -45,7 +45,9 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
   const visibleRows = useMemo(() => {
     if (!rows) return [] as AccountsAdjustmentRowDto[]
     if (view === 'returns')    return rows.filter(r => r.requestType === 'Return')
-    if (view === 'dispatched') return rows.filter(r => r.requestType === 'Order')
+    // Dispatched view folds Backorders in with Orders — same treatment the
+    // accounts SPs use after phase3_accounts_backorder_rollup.
+    if (view === 'dispatched') return rows.filter(r => r.requestType === 'Order' || r.requestType === 'Backorder')
     // 'all' (and 'requested' — but the parent doesn't render the table in
     // that view anyway) show every audit.
     return rows

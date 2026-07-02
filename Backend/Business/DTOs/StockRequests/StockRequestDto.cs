@@ -54,9 +54,44 @@ public record StockRequestDto(
     Guid?   SourceRequestId,
     /// The linked Order's code (e.g. "REQ0042"). Null when SourceRequestId is null.
     string? SourceRequestCode,
+    /// Godown-supplied label on a saved dispatch draft (30-Jun-2026). Surfaces
+    /// on the inventory dispatch-drafts list endpoint; null on every other
+    /// list, on un-named drafts, and on finalised requests.
+    string? DraftName,
+    /// When the dispatch draft was pinned (null = not pinned). Pinned drafts
+    /// sort first on the resume strip. Cleared on discard / dispatch alongside
+    /// DraftName.
+    DateTimeOffset? PinnedAt,
+    /// Backorder-only: the parent Order this Backorder was carved off of.
+    /// Null on Orders / Returns. Rendered as a "Back to REQ0042" link on
+    /// the Backorder detail page.
+    Guid?   ParentRequestId,
+    /// Parent Order's code (e.g. "REQ0042"). Null when ParentRequestId is null.
+    string? ParentRequestCode,
+    /// Backorder-only: godown-supplied ETA. Nullable — displayed as "ETA <date>"
+    /// on shop/inventory/admin banners. Null means "no ETA yet".
+    DateTimeOffset? ExpectedArrivalAt,
+    /// Only populated by GET /{id} on ORDER rows that have been carved.
+    /// One entry per Backorder sibling — surfaces the "N items on back-order"
+    /// banner on the parent detail page.
+    IReadOnlyList<BackorderChildDto>? BackorderChildren,
     /// Only populated by GET /{id}. Null on list endpoints.
     IReadOnlyList<StockRequestItemDto>? Items
 );
+
+/// Backorder-child summary embedded in a parent Order's detail payload.
+/// Surfaces the "N items on back-order · tracking as REQ0042-B (ETA 3-Feb)"
+/// banner on the shop/inventory/admin detail pages. Zero-cost projection —
+/// fn_request_get already jsonb_aggs this from stock_requests.
+public record BackorderChildDto(
+    Guid   Id,
+    string Code,
+    string Status,
+    int    TotalItems,
+    int    TotalQty,
+    decimal TotalAmount,
+    DateTimeOffset? ExpectedArrivalAt,
+    DateTimeOffset  SubmittedAt);
 
 public record StockRequestItemDto(
     Guid    Id,
@@ -79,5 +114,15 @@ public record StockRequestItemDto(
     /// — fn_request_dispatch clears these on finalisation).
     int?    DraftDispatchedQty,
     decimal UnitPrice,
-    decimal Subtotal
+    decimal Subtotal,
+    /// "Shop" (default) or "Inventory" — inv-tagged rows were appended by
+    /// the godown post-approval via the Add Products dialog. Downstream
+    /// views render an (inv) chip so shop / admin / picker can see which
+    /// items came in later. 01-Jul-2026.
+    string AddedBy,
+    /// Read live from products.is_vendor_procured — pre-checks these lines
+    /// in the godown's Move-to-back-order dialog. Item-level so the flag
+    /// tracks any subsequent product-master change without touching this
+    /// request's snapshot.
+    bool IsVendorProcured
 );

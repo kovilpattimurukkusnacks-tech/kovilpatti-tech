@@ -13,6 +13,10 @@ export type ProductDto = {
   purchasePrice: number | null        // null when caller is shop_user (BE filters)
   gst: number | null                  // GST % (0..100). Hidden in the UI for now.
   active: boolean
+  /** True when this SKU is procured from a vendor (not made in-house).
+   *  Drives the vendor-procured badge on the grid + the pre-check in
+   *  the godown's Move-to-back-order dialog. */
+  isVendorProcured: boolean
 }
 
 export type CreateProductRequest = {
@@ -26,6 +30,8 @@ export type CreateProductRequest = {
   purchasePrice: number
   gst?: number | null                 // hidden — omit from the form
   active?: boolean
+  /** True → this SKU is procured from a vendor. Omitted → defaults to false. */
+  isVendorProcured?: boolean
 }
 
 export type UpdateProductRequest = {
@@ -39,6 +45,8 @@ export type UpdateProductRequest = {
   purchasePrice: number
   gst?: number | null                 // hidden — omit from the form; BE preserves existing value
   active: boolean
+  /** Null / omitted → BE keeps existing value; explicit true/false updates it. */
+  isVendorProcured?: boolean
 }
 
 export type ProductListFilters = {

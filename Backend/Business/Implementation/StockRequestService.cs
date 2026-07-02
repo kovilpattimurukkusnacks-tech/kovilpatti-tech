@@ -70,7 +70,9 @@ public class StockRequestService(
     }
 
     public async Task<IReadOnlyList<CumulativePendingLineDto>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default)
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default)
     {
         // Role gates:
         //   • ShopUser  → never (they don't pack batches).
@@ -82,7 +84,14 @@ public class StockRequestService(
 
         Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
-        var rows = await requests.GetPendingCumulativeAsync(scope, ct);
+        // requestIds is a client-side "select the specific requests to include"
+        // filter (02-Jul-2026). Normalise empty array → null so the SP treats
+        // it as "no filter". Inventory scope guard above still applies —
+        // rows for requests outside the caller's inventory are silently
+        // filtered out even if their id is in the array.
+        var ids = requestIds is { Count: > 0 } ? requestIds : null;
+
+        var rows = await requests.GetPendingCumulativeAsync(scope, ids, ct);
         return rows.Select(r => new CumulativePendingLineDto(
             r.Product_Id, r.Product_Code, r.Product_Name, r.Category_Name, r.Type,
             r.Weight_Value, r.Weight_Unit, r.Total_Qty, r.Request_Count)).ToList();
@@ -471,6 +480,121 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    public async Task<StockRequestDto> RenameDispatchDraftAsync(
+        Guid id, RenameDispatchDraftRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as save/clear — inventory can only rename drafts on
+        // their own godown's requests; admin may rename any. Any godown user
+        // can rename (no created-by lock — dispatch is a shared workload).
+        EnsureInventoryScope(existing);
+
+        // Trim + null-empty here so the SP gets a clean value: NULL means
+        // "clear the label", any non-null string means "set to this".
+        // Length cap matches the DB column (varchar(60)); BE truncates with
+        // a validation error rather than silently chopping.
+        var normalized = string.IsNullOrWhiteSpace(request.Name) ? null : request.Name.Trim();
+        if (normalized is { Length: > 60 })
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("name", "Draft name cannot exceed 60 characters.")
+            });
+        }
+
+        var ok = await requests.RenameDispatchDraftAsync(id, userId, normalized, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot rename dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> PinDispatchDraftAsync(
+        Guid id, PinDispatchDraftRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Same scope rule as the other draft SPs — inventory can only pin
+        // drafts on their own godown's requests; admin may pin any.
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.PinDispatchDraftAsync(id, userId, request.Pinned, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot pin dispatch draft — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> InventoryAddItemsAsync(
+        Guid id, InventoryAddItemsRequest request, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        if (request.Items is null || request.Items.Count == 0)
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("items", "At least one product is required.")
+            });
+        }
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Inventory can only add to their own godown's requests; admin may
+        // add to any. Returns aren't part of this flow — inventory Add
+        // Products is Order-only (Returns follow the accept-return path).
+        EnsureInventoryScope(existing);
+        if (existing.Request_Type == "Return")
+        {
+            throw new ValidationException(new[] {
+                new ValidationFailure("requestType",
+                    "Cannot add items to a Return — this endpoint is Order-only.")
+            });
+        }
+
+        var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
+        {
+            product_id     = i.ProductId,
+            requested_qty  = i.RequestedQty,
+        }), JsonOpts);
+
+        var ok = await requests.InventoryAddItemsAsync(id, userId, itemsJson, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status",
+                $"Cannot add items — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> InventoryRemoveItemAsync(
+        Guid id, Guid itemId, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.InventoryRemoveItemAsync(id, itemId, userId, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("itemId",
+                "Cannot remove — item not found, or it wasn't added by inventory, or the request is no longer editable.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     // ───────── Return Stock ─────────
 
     public async Task<StockRequestDto> CreateReturnAsync(CreateReturnRequest request, CancellationToken ct = default)
@@ -612,6 +736,81 @@ public class StockRequestService(
         return await GetAsync(requestId, ct);
     }
 
+    // ───────── Back-order (02-Jul-2026) ─────────
+
+    public async Task<StockRequestDto> MoveToBackorderAsync(
+        Guid id, MoveToBackorderRequest request, CancellationToken ct = default)
+    {
+        // Godown-only action. Admin allowed too (matches other dispatch-side ops).
+        if (IsRole(RoleNames.ShopUser))
+            throw new ForbiddenException("Shop users cannot move items to back-order.");
+
+        if (request.Items is null || request.Items.Count == 0)
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Items),
+                    "Select at least one item to move to back-order.")
+            });
+
+        if (request.Items.Any(i => i.Qty <= 0))
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Items),
+                    "Every item's back-order qty must be positive.")
+            });
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        EnsureInventoryScope(existing);
+
+        // The SP defensively re-guards these but we surface FE-friendly messages here.
+        if (!string.Equals(existing.Request_Type, "Order", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException(new[] {
+                new ValidationFailure("requestType",
+                    "Move to back-order is only valid for Orders.")
+            });
+        if (existing.Status != "Pending" && existing.Status != "Approved")
+            throw new ValidationException(new[] {
+                new ValidationFailure("status",
+                    $"Cannot move items to back-order — request is '{existing.Status}' (must be Pending or Approved).")
+            });
+
+        // Serialise as snake_case {id, qty} to match the SP's jsonb_extract keys.
+        var itemsJson = JsonSerializer.Serialize(
+            request.Items.Select(i => new { id = i.Id, qty = i.Qty }),
+            JsonOpts);
+
+        // Convert to UTC — Npgsql rejects non-UTC DateTimeOffset on timestamptz.
+        var eta = request.ExpectedArrivalAt?.ToUniversalTime();
+
+        await requests.MoveToBackorderAsync(id, itemsJson, eta, userId, ct);
+
+        // Return the refreshed PARENT — the FE detail page for the parent is
+        // where the godown pressed the button, so this is what should re-render.
+        // Child detail is fetched separately when the shop clicks the banner.
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<IReadOnlyList<OutstandingBackorderDto>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, CancellationToken ct = default)
+    {
+        // ShopUser  → forced to own shop; Inventory → forced to own godown; Admin free.
+        Guid? scopeInv = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
+        IReadOnlyList<Guid>? scopeShops = IsRole(RoleNames.ShopUser) && currentUser.ShopId is Guid sid
+            ? new[] { sid } : null;
+
+        var rows = await requests.ListOutstandingBackordersAsync(scopeInv, scopeShops, ct);
+        return rows.Select(r => new OutstandingBackorderDto(
+            r.Id, r.Code, r.Parent_Id, r.Parent_Code,
+            r.Shop_Id, r.Shop_Code, r.Shop_Name,
+            r.Inventory_Id, r.Inventory_Name,
+            r.Total_Items, r.Total_Qty, r.Total_Amount,
+            r.Submitted_At, r.Expected_Arrival_At,
+            r.Days_Since_Submitted)).ToList();
+    }
+
     // ───────── Helpers ─────────
 
     private bool IsRole(string role)
@@ -723,6 +922,9 @@ public class StockRequestService(
             r.Accepted_At, r.Accepted_By,
             r.Cancelled_At, r.Cancelled_By,
             r.Source_Request_Id, r.Source_Request_Code,
+            r.Draft_Name, r.Pinned_At,
+            r.Parent_Request_Id, r.Parent_Request_Code, r.Expected_Arrival_At,
+            BackorderChildren: ParseBackorderChildren(r.Backorder_Children),
             Items: null);
 
     // Composes MapHeaderToDto with the deserialised items list. Single source
@@ -743,7 +945,25 @@ public class StockRequestService(
             i.id, i.product_id, i.product_code, i.product_name, i.category_name,
             i.weight_value, i.weight_unit,
             i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
-            i.unit_price, i.subtotal)).ToList();
+            i.unit_price, i.subtotal,
+            i.added_by ?? "Shop",
+            i.is_vendor_procured ?? false)).ToList();
+    }
+
+    /// Deserialise the backorder_children JSON aggregate from fn_request_get.
+    /// Null / empty / "[]" → null on the DTO so the FE can distinguish
+    /// "no children" from "children not fetched" on list rows.
+    private static List<BackorderChildDto>? ParseBackorderChildren(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]")
+            return null;
+
+        var raws = JsonSerializer.Deserialize<List<RawBackorderChild>>(json, JsonOpts);
+        if (raws is null || raws.Count == 0) return null;
+
+        return raws.Select(c => new BackorderChildDto(
+            c.id, c.code, c.status, c.total_items, c.total_qty, c.total_amount,
+            c.expected_arrival_at, c.submitted_at)).ToList();
     }
 
     // Matches the JSON keys returned by fn_request_get's jsonb_build_object.
@@ -752,5 +972,13 @@ public class StockRequestService(
         string category_name,
         decimal? weight_value, string? weight_unit,
         int requested_qty, int? dispatched_qty, int? draft_dispatched_qty,
-        decimal unit_price, decimal subtotal);
+        decimal unit_price, decimal subtotal,
+        string? added_by,
+        bool?   is_vendor_procured);
+
+    private sealed record RawBackorderChild(
+        Guid id, string code, string status,
+        int total_items, int total_qty, decimal total_amount,
+        DateTimeOffset? expected_arrival_at,
+        DateTimeOffset  submitted_at);
 }

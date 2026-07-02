@@ -193,7 +193,12 @@ RETURNS TABLE (
   cancelled_at            timestamptz,
   cancelled_by            uuid,
   source_request_id       uuid,
-  source_request_code     varchar
+  source_request_code     varchar,
+  -- Back-order linkage (01-Jul-2026). Both NULL for Orders + Returns;
+  -- populated only on Backorder rows carved via fn_request_move_to_backorder.
+  parent_request_id       uuid,
+  parent_request_code     varchar,
+  expected_arrival_at     timestamptz
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -230,7 +235,11 @@ LANGUAGE sql STABLE AS $$
          r.cancelled_at, r.cancelled_by,
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
-         src.code AS source_request_code
+         src.code AS source_request_code,
+         -- Back-order → parent Order linkage. NULL on Orders + Returns.
+         r.parent_request_id,
+         par.code AS parent_request_code,
+         r.expected_arrival_at
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -242,6 +251,8 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
+  -- Self-join for the parent Order's code (Backorder rows only).
+  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.is_deleted = false
     AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
@@ -309,8 +320,14 @@ $$;
 -- physically different SKUs to pack.
 --
 -- p_inventory_id NULL → cross-inventory total (admin-only use).
+-- p_request_ids  NULL / empty → every Approved request in the scope.
+--                populated → aggregate only those request IDs (still
+--                gated to Approved + inventory scope so the caller can't
+--                sneak in a request outside their inventory). Powers the
+--                Cumulative-print selection dialog (02-Jul-2026).
 CREATE OR REPLACE FUNCTION fn_request_pending_cumulative(
-  p_inventory_id uuid DEFAULT NULL
+  p_inventory_id uuid   DEFAULT NULL,
+  p_request_ids  uuid[] DEFAULT NULL
 )
 RETURNS TABLE (
   product_id      uuid,
@@ -343,6 +360,8 @@ LANGUAGE sql STABLE AS $$
     -- source from Pending.
     AND r.status = 'Approved'
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    AND (p_request_ids  IS NULL OR cardinality(p_request_ids) = 0
+         OR r.id = ANY(p_request_ids))
   GROUP BY p.id, p.code, p.name, c.name, p.type, it.weight_value, it.weight_unit
   ORDER BY p.code;
 $$;
@@ -406,7 +425,9 @@ RETURNS TABLE (
   cancelled_at            timestamptz,
   cancelled_by            uuid,
   source_request_id       uuid,
-  source_request_code     varchar
+  source_request_code     varchar,
+  draft_name              varchar,
+  pinned_at               timestamptz
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -434,7 +455,9 @@ LANGUAGE sql STABLE AS $$
          r.accepted_at, r.accepted_by,
          r.cancelled_at, r.cancelled_by,
          r.source_request_id,
-         src.code AS source_request_code
+         src.code AS source_request_code,
+         r.draft_name,
+         r.pinned_at
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -451,7 +474,10 @@ LANGUAGE sql STABLE AS $$
       WHERE it.request_id = r.id AND it.draft_dispatched_qty IS NOT NULL
     )
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
-  ORDER BY r.updated_at DESC;
+  -- Pinned drafts first (pinned_at IS NULL sorts AFTER timestamps because
+  -- NULLS LAST). Among pinned drafts, most-recently-pinned at the top.
+  -- Among unpinned, most-recently-updated at the top (existing behaviour).
+  ORDER BY r.pinned_at DESC NULLS LAST, r.updated_at DESC;
 $$;
 
 
@@ -512,6 +538,11 @@ $$;
 -- CREATE OR REPLACE can't change return shape.
 DROP FUNCTION IF EXISTS fn_request_get(uuid);
 
+-- Signature changed 01-Jul-2026 — added parent_request_id, parent_request_code,
+-- expected_arrival_at, backorder_children (jsonb aggregate). Must DROP the
+-- old version first because CREATE OR REPLACE can't change RETURNS TABLE.
+DROP FUNCTION IF EXISTS fn_request_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_get(p_id uuid)
 RETURNS TABLE (
   id                    uuid,
@@ -553,7 +584,19 @@ RETURNS TABLE (
   cancelled_by            uuid,
   source_request_id       uuid,
   source_request_code     varchar,
-  items                   jsonb
+  -- Back-order linkage (01-Jul-2026):
+  --   parent_request_id / parent_request_code — populated on Backorder rows,
+  --     point at the Order they were carved from.
+  --   expected_arrival_at — vendor ETA on the Backorder. Nullable.
+  --   backorder_children  — populated on ORDER rows that HAVE been carved,
+  --     lists their Backorder siblings. JSON array of {id, code, status,
+  --     total_items, total_qty, total_amount, expected_arrival_at}. Empty
+  --     array when the order has no back-order carve-outs.
+  parent_request_id     uuid,
+  parent_request_code   varchar,
+  expected_arrival_at   timestamptz,
+  backorder_children    jsonb,
+  items                 jsonb
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -589,6 +632,26 @@ LANGUAGE sql STABLE AS $$
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
          src.code AS source_request_code,
+         -- Back-order linkage (01-Jul-2026).
+         r.parent_request_id,
+         par.code AS parent_request_code,
+         r.expected_arrival_at,
+         COALESCE((
+           SELECT jsonb_agg(
+             jsonb_build_object(
+               'id',                  br.id,
+               'code',                br.code,
+               'status',              br.status::varchar,
+               'total_items',         br.total_items,
+               'total_qty',           br.total_qty,
+               'total_amount',        br.total_amount,
+               'expected_arrival_at', br.expected_arrival_at,
+               'submitted_at',        br.submitted_at
+             ) ORDER BY br.submitted_at
+           )
+           FROM stock_requests br
+           WHERE br.parent_request_id = r.id AND br.is_deleted = false
+         ), '[]'::jsonb) AS backorder_children,
          COALESCE((
            SELECT jsonb_agg(
              jsonb_build_object(
@@ -612,7 +675,17 @@ LANGUAGE sql STABLE AS $$
                -- saved draft survives navigating away.
                'draft_dispatched_qty', it.draft_dispatched_qty,
                'unit_price',     it.unit_price,
-               'subtotal',       it.subtotal
+               'subtotal',       it.subtotal,
+               -- 'Shop' | 'Inventory' — flags items the godown appended
+               -- post-approval so shop / admin / picklist can render the
+               -- (inv) tag alongside the product name.
+               'added_by',       it.added_by,
+               -- Product-master flag: true when the SKU is normally
+               -- vendor-procured (2-4 day lead time). Inventory dispatch
+               -- UI uses this to pre-check the "Move to back-order"
+               -- toggle for these lines. Read LIVE from products so a
+               -- late-added flag applies to historical items too.
+               'is_vendor_procured', p.is_vendor_procured
              ) ORDER BY c.name, p.code
            )
            FROM stock_request_items it
@@ -631,6 +704,9 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
+  -- Self-join for the parent Order's code on Backorder rows (01-Jul-2026).
+  -- Partial index idx_stock_requests_parent_request keeps it cheap.
+  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.id = p_id AND r.is_deleted = false;
 $$;
 
@@ -932,7 +1008,13 @@ BEGIN
     RAISE EXCEPTION 'Stock request must include at least one item';
   END IF;
 
-  DELETE FROM stock_request_items WHERE request_id = p_id;
+  -- 01-Jul-2026: only wipe SHOP-added items. Inv-added items (godown
+  -- appended post-approval via fn_request_inventory_add_items) are
+  -- preserved so the shop's edit doesn't blow away what the godown
+  -- planned to dispatch. To remove an inv item, godown uses the
+  -- inv-remove endpoint.
+  DELETE FROM stock_request_items
+  WHERE request_id = p_id AND added_by = 'Shop';
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
     v_qty   := (v_item->>'requested_qty')::int;
@@ -955,6 +1037,17 @@ BEGIN
     v_total_qty    := v_total_qty   + v_qty;
     v_total_amount := v_total_amount + (v_qty * v_price);
   END LOOP;
+
+  -- Fold in any preserved inv-added items so the header aggregates
+  -- reflect the full item set (shop + inv), not just what the shop
+  -- just re-submitted.
+  SELECT
+    v_total_items  + COALESCE(COUNT(*), 0)::int,
+    v_total_qty    + COALESCE(SUM(requested_qty), 0)::int,
+    v_total_amount + COALESCE(SUM(subtotal), 0)::numeric(12,2)
+  INTO v_total_items, v_total_qty, v_total_amount
+  FROM stock_request_items
+  WHERE request_id = p_id AND added_by = 'Inventory';
 
   UPDATE stock_requests
   SET notes        = p_notes,
@@ -1019,10 +1112,12 @@ END
 $$;
 
 
--- Approved | Rejected → Pending (inventory user, admin)
--- "Undo" the Approve/Reject decision before dispatch happens. Clears the
--- audit fields so the request looks like it was never acted on; the next
--- Approve will write fresh timestamps.
+-- Approved | Rejected | Cancelled → Pending (inventory user, admin)
+-- "Undo" the Approve/Reject/Cancel decision before dispatch happens. Clears
+-- the corresponding audit fields so the request looks like it was never
+-- acted on; the next action writes fresh timestamps.
+-- Cancelled → Pending added 01-Jul-2026 (client req: shop users sometimes
+-- cancel by mistake; admin needs to recover).
 CREATE OR REPLACE FUNCTION fn_request_revoke(
   p_id      uuid,
   p_user_id uuid
@@ -1035,11 +1130,152 @@ BEGIN
       approved_at      = NULL,
       approved_by      = NULL,
       rejection_reason = NULL,
+      cancelled_at     = NULL,
+      cancelled_by     = NULL,
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status IN ('Approved', 'Rejected')
+    AND status IN ('Approved', 'Rejected', 'Cancelled')
     AND is_deleted = false;
   RETURN FOUND;
+END
+$$;
+
+
+-- Inventory user appends items to an already-Approved (or still-Pending)
+-- request (01-Jul-2026 client req). Use case: last-minute customer bumps
+-- a bigger qty just before dispatch — godown adds items directly instead
+-- of asking the shop to re-submit. Each new row is tagged
+-- added_by = 'Inventory' so downstream views can badge them.
+--
+-- Contract:
+--   • p_items = JSON array of { product_id, requested_qty }
+--   • Only allowed when status IN ('Pending', 'Approved') AND is_deleted = false.
+--   • Products already in the request raise 'duplicate_product' — godown
+--     should use the dispatch-qty flow to send more of a shop-included
+--     product; this SP is for ADDING lines that don't exist yet.
+--   • Snapshots products.mrp / weight_value / weight_unit at insert time
+--     (same rule as fn_request_create for consistent history).
+--   • Recalculates request totals so the header aggregates stay in sync.
+CREATE OR REPLACE FUNCTION fn_request_inventory_add_items(
+  p_id      uuid,
+  p_user_id uuid,
+  p_items   jsonb
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_item    jsonb;
+  v_pid     uuid;
+  v_qty     int;
+  v_price   numeric(10,2);
+  v_wv      numeric(10,3);
+  v_wu      varchar(5);
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id
+      AND status IN ('Pending', 'Approved')
+      AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
+    -- Nothing to do; treat as no-op success so a stray empty POST doesn't
+    -- surface a false error.
+    RETURN true;
+  END IF;
+
+  FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+    v_pid := (v_item->>'product_id')::uuid;
+    v_qty := (v_item->>'requested_qty')::int;
+
+    IF v_qty <= 0 THEN
+      RAISE EXCEPTION 'requested_qty must be positive (got %)', v_qty;
+    END IF;
+
+    -- Snapshot price + weight from the current products row.
+    SELECT mrp, weight_value, weight_unit
+    INTO v_price, v_wv, v_wu
+    FROM products
+    WHERE id = v_pid AND is_deleted = false;
+
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'product not found: %', v_pid;
+    END IF;
+
+    -- Enforce uniqueness at the app layer with a friendlier error than
+    -- the raw uq_stock_request_items violation.
+    IF EXISTS (
+      SELECT 1 FROM stock_request_items
+      WHERE request_id = p_id AND product_id = v_pid
+    ) THEN
+      RAISE EXCEPTION 'duplicate_product: % is already in this request', v_pid
+        USING ERRCODE = 'unique_violation';
+    END IF;
+
+    INSERT INTO stock_request_items (
+      request_id, product_id, requested_qty, unit_price,
+      weight_value, weight_unit, added_by
+    ) VALUES (
+      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory'
+    );
+  END LOOP;
+
+  -- Refresh header aggregates so total_items / total_qty / total_amount
+  -- reflect the newly appended lines.
+  UPDATE stock_requests r
+  SET total_items = (SELECT COUNT(*)::int FROM stock_request_items WHERE request_id = r.id),
+      total_qty   = (SELECT COALESCE(SUM(requested_qty), 0)::int FROM stock_request_items WHERE request_id = r.id),
+      total_amount = (SELECT COALESCE(SUM(subtotal), 0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+      updated_by  = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Remove a single inv-tagged line the godown appended by mistake. Won't
+-- touch shop-added items — those are still edited by the shop's own
+-- endpoint. Same Pending/Approved guard as add.
+CREATE OR REPLACE FUNCTION fn_request_inventory_remove_item(
+  p_id       uuid,
+  p_item_id  uuid,
+  p_user_id  uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id
+      AND status IN ('Pending', 'Approved')
+      AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  -- Delete only if the row belongs to this request AND was added by
+  -- inventory. Shop-added items are protected — inventory can't wipe
+  -- what the shop asked for; use the dispatch-qty=0 flow instead.
+  DELETE FROM stock_request_items
+  WHERE id         = p_item_id
+    AND request_id = p_id
+    AND added_by   = 'Inventory';
+
+  IF NOT FOUND THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests r
+  SET total_items = (SELECT COUNT(*)::int FROM stock_request_items WHERE request_id = r.id),
+      total_qty   = (SELECT COALESCE(SUM(requested_qty), 0)::int FROM stock_request_items WHERE request_id = r.id),
+      total_amount = (SELECT COALESCE(SUM(subtotal), 0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+      updated_by  = p_user_id
+  WHERE id = p_id;
+
+  RETURN true;
 END
 $$;
 
@@ -1078,13 +1314,16 @@ BEGIN
   END IF;
 
   -- Dispatch-draft qtys are now stale — clear them on the whole request so
-  -- nothing reads a half-saved draft after the dispatch is finalised.
+  -- nothing reads a half-saved draft after the dispatch is finalised. Same
+  -- goes for draft_name: it's a label on a live draft only.
   UPDATE stock_request_items
   SET draft_dispatched_qty = NULL
   WHERE request_id = p_id;
 
   UPDATE stock_requests
   SET status        = 'Dispatched',
+      draft_name    = NULL,
+      pinned_at     = NULL,
       dispatched_at = now(),
       dispatched_by = p_user_id,
       updated_by    = p_user_id
@@ -1118,8 +1357,12 @@ BEGIN
   SET draft_dispatched_qty = NULL
   WHERE request_id = p_id;
 
+  -- Discarding the draft also drops the godown's free-text label AND the
+  -- pinned-at flag (both only make sense alongside a live draft).
   UPDATE stock_requests
-  SET updated_by = p_user_id
+  SET draft_name = NULL,
+      pinned_at  = NULL,
+      updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 
@@ -1165,6 +1408,71 @@ BEGIN
 
   UPDATE stock_requests
   SET updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Pin / unpin a dispatch draft so it sorts to the top of the resume strip.
+-- Same Pending/Approved guard as the other draft SPs — pinning a finalised
+-- request is meaningless. Pass TRUE to pin (sets pinned_at = now()), FALSE
+-- to unpin (clears pinned_at). Idempotent — pinning an already-pinned
+-- draft just bumps its pin timestamp (which moves it to the top of the
+-- pinned group; useful when the dispatcher wants to re-prioritise).
+CREATE OR REPLACE FUNCTION fn_request_pin_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid,
+  p_pinned  boolean
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests
+  SET pinned_at  = CASE WHEN p_pinned THEN now() ELSE NULL END,
+      updated_by = p_user_id
+      -- updated_at refreshed by trg_stock_requests_updated trigger
+  WHERE id = p_id;
+
+  RETURN true;
+END
+$$;
+
+
+-- Set / clear the godown's free-text label on a saved dispatch draft.
+-- Separate from fn_request_save_dispatch_draft so the two concerns don't
+-- collide: qty auto-saves shouldn't clobber a manually-set name, and the
+-- rename UI shouldn't have to ship the full qty payload just to change a
+-- label. Pass NULL to clear (or any string up to 60 chars to set).
+-- Same Pending/Approved guard as save — naming a finalised request is
+-- meaningless.
+CREATE OR REPLACE FUNCTION fn_request_rename_dispatch_draft(
+  p_id      uuid,
+  p_user_id uuid,
+  p_name    text     -- NULL to clear; BE has already trimmed + null-empty'd
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM stock_requests
+    WHERE id = p_id AND status IN ('Pending', 'Approved') AND is_deleted = false
+  ) THEN
+    RETURN false;
+  END IF;
+
+  UPDATE stock_requests
+  SET draft_name = p_name,
+      updated_by = p_user_id
       -- updated_at refreshed by trg_stock_requests_updated trigger
   WHERE id = p_id;
 
@@ -1445,10 +1753,249 @@ $$;
 COMMIT;
 
 -- ============================================================
+-- BACK-ORDER (01-Jul-2026) — carve out items that require vendor procurement
+-- into a linked sibling request. Doesn't touch existing SPs.
+-- ============================================================
+
+-- Move selected line items from a parent Order into a NEW Backorder
+-- sibling request. Returns the new Backorder's uuid. Called by the
+-- inventory user's "Move to back-order" action.
+--
+-- Parent must be an Order still in Pending or Approved state (once it
+-- reaches Dispatched, no more carving — the qty has been committed).
+-- p_item_ids must ALL belong to the parent (SP validates); mixing shop-
+-- added and inv-added items is allowed.
+--
+-- Post-condition:
+--   • New stock_requests row exists with request_type='Backorder',
+--     status='Pending', parent_request_id = parent.id,
+--     code = parent.code + '-B' (or '-B2', '-B3' if parent already has
+--     a back-order).
+--   • Named items are re-parented via UPDATE stock_request_items.
+--   • Parent + child header aggregates (total_items / total_qty /
+--     total_amount) refreshed from their new item sets.
+--
+-- Failures raise via RAISE EXCEPTION; caller catches at the service
+-- layer to surface as a 400.
+-- p_items JSON: [{ id: uuid, qty: int }, ...]
+--   • qty > 0 AND qty <  parent line's requested_qty → SPLIT the line
+--       (parent keeps requested_qty - qty; new row created on the child
+--        with the specified qty + same unit_price snapshot).
+--   • qty >= parent line's requested_qty            → FULL MOVE
+--       (existing behaviour — row is reparented to the child).
+--   • qty == 0 or missing                            → REJECTED
+--       (RAISE EXCEPTION — the FE won't send these, but defence in depth).
+--
+-- Signature changed 02-Jul-2026 from `uuid[]` → `jsonb`; the drop below is
+-- required (CREATE OR REPLACE can't change the arg list).
+DROP FUNCTION IF EXISTS fn_request_move_to_backorder(uuid, uuid[], uuid, timestamptz);
+
+CREATE OR REPLACE FUNCTION fn_request_move_to_backorder(
+  p_id       uuid,        -- parent request id
+  p_items    jsonb,       -- [{id, qty}, …]  — items + per-line move qty
+  p_user_id  uuid,
+  p_eta      timestamptz DEFAULT NULL   -- optional; surfaces on prints + banner
+)
+RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_parent          stock_requests%ROWTYPE;
+  v_existing_count  int;
+  v_new_code        varchar(20);
+  v_new_id          uuid;
+  v_moved_any       boolean := false;
+  v_row             record;
+  v_item            record;
+BEGIN
+  -- Guard 1: parent exists, is an Order, still editable.
+  SELECT * INTO v_parent
+  FROM   stock_requests
+  WHERE  id = p_id AND is_deleted = false
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Parent request % not found', p_id;
+  END IF;
+
+  IF v_parent.request_type <> 'Order' THEN
+    RAISE EXCEPTION 'Only Orders can be carved into back-orders (got %)', v_parent.request_type;
+  END IF;
+
+  IF v_parent.status NOT IN ('Pending', 'Approved') THEN
+    RAISE EXCEPTION 'Cannot move items to back-order — parent status is % (must be Pending or Approved)', v_parent.status;
+  END IF;
+
+  -- Guard 2: at least one item spec.
+  IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
+    RAISE EXCEPTION 'No items provided';
+  END IF;
+
+  -- Guard 3: every provided id must belong to the parent.
+  IF EXISTS (
+    SELECT 1
+    FROM   jsonb_array_elements(p_items) e
+    WHERE  (e->>'id')::uuid NOT IN (
+      SELECT id FROM stock_request_items WHERE request_id = p_id
+    )
+  ) THEN
+    RAISE EXCEPTION 'One or more item ids do not belong to parent request %', p_id;
+  END IF;
+
+  -- Determine new back-order code (existing convention).
+  SELECT COUNT(*)::int INTO v_existing_count
+  FROM   stock_requests
+  WHERE  parent_request_id = p_id;
+
+  v_new_code := v_parent.code || '-B' || CASE WHEN v_existing_count = 0 THEN '' ELSE (v_existing_count + 1)::text END;
+
+  -- Insert the new Backorder header first so we have an id for the row inserts.
+  INSERT INTO stock_requests (
+    code, shop_id, inventory_id, status, request_type,
+    editable_until, notes,
+    parent_request_id, expected_arrival_at,
+    created_by, updated_by
+  ) VALUES (
+    v_new_code,
+    v_parent.shop_id, v_parent.inventory_id,
+    'Pending', 'Backorder',
+    now() + interval '100 years',
+    v_parent.notes,
+    p_id, p_eta,
+    p_user_id, p_user_id
+  ) RETURNING id INTO v_new_id;
+
+  -- Walk each requested item + qty, deciding full-move vs split-move.
+  FOR v_item IN
+    SELECT (e->>'id')::uuid    AS item_id,
+           (e->>'qty')::int    AS move_qty
+    FROM   jsonb_array_elements(p_items) e
+  LOOP
+    IF v_item.move_qty IS NULL OR v_item.move_qty <= 0 THEN
+      RAISE EXCEPTION 'Move qty must be positive (item %, got %)', v_item.item_id, v_item.move_qty;
+    END IF;
+
+    -- Lock the parent line so a concurrent update can't race.
+    SELECT * INTO v_row
+    FROM   stock_request_items
+    WHERE  id = v_item.item_id AND request_id = p_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+      -- Race lost / item already reparented — skip silently rather than
+      -- fail the whole batch. The outer v_moved_any check catches the
+      -- degenerate "nothing moved" case.
+      CONTINUE;
+    END IF;
+
+    IF v_item.move_qty >= v_row.requested_qty THEN
+      -- Full move — reparent the row. Dispatched_qty / draft carry over
+      -- as-is (godown may have already tried and failed on this line).
+      UPDATE stock_request_items
+      SET    request_id = v_new_id
+      WHERE  id = v_row.id;
+    ELSE
+      -- Split move — parent keeps (requested_qty - move_qty); child gets
+      -- a fresh row for move_qty. subtotal is a GENERATED column
+      -- (requested_qty × unit_price) so we don't set it — it recomputes
+      -- automatically on both writes.
+      UPDATE stock_request_items
+      SET    requested_qty = v_row.requested_qty - v_item.move_qty
+      WHERE  id = v_row.id;
+
+      INSERT INTO stock_request_items (
+        request_id, product_id, requested_qty, unit_price,
+        weight_value, weight_unit, added_by
+      ) VALUES (
+        v_new_id, v_row.product_id, v_item.move_qty, v_row.unit_price,
+        v_row.weight_value, v_row.weight_unit, v_row.added_by
+      );
+    END IF;
+
+    v_moved_any := true;
+  END LOOP;
+
+  IF NOT v_moved_any THEN
+    -- Every requested row was already reparented by a concurrent call —
+    -- roll back the empty back-order so we don't litter with 0-item rows.
+    DELETE FROM stock_requests WHERE id = v_new_id;
+    RAISE EXCEPTION 'No items moved (possibly a concurrent update reassigned them)';
+  END IF;
+
+  -- Refresh both parents' header aggregates from their new item sets.
+  UPDATE stock_requests r
+  SET    total_items  = (SELECT COUNT(*)::int         FROM stock_request_items WHERE request_id = r.id),
+         total_qty    = (SELECT COALESCE(SUM(requested_qty),0)::int FROM stock_request_items WHERE request_id = r.id),
+         total_amount = (SELECT COALESCE(SUM(subtotal),0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+         updated_by   = p_user_id
+  WHERE  r.id IN (p_id, v_new_id);
+
+  RETURN v_new_id;
+END
+$$;
+
+
+-- Pipeline snapshot: every Backorder row still awaiting dispatch. Powers
+-- the shop / inventory / admin "outstanding back-orders" banners. Not
+-- scoped by date — the whole point is that a back-order placed in Jan
+-- should stay visible through Feb until it dispatches.
+--
+-- Filters:
+--   • p_inventory_id — inventory-user scope (forced by BE to the caller's
+--     inventory; NULL for admin tenant-wide).
+--   • p_shop_ids     — optional multi-select for admin accounts drilldown.
+--
+-- Returns one row per pending Backorder with the fields the banner needs:
+-- parent code (for the link), shop name (for the drilldown table), amount,
+-- created_at (age), ETA.
+CREATE OR REPLACE FUNCTION fn_request_list_outstanding_backorders(
+  p_inventory_id uuid   DEFAULT NULL,
+  p_shop_ids     uuid[] DEFAULT NULL
+)
+RETURNS TABLE (
+  id                    uuid,
+  code                  varchar,
+  parent_id             uuid,
+  parent_code           varchar,
+  shop_id               uuid,
+  shop_code             varchar,
+  shop_name             varchar,
+  inventory_id          uuid,
+  inventory_name        varchar,
+  total_items           int,
+  total_qty             int,
+  total_amount          numeric,
+  submitted_at          timestamptz,
+  expected_arrival_at   timestamptz,
+  days_since_submitted  int
+)
+LANGUAGE sql STABLE AS $$
+  SELECT r.id, r.code,
+         r.parent_request_id, pr.code AS parent_code,
+         r.shop_id, s.code, s.name,
+         r.inventory_id, i.name,
+         r.total_items, r.total_qty, r.total_amount,
+         r.submitted_at,
+         r.expected_arrival_at,
+         GREATEST(0, (CURRENT_DATE - r.submitted_at::date))::int AS days_since_submitted
+  FROM   stock_requests r
+  INNER JOIN shops               s   ON s.id  = r.shop_id
+  INNER JOIN inventories         i   ON i.id  = r.inventory_id
+  LEFT  JOIN stock_requests      pr  ON pr.id = r.parent_request_id
+  WHERE  r.is_deleted   = false
+    AND  r.request_type = 'Backorder'
+    AND  r.status       = 'Pending'
+    AND  (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    AND  (p_shop_ids     IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id = ANY(p_shop_ids))
+  ORDER BY r.submitted_at ASC;   -- oldest first — those need attention most
+$$;
+
+
+-- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------
 -- SELECT fn_request_next_code();                          -- expect 'REQ0001' on empty table
 -- SELECT * FROM fn_settings_list();                       -- one row: request_lock_cutoff = '09:00'
 -- SELECT * FROM fn_request_list_paged(NULL,NULL,NULL,NULL,1,10);  -- empty until rows exist
 -- SELECT fn_request_count(NULL,NULL,NULL,NULL);          -- 0 initially
+-- SELECT * FROM fn_request_list_outstanding_backorders(NULL,NULL);  -- 0 rows until a move happens
 -- ============================================================

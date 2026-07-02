@@ -69,6 +69,11 @@ CREATE TABLE shops (
   gstin           varchar(15),
   inventory_id    uuid          NOT NULL REFERENCES inventories(id) ON DELETE RESTRICT,
   active          boolean       NOT NULL DEFAULT true,
+  -- 19-Jun-2026 (client #15): per-shop GST flag. When the global
+  -- app_settings.gst_enabled is true, this row-level flag picks which
+  -- shops are GST-registered (later used by Phase 5 POS billing to
+  -- decide whether bills include GST line items).
+  gst_enabled     boolean       NOT NULL DEFAULT true,
   is_deleted      boolean       NOT NULL DEFAULT false,
   created_at      timestamptz   NOT NULL DEFAULT now(),
   created_by      uuid,
@@ -208,6 +213,13 @@ CREATE TABLE products (
   -- GST rate as a percentage (e.g. 5, 12, 18, 28). Nullable + hidden in the UI
   -- for now; client will surface it in a later phase.
   gst            numeric(5,2),
+  -- Flag for slow-moving SKUs that the godown normally doesn't hold in stock
+  -- and has to source from a vendor (2–4 day lead time) — Pickle / Thokku /
+  -- Podi are the initial candidates. When set, the inventory-side dispatch
+  -- screen pre-checks the corresponding lines for back-order (01-Jul-2026).
+  -- Admin sets this on the product master; godown can still override per
+  -- request via the "Move to back-order" action.
+  is_vendor_procured boolean    NOT NULL DEFAULT false,
   active         boolean       NOT NULL DEFAULT true,
   is_deleted     boolean       NOT NULL DEFAULT false,
   created_at     timestamptz   NOT NULL DEFAULT now(),

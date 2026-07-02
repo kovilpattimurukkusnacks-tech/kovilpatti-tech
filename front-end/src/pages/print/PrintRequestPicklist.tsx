@@ -4,11 +4,20 @@ import { useStockRequest } from '../../hooks/useStockRequests'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
+import { splitBalancedColumns } from '../../utils/balancedColumns'
+import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import { computeDeliveredAmount } from '../../utils/computeDeliveredAmount'
 import { BRAND_NAME } from '../../utils/brand'
 import { useAutoPrint, PrintButton } from '../../hooks/useAutoPrint'
 import './print.css'
+
+// Per-card height estimator — number of "rows" the card will occupy
+// (banner + each weight header + each product). Used by splitBalancedColumns
+// to pick the shorter side. Exact pixels aren't needed; relative size is.
+const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
+  1 + cg.weightGroups.reduce((s, wg) => s + 1 + wg.items.length, 0)
 
 // Brand block — mirrors the thermal receipt's centred header so admin/godown
 // prints feel like the same product. Name stays constant; contact comes from
@@ -33,8 +42,7 @@ export default function PrintRequestPicklist() {
   // table (totalDispatchedAmount on the DTO is null until dispatch happens).
   const deliveredAmount = useMemo(() => computeDeliveredAmount(request?.items), [request])
 
-  // Two-level grouping for the picklist: category → weight → items. The
-  // kitchen scans one weight bucket at a time within each category.
+  // Two-level grouping for the picklist: sub-category (leaf) → weight → items.
   const sections = useMemo(
     () => groupByCategoryWeight(
       request?.items ?? [],
@@ -42,6 +50,35 @@ export default function PrintRequestPicklist() {
     ),
     [request],
   )
+
+  // 30-Jun-2026 — bucket sections under their ROOT category in hard-coded
+  // priority order (1 KG Snacks → Packing Items → … → Shop Needs). Each
+  // root prints as its own block: an underline-style heading on top, then
+  // its sub-cat banner cards flow into a 2-col grid below. Mirrors the
+  // on-screen detail page hierarchy + the 3-inch thermal slip.
+  const categoriesQuery = useCategories()
+  const rootGroups = useMemo(() => {
+    const lookup = buildRootLookup(categoriesQuery.data)
+    const byRoot = new Map<string, typeof sections>()
+    for (const sec of sections) {
+      const root = lookup(sec.category)
+      const arr = byRoot.get(root)
+      if (arr) arr.push(sec)
+      else byRoot.set(root, [sec])
+    }
+    return sortRootCategoryNames(Array.from(byRoot.keys()))
+      .map(root => {
+        const children = byRoot.get(root)!
+        const productCount = children.reduce(
+          (sum, sec) => sum + sec.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
+          0,
+        )
+        const unitCount = children.reduce(
+          (sum, sec) => sum + sec.weightGroups.reduce(
+            (s, wg) => s + wg.items.reduce((a, it) => a + it.requestedQty, 0), 0), 0)
+        return { root, children, productCount, unitCount }
+      })
+  }, [sections, categoriesQuery.data])
 
   if (isLoading) return <div className="print-page"><p>Loading…</p></div>
   if (error || !request) {
@@ -57,55 +94,117 @@ export default function PrintRequestPicklist() {
 
   return (
     <div className="print-page">
-      {/* Centred brand header — mirrors the thermal receipt style. Subtitle
-          flips to "RETURN BILL" on Return-type requests. Below the rule, a
-          single meta strip carries every shop / godown / who / when fact so
-          the old parties block + timestamps row collapse into one band. */}
-      <header className="print-brand-header">
-        <div className="print-brand-name">{BRAND_NAME}</div>
-        <div className="print-brand-contact">
-          Contact: {request.shopContactPhone ?? '—'}
-        </div>
-        <div className="print-brand-subtitle">
-          {request.requestType === 'Return' ? 'Return Bill' : 'Stock Request'}
-        </div>
-      </header>
+      {/* Wrap the whole sheet in a 1-column <table> so the brand + meta
+          block (placed in <thead>) repeats automatically at the top of
+          every printed page when the items overflow to a second / third
+          sheet (30-Jun-2026 client req — header missing on page 2+).
+          Browsers honour <thead>'s default display:table-header-group as
+          a "repeat on page break" directive — no JS, no Paged.js needed.
+          Screen view is unaffected: the table renders as one continuous
+          flow with no page breaks. */}
+      <table className="print-page-table">
+        <thead>
+          <tr>
+            <td>
+              {/* Centred brand header — mirrors the thermal receipt style.
+                  Subtitle flips to "RETURN BILL" on Return-type requests. */}
+              <header className="print-brand-header">
+                <div className="print-brand-name">{BRAND_NAME}</div>
+                <div className="print-brand-contact">
+                  Contact: {request.shopContactPhone ?? '—'}
+                </div>
+                <div className="print-brand-subtitle">
+                  {request.requestType === 'Return'   ? 'Return Bill'
+                    : request.requestType === 'Backorder' ? 'Back-order'
+                    : 'Stock Request'}
+                </div>
+              </header>
 
-      <div className="print-meta-strip">
-        <div>
-          <span className="muted">Code: </span>
-          <strong>{request.code}</strong>
-          <span className="muted"> · {request.status}</span>
+              {/* Two-row meta grid:
+                    Row 1: Code (left) · Shop + by name (center) · Godown (right)
+                    Row 2: Submitted (left) · Dispatched (right) */}
+              <div className="print-meta-grid">
+        <div className="print-meta-grid-row three-col">
+          <div className="left">
+            <span className="muted">Code: </span>
+            <strong>{request.code}</strong>
+            <span className="muted"> · {request.status}</span>
+          </div>
+          <div className="center">
+            <span className="muted">Shop: </span>
+            <strong>{request.shopName}</strong>
+            {request.submittedByName && (
+              <span className="muted"> · by {request.submittedByName}</span>
+            )}
+          </div>
+          <div className="right">
+            <span className="muted">Godown: </span>
+            <strong>{request.inventoryName}</strong>
+          </div>
         </div>
-        <div>
-          <span className="muted">Shop: </span>
-          <strong>{request.shopName}</strong>
-          {request.submittedByName && (
-            <span className="muted"> · by {request.submittedByName}</span>
-          )}
-        </div>
-        <div>
-          <span className="muted">Godown: </span>
-          <strong>{request.inventoryName}</strong>
-        </div>
-        <div>
-          <span className="muted">Submitted: </span>
-          {formatIstDateTime(request.submittedAt)}
-          {request.dispatchedAt && (
-            <>
-              <span className="muted"> · Dispatched: </span>
-              {formatIstDateTime(request.dispatchedAt)}
-            </>
-          )}
-        </div>
-      </div>
-
-      {/* Items — dense 2-column flow (same compression as the cumulative
-          report). Each category sits in its own section with a slim banner
-          and a tight 4-column table: # / product / requested / dispatched.
-          break-inside:avoid keeps each category together where possible. */}
-      <div className="print-dense-grid">
-        {sections.map(section => {
+                <div className="print-meta-grid-row two-col">
+                  <div className="left">
+                    <span className="muted">Submitted: </span>
+                    {formatIstDateTime(request.submittedAt)}
+                  </div>
+                  <div className="right">
+                    {request.dispatchedAt && (
+                      <>
+                        <span className="muted">Dispatched: </span>
+                        {formatIstDateTime(request.dispatchedAt)}
+                      </>
+                    )}
+                  </div>
+                </div>
+                {/* Back-order lineage (02-Jul-2026). Prints on the child (Backorder)
+                    the parent code + ETA; and on the parent, a note that some
+                    items were carved off — so the picker at the godown knows
+                    to reconcile against the child request as well. */}
+                {request.requestType === 'Backorder' && request.parentRequestCode && (
+                  <div className="print-meta-grid-row" style={{ marginTop: 4, fontSize: 11 }}>
+                    <div>
+                      <span className="muted">Back-order of: </span>
+                      <strong>{request.parentRequestCode}</strong>
+                      {request.expectedArrivalAt && (
+                        <>
+                          <span className="muted"> · ETA </span>
+                          {formatIstDateTime(request.expectedArrivalAt)}
+                        </>
+                      )}
+                    </div>
+                  </div>
+                )}
+                {request.backorderChildren && request.backorderChildren.length > 0 && (
+                  <div className="print-meta-grid-row" style={{ marginTop: 4, fontSize: 11 }}>
+                    <div>
+                      <span className="muted">Items on back-order: </span>
+                      {request.backorderChildren.map((c, i) => (
+                        <span key={c.id}>
+                          <strong>{c.code}</strong>
+                          {c.expectedArrivalAt && (
+                            <> (ETA {new Date(c.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})</>
+                          )}
+                          {i < request.backorderChildren!.length - 1 && ', '}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            </td>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
+      {/* Items — grouped by ROOT category in hard-coded priority order. Each
+          root block has an underline-style heading + a 2-col card flow of
+          its sub-category banners. break-inside:avoid keeps a sub-category
+          together; the root heading is reserved for the print layout (the
+          on-screen detail page uses the fieldset/legend wrapper instead). */}
+      {rootGroups.map(rg => {
+        const { left, right } = splitBalancedColumns(rg.children, heightOfCatGroup)
+        const renderCard = (section: typeof rg.children[number]) => {
           const sectionQty = section.weightGroups.reduce(
             (s, wg) => s + wg.items.reduce((a, it) => a + it.requestedQty, 0), 0)
           const productCount = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
@@ -118,9 +217,7 @@ export default function PrintRequestPicklist() {
                   · {sectionQty} units
                 </span>
               </div>
-              {/* 5-col dense table — # / product / req / disp / amount.
-                  Amount is qty × unit_price; qty = dispatchedQty when set
-                  (post-dispatch), else requestedQty (pre-dispatch). */}
+              {/* 5-col dense table — # / product / req / disp / amount. */}
               <table className="print-dense-table">
                 <colgroup>
                   <col style={{ width: 20 }} />
@@ -144,7 +241,10 @@ export default function PrintRequestPicklist() {
                           return (
                             <tr key={it.id}>
                               <td>{idx}</td>
-                              <td><strong>{it.productName}</strong></td>
+                              <td>
+                                <strong>{it.productName}</strong>
+                                {it.addedBy === 'Inventory' && <span style={{ marginLeft: 4, padding: '0 3px', fontSize: 8, fontWeight: 700, color: '#0277BD', border: '1px solid #0277BD', borderRadius: 2 }}>INV</span>}
+                              </td>
                               <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
                               <td style={{ textAlign: 'right' }}>
                                 <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
@@ -162,8 +262,31 @@ export default function PrintRequestPicklist() {
               </table>
             </section>
           )
-        })}
-      </div>
+        }
+        return (
+          <table key={rg.root} className="print-root-section">
+            <thead>
+              <tr><td>
+                <h2 className="print-root-heading">
+                  {rg.root}
+                  <span className="muted">
+                    · {rg.productCount} {rg.productCount === 1 ? 'product' : 'products'}
+                    · {rg.unitCount} units
+                  </span>
+                </h2>
+              </td></tr>
+            </thead>
+            <tbody>
+              <tr><td>
+                <div className="print-dense-grid">
+                  <div className="print-dense-col">{left.map(renderCard)}</div>
+                  <div className="print-dense-col">{right.map(renderCard)}</div>
+                </div>
+              </td></tr>
+            </tbody>
+          </table>
+        )
+      })}
 
       {/* Single compact totals strip — quantities on the left, money on
           the right. Post-dispatch shows the delivered numbers; pre-dispatch
@@ -176,7 +299,7 @@ export default function PrintRequestPicklist() {
           {hasDispatch ? 'Dispatched' : 'Requested'}
           <span className="muted"> · </span>
           <strong>{hasDispatch ? request.totalDispatchedQty : request.totalQty}</strong> units
-          <span className="muted"> · {sections.length} {sections.length === 1 ? 'category' : 'categories'}</span>
+          <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
         </span>
         <span className={isShort ? 'danger' : ''}>
           <strong>{formatINR(hasDispatch ? deliveredAmount : request.totalAmount)}</strong>
@@ -194,8 +317,14 @@ export default function PrintRequestPicklist() {
         </section>
       )}
 
+            </td>
+          </tr>
+        </tbody>
+      </table>
+
       {/* On-screen-only footer — holds the Print button. The "printed at"
-          line lives inside the dense-summary strip above. */}
+          line lives inside the dense-summary strip above. Sits OUTSIDE the
+          repeating-header table so the button doesn't print as page chrome. */}
       <footer className="print-footer print-only">
         <div className="print-only">
           <PrintButton className="print-trigger" />

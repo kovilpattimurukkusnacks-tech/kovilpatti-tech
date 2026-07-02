@@ -6,6 +6,9 @@ import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, StockRequestDto, RequestStatus,
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
+  RenameDispatchDraftRequest, PinDispatchDraftRequest,
+  InventoryAddItemsRequest,
+  MoveToBackorderRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -52,11 +55,17 @@ export function useStockRequest(id: string | undefined) {
   })
 }
 
-/** Cumulative pending workload — used by the kitchen batch report. */
-export function useCumulativePending(inventoryId?: string) {
+/** Cumulative pending workload — used by the kitchen batch report.
+ *  requestIds narrows to a specific selection (02-Jul-2026); empty/omitted
+ *  = every Approved request in the inventory scope. Key encodes both
+ *  filters so caches don't collide across select-subset invocations. */
+export function useCumulativePending(inventoryId?: string, requestIds?: string[]) {
+  const idsKey = requestIds && requestIds.length
+    ? [...requestIds].sort().join(',')  // stable order → stable key
+    : 'all'
   return useQuery({
-    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all'] as const,
-    queryFn: () => stockRequestsApi.cumulative(inventoryId),
+    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all', idsKey] as const,
+    queryFn: () => stockRequestsApi.cumulative(inventoryId, requestIds),
     // Print page mounts, fetches, prints. No need to cache long.
     staleTime: 0,
   })
@@ -209,6 +218,112 @@ export function useClearDispatchDraft() {
   })
 }
 
+/** Inventory / Admin appends new lines to a Pending or Approved request
+ *  (01-Jul-2026). On success the detail cache is refreshed with the new
+ *  items so the UI reflects them without a manual refetch. */
+export function useInventoryAddItems() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: InventoryAddItemsRequest }) =>
+      stockRequestsApi.inventoryAddItems(id, req),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      // Header aggregates (total_items / total_qty / total_amount) change,
+      // so lists that show these need to refetch.
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+    },
+  })
+}
+
+/** Inventory / Admin removes an inv-added line by item id. Shop-added
+ *  items are rejected server-side (SP only deletes rows with
+ *  added_by = 'Inventory'). */
+export function useInventoryRemoveItem() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
+      stockRequestsApi.inventoryRemoveItem(id, itemId),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+    },
+  })
+}
+
+/** Pin / unpin a saved dispatch draft (Inventory/Admin). Pinned drafts
+ *  sort first on the resume strip. Optimistic — reorders + flags the
+ *  draft-list cache instantly; rolls back on error. */
+export function usePinDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: PinDispatchDraftRequest }) =>
+      stockRequestsApi.pinDispatchDraft(id, req),
+    onMutate: async ({ id, req }) => {
+      await qc.cancelQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+      const prev = qc.getQueryData<StockRequestDto[]>(['stock-requests', 'dispatch-drafts'])
+      // Optimistic: flip pinnedAt and re-sort (pinned first by pinnedAt
+      // DESC, then unpinned by updatedAt DESC — matches the SP's ORDER BY).
+      const stampIso = prev?.find(d => d.id === id)?.pinnedAt
+        ?? (req.pinned ? new Date().toISOString() : null)
+      qc.setQueryData<StockRequestDto[]>(
+        ['stock-requests', 'dispatch-drafts'],
+        (old) => {
+          if (!old) return old
+          const updated = old.map(d => d.id === id
+            ? { ...d, pinnedAt: req.pinned ? (stampIso ?? new Date().toISOString()) : null }
+            : d)
+          return [...updated].sort((a, b) => {
+            const aPin = a.pinnedAt, bPin = b.pinnedAt
+            if (aPin && !bPin) return -1
+            if (!aPin && bPin) return 1
+            if (aPin && bPin) return bPin.localeCompare(aPin)
+            return b.updatedAt.localeCompare(a.updatedAt)
+          })
+        },
+      )
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stock-requests', 'dispatch-drafts'], ctx.prev)
+    },
+    onSettled: (updated) => {
+      if (updated) qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
+/** Rename (set / clear) the godown's free-text label on a saved dispatch
+ *  draft (Inventory/Admin). Optimistic — updates the draft-list cache
+ *  in place so the new name renders instantly; rolls back on error. */
+export function useRenameDispatchDraft() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: RenameDispatchDraftRequest }) =>
+      stockRequestsApi.renameDispatchDraft(id, req),
+    // Optimistic update: rewrite the dispatch-drafts list cache so the new
+    // name shows up immediately in the resume strip while the PATCH is in
+    // flight. Rollback on error using the snapshot we capture below.
+    onMutate: async ({ id, req }) => {
+      await qc.cancelQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+      const prev = qc.getQueryData<StockRequestDto[]>(['stock-requests', 'dispatch-drafts'])
+      const normalized = (req.name ?? '').trim() || null
+      qc.setQueryData<StockRequestDto[]>(
+        ['stock-requests', 'dispatch-drafts'],
+        (old) => old?.map(d => d.id === id ? { ...d, draftName: normalized } : d),
+      )
+      return { prev }
+    },
+    onError: (_err, _vars, ctx) => {
+      if (ctx?.prev) qc.setQueryData(['stock-requests', 'dispatch-drafts'], ctx.prev)
+    },
+    onSettled: (updated) => {
+      if (updated) qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+    },
+  })
+}
+
 /** Pending/Approved requests that have a saved dispatch draft on at least
  *  one item. Drives the inventory list page's "Resume dispatch draft" strip.
  *  Inventory user's scope is forced server-side, so no inventoryId arg. */
@@ -328,6 +443,43 @@ export function useCancelStockRequest() {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
     },
+  })
+}
+
+/** Godown carves items off a parent Order into a linked Backorder sibling.
+ *  Returns the REFRESHED PARENT DTO. Cache updates: parent detail patched
+ *  directly; every list cache patched (parent has updated totals + a new
+ *  backorderChildren array); the newly-created child appears when its list
+ *  is refetched. Outstanding-backorder strip queries are invalidated. */
+export function useMoveToBackorder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: MoveToBackorderRequest }) =>
+      stockRequestsApi.moveToBackorder(id, req),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      patchAllListCaches(qc, updated)
+      // New Backorder child appears on lists — refetch scopes it correctly.
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+      // The Outstanding Back-orders strip on shop/inv/admin uses these
+      // keys — force a refetch so the new row shows up.
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'outstanding-backorders'] })
+    },
+  })
+}
+
+/** Pipeline snapshot of Pending Backorders. Drives:
+ *   • Shop banner "N back-orders outstanding"
+ *   • Inventory persistent banner + Procurement preset chip
+ *   • Admin Accounts pipeline strip (cross-month; date filter not applied) */
+export function useOutstandingBackorders(inventoryId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['stock-requests', 'outstanding-backorders', inventoryId ?? 'scope'] as const,
+    queryFn: () => stockRequestsApi.outstandingBackorders(inventoryId),
+    enabled: options?.enabled ?? true,
+    // 60s is fine — the strip doesn't need to reflect the very last second's
+    // change; explicit invalidations handle same-tab actions.
+    staleTime: 60_000,
   })
 }
 
