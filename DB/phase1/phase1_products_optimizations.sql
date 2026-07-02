@@ -123,7 +123,7 @@ BEGIN
   INSERT INTO products (
     code, name, category_id, type,
     weight_value, weight_unit, mrp, purchase_price,
-    gst, active, created_by, updated_by
+    gst, active, is_vendor_procured, created_by, updated_by
   )
   SELECT
     COALESCE(NULLIF(p->>'code', ''), fn_product_next_code()),
@@ -136,6 +136,7 @@ BEGIN
     (p->>'purchase_price')::numeric,
     NULLIF(p->>'gst', '')::numeric,
     COALESCE((p->>'active')::boolean, true),
+    COALESCE((p->>'is_vendor_procured')::boolean, false),
     p_user_id,
     p_user_id
   FROM jsonb_array_elements(p_products) AS p

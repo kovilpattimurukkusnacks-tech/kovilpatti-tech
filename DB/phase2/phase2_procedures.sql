@@ -193,7 +193,12 @@ RETURNS TABLE (
   cancelled_at            timestamptz,
   cancelled_by            uuid,
   source_request_id       uuid,
-  source_request_code     varchar
+  source_request_code     varchar,
+  -- Back-order linkage (01-Jul-2026). Both NULL for Orders + Returns;
+  -- populated only on Backorder rows carved via fn_request_move_to_backorder.
+  parent_request_id       uuid,
+  parent_request_code     varchar,
+  expected_arrival_at     timestamptz
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -230,7 +235,11 @@ LANGUAGE sql STABLE AS $$
          r.cancelled_at, r.cancelled_by,
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
-         src.code AS source_request_code
+         src.code AS source_request_code,
+         -- Back-order → parent Order linkage. NULL on Orders + Returns.
+         r.parent_request_id,
+         par.code AS parent_request_code,
+         r.expected_arrival_at
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -242,6 +251,8 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
+  -- Self-join for the parent Order's code (Backorder rows only).
+  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.is_deleted = false
     AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
@@ -519,6 +530,11 @@ $$;
 -- CREATE OR REPLACE can't change return shape.
 DROP FUNCTION IF EXISTS fn_request_get(uuid);
 
+-- Signature changed 01-Jul-2026 — added parent_request_id, parent_request_code,
+-- expected_arrival_at, backorder_children (jsonb aggregate). Must DROP the
+-- old version first because CREATE OR REPLACE can't change RETURNS TABLE.
+DROP FUNCTION IF EXISTS fn_request_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_get(p_id uuid)
 RETURNS TABLE (
   id                    uuid,
@@ -560,7 +576,19 @@ RETURNS TABLE (
   cancelled_by            uuid,
   source_request_id       uuid,
   source_request_code     varchar,
-  items                   jsonb
+  -- Back-order linkage (01-Jul-2026):
+  --   parent_request_id / parent_request_code — populated on Backorder rows,
+  --     point at the Order they were carved from.
+  --   expected_arrival_at — vendor ETA on the Backorder. Nullable.
+  --   backorder_children  — populated on ORDER rows that HAVE been carved,
+  --     lists their Backorder siblings. JSON array of {id, code, status,
+  --     total_items, total_qty, total_amount, expected_arrival_at}. Empty
+  --     array when the order has no back-order carve-outs.
+  parent_request_id     uuid,
+  parent_request_code   varchar,
+  expected_arrival_at   timestamptz,
+  backorder_children    jsonb,
+  items                 jsonb
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -596,6 +624,26 @@ LANGUAGE sql STABLE AS $$
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
          src.code AS source_request_code,
+         -- Back-order linkage (01-Jul-2026).
+         r.parent_request_id,
+         par.code AS parent_request_code,
+         r.expected_arrival_at,
+         COALESCE((
+           SELECT jsonb_agg(
+             jsonb_build_object(
+               'id',                  br.id,
+               'code',                br.code,
+               'status',              br.status::varchar,
+               'total_items',         br.total_items,
+               'total_qty',           br.total_qty,
+               'total_amount',        br.total_amount,
+               'expected_arrival_at', br.expected_arrival_at,
+               'submitted_at',        br.submitted_at
+             ) ORDER BY br.submitted_at
+           )
+           FROM stock_requests br
+           WHERE br.parent_request_id = r.id AND br.is_deleted = false
+         ), '[]'::jsonb) AS backorder_children,
          COALESCE((
            SELECT jsonb_agg(
              jsonb_build_object(
@@ -623,7 +671,13 @@ LANGUAGE sql STABLE AS $$
                -- 'Shop' | 'Inventory' — flags items the godown appended
                -- post-approval so shop / admin / picklist can render the
                -- (inv) tag alongside the product name.
-               'added_by',       it.added_by
+               'added_by',       it.added_by,
+               -- Product-master flag: true when the SKU is normally
+               -- vendor-procured (2-4 day lead time). Inventory dispatch
+               -- UI uses this to pre-check the "Move to back-order"
+               -- toggle for these lines. Read LIVE from products so a
+               -- late-added flag applies to historical items too.
+               'is_vendor_procured', p.is_vendor_procured
              ) ORDER BY c.name, p.code
            )
            FROM stock_request_items it
@@ -642,6 +696,9 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
+  -- Self-join for the parent Order's code on Backorder rows (01-Jul-2026).
+  -- Partial index idx_stock_requests_parent_request keeps it cheap.
+  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.id = p_id AND r.is_deleted = false;
 $$;
 
@@ -1688,10 +1745,192 @@ $$;
 COMMIT;
 
 -- ============================================================
+-- BACK-ORDER (01-Jul-2026) — carve out items that require vendor procurement
+-- into a linked sibling request. Doesn't touch existing SPs.
+-- ============================================================
+
+-- Move selected line items from a parent Order into a NEW Backorder
+-- sibling request. Returns the new Backorder's uuid. Called by the
+-- inventory user's "Move to back-order" action.
+--
+-- Parent must be an Order still in Pending or Approved state (once it
+-- reaches Dispatched, no more carving — the qty has been committed).
+-- p_item_ids must ALL belong to the parent (SP validates); mixing shop-
+-- added and inv-added items is allowed.
+--
+-- Post-condition:
+--   • New stock_requests row exists with request_type='Backorder',
+--     status='Pending', parent_request_id = parent.id,
+--     code = parent.code + '-B' (or '-B2', '-B3' if parent already has
+--     a back-order).
+--   • Named items are re-parented via UPDATE stock_request_items.
+--   • Parent + child header aggregates (total_items / total_qty /
+--     total_amount) refreshed from their new item sets.
+--
+-- Failures raise via RAISE EXCEPTION; caller catches at the service
+-- layer to surface as a 400.
+CREATE OR REPLACE FUNCTION fn_request_move_to_backorder(
+  p_id       uuid,     -- parent request id
+  p_item_ids uuid[],   -- items to carve off (must belong to parent)
+  p_user_id  uuid,
+  p_eta      timestamptz DEFAULT NULL  -- optional; surfaces on prints + banner
+)
+RETURNS uuid
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_parent          stock_requests%ROWTYPE;
+  v_existing_count  int;
+  v_new_code        varchar(20);
+  v_new_id          uuid;
+  v_moved_count     int;
+BEGIN
+  -- Guard 1: parent exists, is an Order, still editable.
+  SELECT * INTO v_parent
+  FROM   stock_requests
+  WHERE  id = p_id AND is_deleted = false
+  FOR UPDATE;
+
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Parent request % not found', p_id;
+  END IF;
+
+  IF v_parent.request_type <> 'Order' THEN
+    RAISE EXCEPTION 'Only Orders can be carved into back-orders (got %)', v_parent.request_type;
+  END IF;
+
+  IF v_parent.status NOT IN ('Pending', 'Approved') THEN
+    RAISE EXCEPTION 'Cannot move items to back-order — parent status is % (must be Pending or Approved)', v_parent.status;
+  END IF;
+
+  -- Guard 2: at least one item id, and all must belong to the parent.
+  IF p_item_ids IS NULL OR cardinality(p_item_ids) = 0 THEN
+    RAISE EXCEPTION 'No items provided';
+  END IF;
+
+  IF EXISTS (
+    SELECT 1 FROM unnest(p_item_ids) t(id)
+    WHERE t.id NOT IN (SELECT id FROM stock_request_items WHERE request_id = p_id)
+  ) THEN
+    RAISE EXCEPTION 'One or more item ids do not belong to parent request %', p_id;
+  END IF;
+
+  -- Determine new back-order code. Parent may already have one or more
+  -- Backorder children — count them and append -B, -B2, -B3, ...
+  SELECT COUNT(*)::int INTO v_existing_count
+  FROM   stock_requests
+  WHERE  parent_request_id = p_id;
+
+  v_new_code := v_parent.code || '-B' || CASE WHEN v_existing_count = 0 THEN '' ELSE (v_existing_count + 1)::text END;
+
+  -- Insert the new Backorder row. inventory_id + shop_id carried from
+  -- parent so ownership is stable. status = Pending; the godown will
+  -- dispatch once the vendor delivers. editable_until is far-future so
+  -- back-orders never lock (they're not shop-editable anyway).
+  INSERT INTO stock_requests (
+    code, shop_id, inventory_id, status, request_type,
+    editable_until, notes,
+    parent_request_id, expected_arrival_at,
+    created_by, updated_by
+  ) VALUES (
+    v_new_code,
+    v_parent.shop_id, v_parent.inventory_id,
+    'Pending', 'Backorder',
+    now() + interval '100 years',
+    v_parent.notes,                    -- carry the shop's notes forward
+    p_id, p_eta,
+    p_user_id, p_user_id
+  ) RETURNING id INTO v_new_id;
+
+  -- Move items. Only rows in p_item_ids AND still under the parent get
+  -- re-parented (extra guard in case of concurrent edits).
+  UPDATE stock_request_items
+  SET    request_id = v_new_id
+  WHERE  id = ANY(p_item_ids)
+    AND  request_id = p_id;
+
+  GET DIAGNOSTICS v_moved_count = ROW_COUNT;
+  IF v_moved_count = 0 THEN
+    -- Nothing actually moved — race lost, or all items were already
+    -- moved by a prior concurrent call. Roll back the empty back-order.
+    DELETE FROM stock_requests WHERE id = v_new_id;
+    RAISE EXCEPTION 'No items moved (possibly a concurrent update reassigned them)';
+  END IF;
+
+  -- Refresh both parents' header aggregates from their new item sets.
+  UPDATE stock_requests r
+  SET    total_items  = (SELECT COUNT(*)::int         FROM stock_request_items WHERE request_id = r.id),
+         total_qty    = (SELECT COALESCE(SUM(requested_qty),0)::int FROM stock_request_items WHERE request_id = r.id),
+         total_amount = (SELECT COALESCE(SUM(subtotal),0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
+         updated_by   = p_user_id
+  WHERE  r.id IN (p_id, v_new_id);
+
+  RETURN v_new_id;
+END
+$$;
+
+
+-- Pipeline snapshot: every Backorder row still awaiting dispatch. Powers
+-- the shop / inventory / admin "outstanding back-orders" banners. Not
+-- scoped by date — the whole point is that a back-order placed in Jan
+-- should stay visible through Feb until it dispatches.
+--
+-- Filters:
+--   • p_inventory_id — inventory-user scope (forced by BE to the caller's
+--     inventory; NULL for admin tenant-wide).
+--   • p_shop_ids     — optional multi-select for admin accounts drilldown.
+--
+-- Returns one row per pending Backorder with the fields the banner needs:
+-- parent code (for the link), shop name (for the drilldown table), amount,
+-- created_at (age), ETA.
+CREATE OR REPLACE FUNCTION fn_request_list_outstanding_backorders(
+  p_inventory_id uuid   DEFAULT NULL,
+  p_shop_ids     uuid[] DEFAULT NULL
+)
+RETURNS TABLE (
+  id                    uuid,
+  code                  varchar,
+  parent_id             uuid,
+  parent_code           varchar,
+  shop_id               uuid,
+  shop_code             varchar,
+  shop_name             varchar,
+  inventory_id          uuid,
+  inventory_name        varchar,
+  total_items           int,
+  total_qty             int,
+  total_amount          numeric,
+  submitted_at          timestamptz,
+  expected_arrival_at   timestamptz,
+  days_since_submitted  int
+)
+LANGUAGE sql STABLE AS $$
+  SELECT r.id, r.code,
+         r.parent_request_id, pr.code AS parent_code,
+         r.shop_id, s.code, s.name,
+         r.inventory_id, i.name,
+         r.total_items, r.total_qty, r.total_amount,
+         r.submitted_at,
+         r.expected_arrival_at,
+         GREATEST(0, (CURRENT_DATE - r.submitted_at::date))::int AS days_since_submitted
+  FROM   stock_requests r
+  INNER JOIN shops               s   ON s.id  = r.shop_id
+  INNER JOIN inventories         i   ON i.id  = r.inventory_id
+  LEFT  JOIN stock_requests      pr  ON pr.id = r.parent_request_id
+  WHERE  r.is_deleted   = false
+    AND  r.request_type = 'Backorder'
+    AND  r.status       = 'Pending'
+    AND  (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    AND  (p_shop_ids     IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id = ANY(p_shop_ids))
+  ORDER BY r.submitted_at ASC;   -- oldest first — those need attention most
+$$;
+
+
+-- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------
 -- SELECT fn_request_next_code();                          -- expect 'REQ0001' on empty table
 -- SELECT * FROM fn_settings_list();                       -- one row: request_lock_cutoff = '09:00'
 -- SELECT * FROM fn_request_list_paged(NULL,NULL,NULL,NULL,1,10);  -- empty until rows exist
 -- SELECT fn_request_count(NULL,NULL,NULL,NULL);          -- 0 initially
+-- SELECT * FROM fn_request_list_outstanding_backorders(NULL,NULL);  -- 0 rows until a move happens
 -- ============================================================

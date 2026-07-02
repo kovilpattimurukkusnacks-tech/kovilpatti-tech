@@ -148,7 +148,7 @@ export type AccountsAdjustmentRowDto = {
   requestCode:    string
   /** 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so the FE filters
    *  audits by view-mode lens. */
-  requestType:    'Order' | 'Return'
+  requestType:    'Order' | 'Return' | 'Backorder'
   shopId:         string
   shopName:       string
   productId:      string

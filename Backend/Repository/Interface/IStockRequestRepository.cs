@@ -95,4 +95,42 @@ public interface IStockRequestRepository
     /// one item with draft_dispatched_qty set. Header-shaped (no items JSON).
     Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default);
+
+    // ── Back-order (02-Jul-2026) ──────────────────────────────────
+    /// Carve `itemIds` off a parent Order into a linked Backorder sibling.
+    /// SP guards: parent must be Order + Pending/Approved, items must belong
+    /// to parent. Returns the new Backorder's id.
+    Task<Guid> MoveToBackorderAsync(
+        Guid id, IReadOnlyList<Guid> itemIds, DateTimeOffset? expectedArrivalAt,
+        Guid userId, CancellationToken ct = default);
+
+    /// Pipeline snapshot of Pending Backorders. inventoryId scopes to a
+    /// godown (Inventory role forced server-side by the service layer);
+    /// shopIds scopes to a shop set (used by shop banner). Never date-filtered
+    /// — the strip must show cross-month back-orders until they close.
+    Task<IReadOnlyList<OutstandingBackorderRow>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, IReadOnlyList<Guid>? shopIds,
+        CancellationToken ct = default);
+}
+
+/// Read-only row shape for fn_request_list_outstanding_backorders. Kept
+/// separate from the StockRequest entity because this SP projects a
+/// pipeline summary (parent link + days-waiting) — not a full request.
+public class OutstandingBackorderRow
+{
+    public Guid Id { get; set; }
+    public string Code { get; set; } = default!;
+    public Guid? Parent_Id { get; set; }
+    public string? Parent_Code { get; set; }
+    public Guid Shop_Id { get; set; }
+    public string Shop_Code { get; set; } = default!;
+    public string Shop_Name { get; set; } = default!;
+    public Guid Inventory_Id { get; set; }
+    public string Inventory_Name { get; set; } = default!;
+    public int Total_Items { get; set; }
+    public int Total_Qty { get; set; }
+    public decimal Total_Amount { get; set; }
+    public DateTimeOffset Submitted_At { get; set; }
+    public DateTimeOffset? Expected_Arrival_At { get; set; }
+    public int Days_Since_Submitted { get; set; }
 }

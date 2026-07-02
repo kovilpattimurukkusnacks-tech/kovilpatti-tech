@@ -282,6 +282,27 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         CancellationToken ct)
         => Ok(await requests.EditDispatchedQtyAsync(id, itemId, request, ct));
 
+    // ─── Back-order (02-Jul-2026) ─────────────────────────────
+    // Godown carves selected items off a parent Order into a linked
+    // Backorder sibling (item moves out of the parent, new REQxxxx-B row
+    // is created). Only Orders in Pending/Approved may be carved.
+    [HttpPost("{id:guid}/move-to-backorder")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> MoveToBackorder(
+        Guid id,
+        [FromBody] MoveToBackorderRequest request,
+        CancellationToken ct)
+        => Ok(await requests.MoveToBackorderAsync(id, request, ct));
+
+    // Pipeline snapshot of Pending Backorders. Never date-filtered. Role
+    // scoping (own shop / own inv / tenant-wide) is service-side.
+    [HttpGet("outstanding-backorders")]
+    [Authorize]
+    public async Task<ActionResult<IReadOnlyList<OutstandingBackorderDto>>> OutstandingBackorders(
+        [FromQuery] Guid? inventoryId,
+        CancellationToken ct)
+        => Ok(await requests.ListOutstandingBackordersAsync(inventoryId, ct));
+
     // ─── Inventory dispatch drafts list (Inventory + Admin) ──
     // Returns Pending/Approved requests that have at least one item with a
     // saved dispatch draft. Drives the "Resume dispatch draft" strip on

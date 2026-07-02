@@ -271,6 +271,9 @@ export default function ShopRequestNew() {
         purchasePrice: null,
         gst: null,
         active: true,
+        // Shop cart doesn't surface the flag anywhere; stub with false so
+        // the ProductDto shape stays satisfied.
+        isVendorProcured: false,
       }
       map.set(it.productId, { product: stub, qty: it.requestedQty })
     }

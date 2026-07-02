@@ -6,6 +6,7 @@ import type {
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
+  MoveToBackorderRequest, OutstandingBackorderDto,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -127,5 +128,19 @@ export const stockRequestsApi = {
     apiClient.patch<StockRequestDto>(
       `/api/stock-requests/${requestId}/items/${itemId}/dispatched-qty`,
       req,
+    ),
+
+  // ── Back-order (02-Jul-2026) ─────────────────────────────────
+  // Godown carves items off a parent Order into a Backorder sibling.
+  // Returns the refreshed PARENT DTO (its items list drops the moved
+  // lines; backorderChildren gains the new child).
+  moveToBackorder: (id: string, req: MoveToBackorderRequest) =>
+    apiClient.post<StockRequestDto>(`/api/stock-requests/${id}/move-to-backorder`, req),
+
+  // Pipeline snapshot of Pending Backorders. inventoryId only meaningful
+  // for admin — Inventory/ShopUser roles are scoped server-side.
+  outstandingBackorders: (inventoryId?: string) =>
+    apiClient.get<OutstandingBackorderDto[]>(
+      `/api/stock-requests/outstanding-backorders${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
     ),
 }

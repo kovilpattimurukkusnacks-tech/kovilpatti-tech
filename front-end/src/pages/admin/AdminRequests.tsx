@@ -6,6 +6,7 @@ import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
+import { BackorderChip } from '../../components/BackorderChip'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
@@ -45,6 +46,7 @@ const PRESETS: Preset[] = [
   { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
   { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
   { key: 'return',     label: 'Return',     requestType: 'Return' },
+  { key: 'backorder',  label: 'Back-order', requestType: 'Backorder' },
 ]
 
 export default function AdminRequests() {
@@ -154,6 +156,7 @@ export default function AdminRequests() {
               }}
             />
           )}
+          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
         </Box>
       ),
     },

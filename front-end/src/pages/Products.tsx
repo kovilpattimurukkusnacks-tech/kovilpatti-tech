@@ -41,6 +41,10 @@ type FormValues = {
    *  `gst_enabled` app-setting is true (19-Jun-2026, client #15).
    *  Empty string → send null to BE (preserves the existing strategy). */
   gst: string
+  /** True → SKU is procured from a vendor (not made in-house). Off by
+   *  default on Create; preserves prior value on Edit. Drives the amber
+   *  badge on the grid + the pre-check in Move-to-back-order. 02-Jul-2026. */
+  isVendorProcured: boolean
 }
 
 export default function Products() {
@@ -141,10 +145,10 @@ export default function Products() {
     }
 
     if (formMode.kind === 'edit') {
-      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active }
+      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active, isVendorProcured: values.isVendorProcured }
       await update.mutateAsync({ id: formMode.product.id, req })
     } else if (formMode.kind === 'create') {
-      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active }
+      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active, isVendorProcured: values.isVendorProcured }
       await create.mutateAsync(req)
     }
     closeForm()
@@ -166,7 +170,30 @@ export default function Products() {
 
   const columns = useMemo<GridColDef<ProductDto>[]>(() => [
     { field: 'code',         headerName: 'Code',         width: 100, sortable: false, filterable: false },
-    { field: 'name',         headerName: 'Product Name', flex: 1.5,  minWidth: 200, sortable: false, filterable: false },
+    {
+      field: 'name',
+      headerName: 'Product Name',
+      flex: 1.5,
+      minWidth: 200,
+      sortable: false,
+      filterable: false,
+      renderCell: ({ row, value }) => (
+        <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75 }}>
+          <span>{value as string}</span>
+          {row.isVendorProcured && (
+            <Chip
+              label="Vendor"
+              size="small"
+              sx={{
+                height: 18, fontSize: 10, fontWeight: 700,
+                bgcolor: '#FFE0B2', color: '#7C4A00',
+                border: '1px solid #E8A758',
+              }}
+            />
+          )}
+        </Box>
+      ),
+    },
     {
       field: 'categoryName', headerName: 'Category',     width: 240, sortable: false, filterable: false,
       renderCell: ({ value, row }) => {
@@ -420,6 +447,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
+  const [isVendorProcured, setIsVendorProcured] = useState(false)
   // GST percent — only rendered + collected when the global gst_enabled
   // app-setting is true (19-Jun-2026, client #15). Stored values are
   // preserved across toggles: when global GST is OFF the input isn't
@@ -459,6 +487,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
+    setIsVendorProcured(product?.isVendorProcured ?? false)
     // Prefill GST if the product already has one (even if global is now OFF —
     // value persists silently so admin can toggle back without re-entering).
     setGst(product?.gst != null ? String(product.gst) : '')
@@ -531,6 +560,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
         // doesn't render the input and we omit the field entirely → BE
         // preserves whatever was already stored on the product.
         gst: gstEnabled ? gst.trim() : '',
+        isVendorProcured,
       })
     } catch {
       // Surfaces via submitError prop
@@ -721,9 +751,24 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
 
           {/* Manual layout instead of FormControlLabel so only the checkbox itself toggles,
               not the label text or surrounding whitespace. */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
-            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+            </Box>
+            {/* Vendor-procured flag (02-Jul-2026). Godown pre-checks these
+                lines in the Move-to-back-order dialog. Independent of Active. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox
+                checked={isVendorProcured}
+                onChange={e => setIsVendorProcured(e.target.checked)}
+                disabled={submitting}
+                sx={{ p: 0.5 }}
+              />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>
+                Vendor procured
+              </Box>
+            </Box>
           </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}

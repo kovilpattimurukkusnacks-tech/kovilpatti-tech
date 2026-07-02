@@ -727,6 +727,70 @@ public class StockRequestService(
         return await GetAsync(requestId, ct);
     }
 
+    // ───────── Back-order (02-Jul-2026) ─────────
+
+    public async Task<StockRequestDto> MoveToBackorderAsync(
+        Guid id, MoveToBackorderRequest request, CancellationToken ct = default)
+    {
+        // Godown-only action. Admin allowed too (matches other dispatch-side ops).
+        if (IsRole(RoleNames.ShopUser))
+            throw new ForbiddenException("Shop users cannot move items to back-order.");
+
+        if (request.ItemIds is null || request.ItemIds.Count == 0)
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.ItemIds),
+                    "Select at least one item to move to back-order.")
+            });
+
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        EnsureInventoryScope(existing);
+
+        // The SP defensively re-guards these but we surface FE-friendly messages here.
+        if (!string.Equals(existing.Request_Type, "Order", StringComparison.OrdinalIgnoreCase))
+            throw new ValidationException(new[] {
+                new ValidationFailure("requestType",
+                    "Move to back-order is only valid for Orders.")
+            });
+        if (existing.Status != "Pending" && existing.Status != "Approved")
+            throw new ValidationException(new[] {
+                new ValidationFailure("status",
+                    $"Cannot move items to back-order — request is '{existing.Status}' (must be Pending or Approved).")
+            });
+
+        // Convert to UTC — Npgsql rejects non-UTC DateTimeOffset on timestamptz.
+        var eta = request.ExpectedArrivalAt?.ToUniversalTime();
+
+        await requests.MoveToBackorderAsync(id, request.ItemIds, eta, userId, ct);
+
+        // Return the refreshed PARENT — the FE detail page for the parent is
+        // where the godown pressed the button, so this is what should re-render.
+        // Child detail is fetched separately when the shop clicks the banner.
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<IReadOnlyList<OutstandingBackorderDto>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, CancellationToken ct = default)
+    {
+        // ShopUser  → forced to own shop; Inventory → forced to own godown; Admin free.
+        Guid? scopeInv = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
+        IReadOnlyList<Guid>? scopeShops = IsRole(RoleNames.ShopUser) && currentUser.ShopId is Guid sid
+            ? new[] { sid } : null;
+
+        var rows = await requests.ListOutstandingBackordersAsync(scopeInv, scopeShops, ct);
+        return rows.Select(r => new OutstandingBackorderDto(
+            r.Id, r.Code, r.Parent_Id, r.Parent_Code,
+            r.Shop_Id, r.Shop_Code, r.Shop_Name,
+            r.Inventory_Id, r.Inventory_Name,
+            r.Total_Items, r.Total_Qty, r.Total_Amount,
+            r.Submitted_At, r.Expected_Arrival_At,
+            r.Days_Since_Submitted)).ToList();
+    }
+
     // ───────── Helpers ─────────
 
     private bool IsRole(string role)
@@ -839,6 +903,8 @@ public class StockRequestService(
             r.Cancelled_At, r.Cancelled_By,
             r.Source_Request_Id, r.Source_Request_Code,
             r.Draft_Name, r.Pinned_At,
+            r.Parent_Request_Id, r.Parent_Request_Code, r.Expected_Arrival_At,
+            BackorderChildren: ParseBackorderChildren(r.Backorder_Children),
             Items: null);
 
     // Composes MapHeaderToDto with the deserialised items list. Single source
@@ -860,7 +926,24 @@ public class StockRequestService(
             i.weight_value, i.weight_unit,
             i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
             i.unit_price, i.subtotal,
-            i.added_by ?? "Shop")).ToList();
+            i.added_by ?? "Shop",
+            i.is_vendor_procured ?? false)).ToList();
+    }
+
+    /// Deserialise the backorder_children JSON aggregate from fn_request_get.
+    /// Null / empty / "[]" → null on the DTO so the FE can distinguish
+    /// "no children" from "children not fetched" on list rows.
+    private static List<BackorderChildDto>? ParseBackorderChildren(string? json)
+    {
+        if (string.IsNullOrWhiteSpace(json) || json.Trim() == "[]")
+            return null;
+
+        var raws = JsonSerializer.Deserialize<List<RawBackorderChild>>(json, JsonOpts);
+        if (raws is null || raws.Count == 0) return null;
+
+        return raws.Select(c => new BackorderChildDto(
+            c.id, c.code, c.status, c.total_items, c.total_qty, c.total_amount,
+            c.expected_arrival_at, c.submitted_at)).ToList();
     }
 
     // Matches the JSON keys returned by fn_request_get's jsonb_build_object.
@@ -870,5 +953,12 @@ public class StockRequestService(
         decimal? weight_value, string? weight_unit,
         int requested_qty, int? dispatched_qty, int? draft_dispatched_qty,
         decimal unit_price, decimal subtotal,
-        string? added_by);
+        string? added_by,
+        bool?   is_vendor_procured);
+
+    private sealed record RawBackorderChild(
+        Guid id, string code, string status,
+        int total_items, int total_qty, decimal total_amount,
+        DateTimeOffset? expected_arrival_at,
+        DateTimeOffset  submitted_at);
 }

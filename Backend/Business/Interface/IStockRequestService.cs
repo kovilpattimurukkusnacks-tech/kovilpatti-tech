@@ -108,4 +108,19 @@ public interface IStockRequestService
     /// shop user blocked.
     Task<IReadOnlyList<StockRequestDto>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default);
+
+    // ── Back-order (02-Jul-2026) ──
+    /// Godown carves selected items off a parent Order into a linked
+    /// Backorder sibling. Returns the parent Order's refreshed DTO —
+    /// the child's DTO is embedded in ParentBackorderChildren[]. Callers
+    /// that need the new child directly should GET /{newBackorderId}.
+    Task<StockRequestDto> MoveToBackorderAsync(
+        Guid id, MoveToBackorderRequest request, CancellationToken ct = default);
+
+    /// Pipeline-scoped list of Pending Backorders. Never date-filtered so
+    /// the strip stays visible across month boundaries. Role-scoped:
+    /// ShopUser → forced to own shop; Inventory → forced to own godown;
+    /// Admin → tenant-wide (or optional inventoryId filter).
+    Task<IReadOnlyList<OutstandingBackorderDto>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, CancellationToken ct = default);
 }
