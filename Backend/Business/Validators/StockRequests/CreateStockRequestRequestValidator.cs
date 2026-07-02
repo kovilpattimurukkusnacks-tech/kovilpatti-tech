@@ -56,7 +56,13 @@ public class DispatchRequestValidator : AbstractValidator<DispatchRequest>
         RuleForEach(x => x.Items).ChildRules(item =>
         {
             item.RuleFor(i => i.Id).NotEqual(Guid.Empty);
-            item.RuleFor(i => i.DispatchedQty).GreaterThanOrEqualTo(0);
+            // Nullable — the save-dispatch-draft endpoint accepts null to
+            // clear a persisted draft. The final /dispatch endpoint's
+            // service method rejects null explicitly (see DispatchAsync)
+            // so the terminal state can never be reached with an unset qty.
+            item.RuleFor(i => i.DispatchedQty)
+                .GreaterThanOrEqualTo(0)
+                .When(i => i.DispatchedQty.HasValue);
         });
     }
 }

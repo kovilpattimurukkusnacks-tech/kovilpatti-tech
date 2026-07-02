@@ -195,6 +195,13 @@ export default function InventoryRequests() {
   // strips below the page title so the user can jump back into any WIP
   // dispatch session in one click.
   const dispatchDrafts = useInventoryDispatchDrafts()
+  // Fast-lookup set of request IDs that have a saved dispatch draft.
+  // Drives the "Draft" chip on the list rows so the godown can spot
+  // which incoming requests they've already WIP'd on. 02-Jul-2026.
+  const draftIdSet = useMemo(
+    () => new Set(dispatchDrafts.data?.map(d => d.id) ?? []),
+    [dispatchDrafts.data],
+  )
   // Apply the draft-list filter. Matches against (case-insensitive) draft
   // name, REQ code, and shop name — that way un-named drafts can still be
   // searched by code/shop without forcing the user to name them first.
@@ -237,6 +244,22 @@ export default function InventoryRequests() {
             />
           )}
           {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+          {draftIdSet.has(row.id) && (
+            <Chip
+              label="Draft"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C28A00',
+                color: '#7C4A00',
+                bgcolor: '#FFF8E1',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+          )}
         </Box>
       ),
     }
@@ -337,7 +360,7 @@ export default function InventoryRequests() {
     },
   )
   return cols
-  }, [activePreset])
+  }, [activePreset, draftIdSet])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load requests.')
@@ -973,13 +996,36 @@ function DraftRow({ draft, renameInFlight, pinInFlight, onResume, onRename, onTo
             sx={{ width: '100%', maxWidth: 480, bgcolor: '#FFFBE6', '& .MuiInputBase-input': { fontWeight: 700, fontSize: 14 } }}
           />
         ) : (
-          <Box
-            sx={{ display: 'flex', alignItems: 'center', gap: 0.75, cursor: 'pointer' }}
-            onClick={() => setEditing(true)}
-            title="Click to rename"
-          >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
             <Box sx={{ fontWeight: 700, fontSize: 14 }}>{titleText}</Box>
-            <IconButton size="small" sx={{ p: 0.25 }} aria-label="Rename draft">
+            {/* Draft badge — matches the list-row + detail-page chip so
+                the "this row is a saved dispatch draft" signal is
+                consistent everywhere it shows up. */}
+            <Chip
+              label="Draft"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C28A00',
+                color: '#7C4A00',
+                bgcolor: '#FFF8E1',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+            {/* Rename gate — ONLY the pencil enters edit mode. Clicking
+                the title / badge no longer triggers it (dispatch-drafts
+                title accidentally rename-flipped when the user just
+                wanted to scan the row). */}
+            <IconButton
+              size="small"
+              sx={{ p: 0.25 }}
+              aria-label="Rename draft"
+              title="Rename draft"
+              onClick={() => setEditing(true)}
+            >
               <Pencil className="w-3.5 h-3.5 text-[#1F1F1F]/60" />
             </IconButton>
           </Box>

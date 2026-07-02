@@ -340,6 +340,23 @@ export default function AdminRequestDetail() {
             }}
           />
         )}
+        {/* Dispatch draft indicator — same treatment as the list-row +
+            inventory-detail chip so admin can spot WIP dispatches at a
+            glance while reviewing the request. */}
+        {(request.items ?? []).some(it => it.draftDispatchedQty != null) && (
+          <Chip
+            label="Draft"
+            size="small"
+            variant="outlined"
+            sx={{
+              borderColor: '#C28A00',
+              color: '#7C4A00',
+              bgcolor: '#FFF8E1',
+              fontWeight: 700,
+              letterSpacing: 0.5,
+            }}
+          />
+        )}
       </Box>
 
       {/* Rejected banner — surfaces the rejection reason (when present) and
@@ -632,6 +649,7 @@ export default function AdminRequestDetail() {
                   const v = e.target.value
                   if (v === '' || /^\d+$/.test(v)) setEditingQtyText(v)
                 }}
+                onFocus={e => (e.target as HTMLInputElement).select()}
                 placeholder="Leave blank to clear"
                 inputMode="numeric"
                 fullWidth

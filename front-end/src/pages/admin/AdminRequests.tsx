@@ -5,7 +5,7 @@ import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useAllStockRequests, useCumulativePending, useRequestCountByShop } from '../../hooks/useStockRequests'
+import { useAllStockRequests, useCumulativePending, useRequestCountByShop, useInventoryDispatchDrafts } from '../../hooks/useStockRequests'
 import { BackorderChip } from '../../components/BackorderChip'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -131,6 +131,14 @@ export default function AdminRequests() {
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
 
+  // Tenant-wide dispatch-drafts snapshot → "Draft" chip on list rows.
+  // 02-Jul-2026. Admin sees the badge across every inventory's queue.
+  const dispatchDrafts = useInventoryDispatchDrafts()
+  const draftIdSet = useMemo(
+    () => new Set(dispatchDrafts.data?.map(d => d.id) ?? []),
+    [dispatchDrafts.data],
+  )
+
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
@@ -157,6 +165,22 @@ export default function AdminRequests() {
             />
           )}
           {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+          {draftIdSet.has(row.id) && (
+            <Chip
+              label="Draft"
+              size="small"
+              variant="outlined"
+              sx={{
+                borderColor: '#C28A00',
+                color: '#7C4A00',
+                bgcolor: '#FFF8E1',
+                fontWeight: 700,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.5,
+              }}
+            />
+          )}
         </Box>
       ),
     },
@@ -257,7 +281,7 @@ export default function AdminRequests() {
     },
   )
   return cols
-  }, [activePreset])
+  }, [activePreset, draftIdSet])
 
   // Active-filter pills shown when the panel is collapsed. Each ✕ clears that
   // one filter (date → all dates; status → All; shop → none; search → empty).
