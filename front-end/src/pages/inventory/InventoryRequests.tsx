@@ -2,7 +2,7 @@ import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff, Hourglass } from 'lucide-react'
 import { BackorderChip } from '../../components/BackorderChip'
-import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, Paper, TextField, Tooltip } from '@mui/material'
+import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
@@ -131,11 +131,12 @@ export default function InventoryRequests() {
       : undefined
 
   const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
-  // Selection dialog state (02-Jul-2026). User picks which Approved
-  // requests to fold into the cumulative print. All start pre-checked
-  // ("Print all" = one click); unchecking narrows the aggregation.
+  // Selection dialog state (02-Jul-2026). Shop dropdown narrows the visible
+  // request list; user then picks specific requests within that filter.
+  // `printShopFilter = ''` → all shops.
   const [printSelectionOpen, setPrintSelectionOpen] = useState(false)
   const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set())
+  const [printShopFilter, setPrintShopFilter] = useState<string>('')
   // Fetch the Approved request list ONLY when the selection dialog is open —
   // keeps the list page's query pool lean. pageSize 200 covers realistic
   // inventory queues without paging.
@@ -143,6 +144,26 @@ export default function InventoryRequests() {
     { status: 'Approved', pageSize: 200 },
   )
   const approvedRows = approvedForSelection.data?.items ?? []
+
+  // Distinct shops present in the approved queue — populates the filter
+  // dropdown at the top of the selection dialog. `sort` gives a stable
+  // alphabetical order regardless of the request-fetch ordering.
+  const shopsInApproved = useMemo(() => {
+    const map = new Map<string, string>()  // shopId → shopName
+    for (const r of approvedRows) map.set(r.shopId, r.shopName)
+    return Array.from(map.entries())
+      .map(([shopId, shopName]) => ({ shopId, shopName }))
+      .sort((a, b) => a.shopName.localeCompare(b.shopName))
+  }, [approvedRows])
+
+  // Rows visible under the currently-selected shop filter. Empty filter →
+  // every approved row.
+  const visibleApprovedRows = useMemo(
+    () => printShopFilter
+      ? approvedRows.filter(r => r.shopId === printShopFilter)
+      : approvedRows,
+    [approvedRows, printShopFilter],
+  )
   const openPrintCumulative = (ids?: string[]) => {
     const qs = new URLSearchParams()
     if (ids && ids.length) qs.set('requestIds', ids.join(','))
@@ -150,10 +171,10 @@ export default function InventoryRequests() {
     window.open(`/print/cumulative${suffix}`, '_blank', 'noopener,noreferrer')
   }
   const openPrintSelection = () => {
-    // Pre-check every Approved request so the "Print all" flow stays a
-    // single confirm-click. Uses the current cache; if it's still loading,
-    // the effect below will re-seed once it lands.
+    // Pre-check every request so the "Print all" flow stays a single click.
+    // Reset the shop dropdown to "All".
     setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    setPrintShopFilter('')
     setPrintSelectionOpen(true)
   }
   const onPrintCumulativeClick = () => {
@@ -682,7 +703,12 @@ export default function InventoryRequests() {
           those IDs. Default: everything checked → one-click "Print all". */}
       <Dialog
         open={printSelectionOpen}
-        onClose={() => setPrintSelectionOpen(false)}
+        onClose={(_e, reason) => {
+          // Never close on backdrop or Escape — global rule; only the
+          // explicit Cancel / X buttons should dismiss.
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          setPrintSelectionOpen(false)
+        }}
         maxWidth="sm"
         fullWidth
         slotProps={{ paper: { sx: { borderRadius: 3 } } }}
@@ -702,29 +728,63 @@ export default function InventoryRequests() {
             </Box>
           ) : (
             <>
-              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1, fontSize: 12 }}>
-                <Box sx={{ color: '#1F1F1F99' }}>
-                  {selectedRequestIds.size} of {approvedRows.length} selected
-                </Box>
-                <Box sx={{ display: 'flex', gap: 1 }}>
-                  <Button
-                    size="small"
-                    onClick={() => setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))}
-                    sx={{ textTransform: 'none', fontSize: 12, minHeight: 0, py: 0.25 }}
-                  >
-                    Select all
-                  </Button>
-                  <Button
-                    size="small"
-                    onClick={() => setSelectedRequestIds(new Set())}
-                    sx={{ textTransform: 'none', fontSize: 12, minHeight: 0, py: 0.25 }}
-                  >
-                    Clear
-                  </Button>
-                </Box>
+              {/* Shop filter dropdown — narrows the visible request list.
+                  Doesn't touch selection: unchecked requests in a hidden
+                  shop stay unchecked; checked ones stay checked. Plain
+                  MUI Select — themed rounded menu, no search input. */}
+              <TextField
+                select
+                size="small"
+                fullWidth
+                label="Shop"
+                value={printShopFilter}
+                onChange={e => setPrintShopFilter(e.target.value)}
+                sx={{ mb: 1.5 }}
+                slotProps={{
+                  // Force the label to shrink so it doesn't sit on top of
+                  // the "All shops (N)" text when the empty-string value
+                  // is selected (default state).
+                  inputLabel: { shrink: true },
+                  select: {
+                    // displayEmpty tells Select to render the MenuItem with
+                    // value="" as the visible selection — otherwise MUI hides
+                    // it and shows a blank input on the default state.
+                    displayEmpty: true,
+                    // Round the menu surface + soft shadow so it matches the
+                    // dialog's rounded look. Native <select> would render
+                    // OS-square corners, so we deliberately DON'T use it.
+                    MenuProps: {
+                      slotProps: {
+                        paper: {
+                          sx: {
+                            borderRadius: 2,
+                            boxShadow: '0 6px 18px rgba(31,31,31,0.18)',
+                            border: '1px solid rgba(31,31,31,0.12)',
+                          },
+                        },
+                      },
+                    },
+                  },
+                }}
+              >
+                <MenuItem value="">All shops ({approvedRows.length})</MenuItem>
+                {shopsInApproved.map(s => {
+                  const count = approvedRows.filter(r => r.shopId === s.shopId).length
+                  return (
+                    <MenuItem key={s.shopId} value={s.shopId}>
+                      {s.shopName} ({count})
+                    </MenuItem>
+                  )
+                })}
+              </TextField>
+
+              <Box sx={{ mb: 1, fontSize: 12, color: '#1F1F1F99' }}>
+                {selectedRequestIds.size} of {approvedRows.length} selected
+                {printShopFilter && ` · showing ${visibleApprovedRows.length} in filter`}
               </Box>
+
               <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
-                {approvedRows.map(r => {
+                {visibleApprovedRows.map(r => {
                   const checked = selectedRequestIds.has(r.id)
                   return (
                     <Box
@@ -750,12 +810,15 @@ export default function InventoryRequests() {
                         component="input"
                         type="checkbox"
                         checked={checked}
-                        onChange={() => {}}   // click handled on the row for larger hit target
+                        onChange={() => {}}
                         sx={{ pointerEvents: 'none' }}
                       />
                       <Box sx={{ flex: 1, minWidth: 0 }}>
                         <Box sx={{ fontSize: 13, fontWeight: 700 }}>
-                          {r.code} <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}>· {r.shopName}</Box>
+                          {r.code}
+                          {!printShopFilter && (
+                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}> · {r.shopName}</Box>
+                          )}
                         </Box>
                         <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
                           {r.totalItems} items · {r.totalQty} units · {formatIstDateTime(r.submittedAt)}
@@ -764,6 +827,11 @@ export default function InventoryRequests() {
                     </Box>
                   )
                 })}
+                {visibleApprovedRows.length === 0 && (
+                  <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+                    No approved requests for this shop.
+                  </Box>
+                )}
               </Box>
             </>
           )}

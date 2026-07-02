@@ -342,17 +342,17 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     // ── Back-order (02-Jul-2026) ──────────────────────────────────
 
     public async Task<Guid> MoveToBackorderAsync(
-        Guid id, IReadOnlyList<Guid> itemIds, DateTimeOffset? expectedArrivalAt,
+        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
         Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql = @"
             SELECT fn_request_move_to_backorder(
-                @p_id, @p_item_ids, @p_user_id, @p_eta)";
+                @p_id, @p_items::jsonb, @p_user_id, @p_eta)";
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
             p_id       = id,
-            p_item_ids = itemIds.ToArray(),
+            p_items    = itemsJson,
             p_user_id  = userId,
             p_eta      = expectedArrivalAt,
         }, cancellationToken: ct));

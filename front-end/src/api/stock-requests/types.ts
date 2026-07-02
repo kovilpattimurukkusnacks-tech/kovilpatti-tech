@@ -188,10 +188,12 @@ export type AcceptReturnItem = { id: string; acceptedQty: number }
 export type AcceptReturnRequest = { items: AcceptReturnItem[] }
 
 // Godown carves items off a parent Order into a linked Backorder sibling.
-// itemIds must all belong to the parent request. expectedArrivalAt is an
-// optional ETA (ISO); null / omitted = "no ETA yet".
+// Each item's id must belong to the parent; qty is positive and ≤ the
+// parent line's requestedQty. When qty < requestedQty the SP splits the
+// row (parent keeps the remainder, new row on the child for qty).
+// expectedArrivalAt is optional ETA (ISO); null / omitted = "no ETA yet".
 export type MoveToBackorderRequest = {
-  itemIds: string[]
+  items: { id: string; qty: number }[]
   expectedArrivalAt?: string | null
 }
 

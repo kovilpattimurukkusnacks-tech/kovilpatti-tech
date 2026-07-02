@@ -1777,11 +1777,24 @@ COMMIT;
 --
 -- Failures raise via RAISE EXCEPTION; caller catches at the service
 -- layer to surface as a 400.
+-- p_items JSON: [{ id: uuid, qty: int }, ...]
+--   • qty > 0 AND qty <  parent line's requested_qty → SPLIT the line
+--       (parent keeps requested_qty - qty; new row created on the child
+--        with the specified qty + same unit_price snapshot).
+--   • qty >= parent line's requested_qty            → FULL MOVE
+--       (existing behaviour — row is reparented to the child).
+--   • qty == 0 or missing                            → REJECTED
+--       (RAISE EXCEPTION — the FE won't send these, but defence in depth).
+--
+-- Signature changed 02-Jul-2026 from `uuid[]` → `jsonb`; the drop below is
+-- required (CREATE OR REPLACE can't change the arg list).
+DROP FUNCTION IF EXISTS fn_request_move_to_backorder(uuid, uuid[], uuid, timestamptz);
+
 CREATE OR REPLACE FUNCTION fn_request_move_to_backorder(
-  p_id       uuid,     -- parent request id
-  p_item_ids uuid[],   -- items to carve off (must belong to parent)
+  p_id       uuid,        -- parent request id
+  p_items    jsonb,       -- [{id, qty}, …]  — items + per-line move qty
   p_user_id  uuid,
-  p_eta      timestamptz DEFAULT NULL  -- optional; surfaces on prints + banner
+  p_eta      timestamptz DEFAULT NULL   -- optional; surfaces on prints + banner
 )
 RETURNS uuid
 LANGUAGE plpgsql AS $$
@@ -1790,7 +1803,9 @@ DECLARE
   v_existing_count  int;
   v_new_code        varchar(20);
   v_new_id          uuid;
-  v_moved_count     int;
+  v_moved_any       boolean := false;
+  v_row             record;
+  v_item            record;
 BEGIN
   -- Guard 1: parent exists, is an Order, still editable.
   SELECT * INTO v_parent
@@ -1810,30 +1825,30 @@ BEGIN
     RAISE EXCEPTION 'Cannot move items to back-order — parent status is % (must be Pending or Approved)', v_parent.status;
   END IF;
 
-  -- Guard 2: at least one item id, and all must belong to the parent.
-  IF p_item_ids IS NULL OR cardinality(p_item_ids) = 0 THEN
+  -- Guard 2: at least one item spec.
+  IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'No items provided';
   END IF;
 
+  -- Guard 3: every provided id must belong to the parent.
   IF EXISTS (
-    SELECT 1 FROM unnest(p_item_ids) t(id)
-    WHERE t.id NOT IN (SELECT id FROM stock_request_items WHERE request_id = p_id)
+    SELECT 1
+    FROM   jsonb_array_elements(p_items) e
+    WHERE  (e->>'id')::uuid NOT IN (
+      SELECT id FROM stock_request_items WHERE request_id = p_id
+    )
   ) THEN
     RAISE EXCEPTION 'One or more item ids do not belong to parent request %', p_id;
   END IF;
 
-  -- Determine new back-order code. Parent may already have one or more
-  -- Backorder children — count them and append -B, -B2, -B3, ...
+  -- Determine new back-order code (existing convention).
   SELECT COUNT(*)::int INTO v_existing_count
   FROM   stock_requests
   WHERE  parent_request_id = p_id;
 
   v_new_code := v_parent.code || '-B' || CASE WHEN v_existing_count = 0 THEN '' ELSE (v_existing_count + 1)::text END;
 
-  -- Insert the new Backorder row. inventory_id + shop_id carried from
-  -- parent so ownership is stable. status = Pending; the godown will
-  -- dispatch once the vendor delivers. editable_until is far-future so
-  -- back-orders never lock (they're not shop-editable anyway).
+  -- Insert the new Backorder header first so we have an id for the row inserts.
   INSERT INTO stock_requests (
     code, shop_id, inventory_id, status, request_type,
     editable_until, notes,
@@ -1844,22 +1859,64 @@ BEGIN
     v_parent.shop_id, v_parent.inventory_id,
     'Pending', 'Backorder',
     now() + interval '100 years',
-    v_parent.notes,                    -- carry the shop's notes forward
+    v_parent.notes,
     p_id, p_eta,
     p_user_id, p_user_id
   ) RETURNING id INTO v_new_id;
 
-  -- Move items. Only rows in p_item_ids AND still under the parent get
-  -- re-parented (extra guard in case of concurrent edits).
-  UPDATE stock_request_items
-  SET    request_id = v_new_id
-  WHERE  id = ANY(p_item_ids)
-    AND  request_id = p_id;
+  -- Walk each requested item + qty, deciding full-move vs split-move.
+  FOR v_item IN
+    SELECT (e->>'id')::uuid    AS item_id,
+           (e->>'qty')::int    AS move_qty
+    FROM   jsonb_array_elements(p_items) e
+  LOOP
+    IF v_item.move_qty IS NULL OR v_item.move_qty <= 0 THEN
+      RAISE EXCEPTION 'Move qty must be positive (item %, got %)', v_item.item_id, v_item.move_qty;
+    END IF;
 
-  GET DIAGNOSTICS v_moved_count = ROW_COUNT;
-  IF v_moved_count = 0 THEN
-    -- Nothing actually moved — race lost, or all items were already
-    -- moved by a prior concurrent call. Roll back the empty back-order.
+    -- Lock the parent line so a concurrent update can't race.
+    SELECT * INTO v_row
+    FROM   stock_request_items
+    WHERE  id = v_item.item_id AND request_id = p_id
+    FOR UPDATE;
+
+    IF NOT FOUND THEN
+      -- Race lost / item already reparented — skip silently rather than
+      -- fail the whole batch. The outer v_moved_any check catches the
+      -- degenerate "nothing moved" case.
+      CONTINUE;
+    END IF;
+
+    IF v_item.move_qty >= v_row.requested_qty THEN
+      -- Full move — reparent the row. Dispatched_qty / draft carry over
+      -- as-is (godown may have already tried and failed on this line).
+      UPDATE stock_request_items
+      SET    request_id = v_new_id
+      WHERE  id = v_row.id;
+    ELSE
+      -- Split move — parent keeps (requested_qty - move_qty); child gets
+      -- a fresh row for move_qty. subtotal is a GENERATED column
+      -- (requested_qty × unit_price) so we don't set it — it recomputes
+      -- automatically on both writes.
+      UPDATE stock_request_items
+      SET    requested_qty = v_row.requested_qty - v_item.move_qty
+      WHERE  id = v_row.id;
+
+      INSERT INTO stock_request_items (
+        request_id, product_id, requested_qty, unit_price,
+        weight_value, weight_unit, added_by
+      ) VALUES (
+        v_new_id, v_row.product_id, v_item.move_qty, v_row.unit_price,
+        v_row.weight_value, v_row.weight_unit, v_row.added_by
+      );
+    END IF;
+
+    v_moved_any := true;
+  END LOOP;
+
+  IF NOT v_moved_any THEN
+    -- Every requested row was already reparented by a concurrent call —
+    -- roll back the empty back-order so we don't litter with 0-item rows.
     DELETE FROM stock_requests WHERE id = v_new_id;
     RAISE EXCEPTION 'No items moved (possibly a concurrent update reassigned them)';
   END IF;

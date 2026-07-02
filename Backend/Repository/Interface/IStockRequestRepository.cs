@@ -99,11 +99,13 @@ public interface IStockRequestRepository
         Guid? inventoryId, CancellationToken ct = default);
 
     // ── Back-order (02-Jul-2026) ──────────────────────────────────
-    /// Carve `itemIds` off a parent Order into a linked Backorder sibling.
-    /// SP guards: parent must be Order + Pending/Approved, items must belong
-    /// to parent. Returns the new Backorder's id.
+    /// Carve items off a parent Order into a linked Backorder sibling.
+    /// `itemsJson` is [{id, qty}, ...]. When qty < parent line's requested_qty
+    /// the SP splits the row (partial move); when qty >= requested_qty the
+    /// whole row is reparented. SP guards: parent must be Order + Pending/
+    /// Approved, every id must belong to parent. Returns the new Backorder's id.
     Task<Guid> MoveToBackorderAsync(
-        Guid id, IReadOnlyList<Guid> itemIds, DateTimeOffset? expectedArrivalAt,
+        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
         Guid userId, CancellationToken ct = default);
 
     /// Pipeline snapshot of Pending Backorders. inventoryId scopes to a

@@ -76,8 +76,11 @@ export default function InventoryRequestDetail() {
   const [addPickerQty, setAddPickerQty] = useState<string>('')
   // Move-to-back-order dialog (02-Jul-2026). Godown selects items to carve
   // off into a Backorder sibling; vendor-procured lines pre-check by default.
+  // backorderQtys stores per-item split qty: itemId → qty. Absence = unchecked;
+  // presence = checked with that qty (default = full requested_qty, user can
+  // dial down to split the line).
   const [backorderOpen, setBackorderOpen] = useState(false)
-  const [backorderSelected, setBackorderSelected] = useState<Set<string>>(new Set())
+  const [backorderQtys, setBackorderQtys] = useState<Map<string, number>>(new Map())
   const [backorderEta, setBackorderEta] = useState<string>('')  // YYYY-MM-DD, blank = "no ETA yet"
   // Product catalog for the picker — fetched once when the dialog opens.
   // Kept simple: no search debounce; the Autocomplete does client-side
@@ -725,12 +728,13 @@ export default function InventoryRequestDetail() {
             size="small"
             startIcon={<Hourglass className="w-4 h-4" />}
             onClick={() => {
-              // Pre-check every vendor-procured item so the godown only has
-              // to un-check ones they DO have in stock. Blank ETA on open.
-              const preChecked = new Set(
-                items.filter(it => it.isVendorProcured).map(it => it.id),
-              )
-              setBackorderSelected(preChecked)
+              // Pre-check every vendor-procured item with its full requested
+              // qty; godown can un-check or dial the qty down for splits.
+              const seed = new Map<string, number>()
+              for (const it of items) {
+                if (it.isVendorProcured) seed.set(it.id, it.requestedQty)
+              }
+              setBackorderQtys(seed)
               setBackorderEta('')
               setBackorderOpen(true)
             }}
@@ -1329,7 +1333,9 @@ export default function InventoryRequestDetail() {
       <Dialog
         open={backorderOpen}
         onClose={(_e, reason) => {
-          if (reason === 'backdropClick' || moveToBackorderMutation.isPending) return
+          // No backdrop / Escape close (global rule) — only Cancel / X.
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          if (moveToBackorderMutation.isPending) return
           setBackorderOpen(false)
         }}
         maxWidth="sm"
@@ -1348,55 +1354,102 @@ export default function InventoryRequestDetail() {
             you'll fulfil later once the vendor ships them. Shop will see both requests linked.
           </Box>
           <Box sx={{ maxHeight: 320, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1, mb: 2 }}>
-            {items.map(it => (
-              <Box
-                key={it.id}
-                sx={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: 1,
-                  px: 1.5,
-                  py: 0.75,
-                  borderBottom: '1px solid rgba(31,31,31,0.08)',
-                  bgcolor: it.isVendorProcured ? '#FFF8E1' : 'transparent',
-                  '&:last-child': { borderBottom: 'none' },
-                }}
-              >
-                <Checkbox
-                  size="small"
-                  checked={backorderSelected.has(it.id)}
-                  onChange={(_e, checked) => {
-                    setBackorderSelected(prev => {
-                      const n = new Set(prev)
-                      if (checked) n.add(it.id); else n.delete(it.id)
-                      return n
-                    })
+            {items.map(it => {
+              const checked = backorderQtys.has(it.id)
+              const qty     = backorderQtys.get(it.id) ?? it.requestedQty
+              return (
+                <Box
+                  key={it.id}
+                  sx={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 1,
+                    px: 1.5,
+                    py: 0.75,
+                    borderBottom: '1px solid rgba(31,31,31,0.08)',
+                    bgcolor: it.isVendorProcured ? '#FFF8E1' : 'transparent',
+                    '&:last-child': { borderBottom: 'none' },
                   }}
-                  disabled={moveToBackorderMutation.isPending}
-                  sx={{ p: 0.5 }}
-                />
-                <Box sx={{ flex: 1, minWidth: 0 }}>
-                  <Box sx={{ fontSize: 13, fontWeight: 600, color: '#1F1F1F', display: 'flex', alignItems: 'center', gap: 0.75 }}>
-                    {it.productName}
-                    {it.isVendorProcured && (
-                      <Chip
-                        label="Vendor"
-                        size="small"
-                        sx={{
-                          height: 18, fontSize: 10, fontWeight: 700,
-                          bgcolor: '#FFE0B2', color: '#7C4A00',
-                          border: '1px solid #E8A758',
-                        }}
-                      />
-                    )}
+                >
+                  <Checkbox
+                    size="small"
+                    checked={checked}
+                    onChange={(_e, isChecked) => {
+                      setBackorderQtys(prev => {
+                        const n = new Map(prev)
+                        if (isChecked) n.set(it.id, it.requestedQty)
+                        else            n.delete(it.id)
+                        return n
+                      })
+                    }}
+                    disabled={moveToBackorderMutation.isPending}
+                    sx={{ p: 0.5 }}
+                  />
+                  <Box sx={{ flex: 1, minWidth: 0 }}>
+                    <Box sx={{ fontSize: 13, fontWeight: 600, color: '#1F1F1F', display: 'flex', alignItems: 'center', gap: 0.75 }}>
+                      {it.productName}
+                      {it.isVendorProcured && (
+                        <Chip
+                          label="Vendor"
+                          size="small"
+                          sx={{
+                            height: 18, fontSize: 10, fontWeight: 700,
+                            bgcolor: '#FFE0B2', color: '#7C4A00',
+                            border: '1px solid #E8A758',
+                          }}
+                        />
+                      )}
+                    </Box>
+                    <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                      {it.productCode} · requested {it.requestedQty}
+                      {it.weightValue != null ? ` · ${it.weightValue} ${it.weightUnit ?? ''}` : ''}
+                    </Box>
                   </Box>
-                  <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                    {it.productCode} · qty {it.requestedQty}
-                    {it.weightValue != null ? ` · ${it.weightValue} ${it.weightUnit ?? ''}` : ''}
-                  </Box>
+                  {/* Per-line qty input — only editable when the row is
+                      checked. Bounded 1..requestedQty (can't move more than
+                      the shop asked for). qty < requested_qty splits the
+                      line on the SP side. */}
+                  <TextField
+                    type="number"
+                    size="small"
+                    value={checked ? qty : ''}
+                    placeholder={String(it.requestedQty)}
+                    disabled={!checked || moveToBackorderMutation.isPending}
+                    onChange={e => {
+                      const raw = e.target.value
+                      if (raw === '') { setBackorderQtys(prev => {
+                        const n = new Map(prev); n.set(it.id, 0); return n
+                      }); return }
+                      const parsed = parseInt(raw, 10)
+                      if (Number.isNaN(parsed)) return
+                      const clamped = Math.max(0, Math.min(parsed, it.requestedQty))
+                      setBackorderQtys(prev => {
+                        const n = new Map(prev)
+                        n.set(it.id, clamped)
+                        return n
+                      })
+                    }}
+                    onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                    onWheel={e => (e.target as HTMLInputElement).blur()}
+                    slotProps={{
+                      htmlInput: {
+                        min: 1, max: it.requestedQty, inputMode: 'numeric',
+                        style: { textAlign: 'center', padding: '4px 8px', width: 56 },
+                      },
+                    }}
+                    // Red border when 0 (invalid — user has to type OR uncheck).
+                    sx={{
+                      width: 76,
+                      '& .MuiOutlinedInput-root': {
+                        bgcolor: !checked ? 'transparent'
+                          : qty === 0 ? '#FFEBEE'
+                          : qty < it.requestedQty ? '#FFE0B2' : '#FFF8DC',
+                      },
+                    }}
+                  />
                 </Box>
-              </Box>
-            ))}
+              )
+            })}
           </Box>
           <TextField
             label="Expected arrival (ETA)"
@@ -1424,47 +1477,61 @@ export default function InventoryRequestDetail() {
           >
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            disabled={
-              moveToBackorderMutation.isPending
-              || backorderSelected.size === 0
-              || backorderSelected.size === items.length
-            }
-            title={
-              backorderSelected.size === 0
-                ? 'Select at least one item'
-                : backorderSelected.size === items.length
-                  ? 'You cannot move every item — the parent request would be empty'
+          {(() => {
+            const checkedIds  = Array.from(backorderQtys.keys())
+            const hasInvalid  = checkedIds.some(id => (backorderQtys.get(id) ?? 0) <= 0)
+            // Full-row moves: qty >= requested. If EVERY checked line is a
+            // full-row move AND we're moving every line, the parent would
+            // end up empty — block that.
+            const wouldEmptyParent =
+              checkedIds.length === items.length &&
+              checkedIds.every(id => {
+                const it = items.find(x => x.id === id)!
+                return (backorderQtys.get(id) ?? 0) >= it.requestedQty
+              })
+            const disabled = moveToBackorderMutation.isPending
+              || checkedIds.length === 0
+              || hasInvalid
+              || wouldEmptyParent
+            const title = checkedIds.length === 0
+              ? 'Select at least one item'
+              : hasInvalid
+                ? 'Every checked item needs a qty ≥ 1'
+                : wouldEmptyParent
+                  ? 'You cannot move every line at full qty — the parent request would be empty'
                   : undefined
-            }
-            onClick={async () => {
-              // Convert YYYY-MM-DD → ISO at IST midnight so PG stores a
-              // sensible timestamptz (blank = null = "no ETA yet").
-              let iso: string | null = null
-              if (backorderEta) {
-                // Parse as IST — midnight IST is 18:30 UTC of the previous day.
-                iso = new Date(`${backorderEta}T00:00:00+05:30`).toISOString()
-              }
-              try {
-                await moveToBackorderMutation.mutateAsync({
-                  id: request.id,
-                  req: {
-                    itemIds: Array.from(backorderSelected),
-                    expectedArrivalAt: iso,
-                  },
-                })
-                setBackorderOpen(false)
-              } catch {
-                // Alert surfaces above
-              }
-            }}
-            sx={{ textTransform: 'none', fontWeight: 700 }}
-          >
-            {moveToBackorderMutation.isPending
-              ? 'Moving…'
-              : `Move ${backorderSelected.size} to back-order`}
-          </Button>
+            return (
+              <Button
+                variant="contained"
+                disabled={disabled}
+                title={title}
+                onClick={async () => {
+                  // YYYY-MM-DD → IST midnight ISO. Blank = null.
+                  let iso: string | null = null
+                  if (backorderEta) {
+                    iso = new Date(`${backorderEta}T00:00:00+05:30`).toISOString()
+                  }
+                  try {
+                    await moveToBackorderMutation.mutateAsync({
+                      id: request.id,
+                      req: {
+                        items: checkedIds.map(id => ({ id, qty: backorderQtys.get(id)! })),
+                        expectedArrivalAt: iso,
+                      },
+                    })
+                    setBackorderOpen(false)
+                  } catch {
+                    // Alert surfaces above
+                  }
+                }}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
+              >
+                {moveToBackorderMutation.isPending
+                  ? 'Moving…'
+                  : `Move ${checkedIds.length} to back-order`}
+              </Button>
+            )
+          })()}
         </DialogActions>
       </Dialog>
     </Box>

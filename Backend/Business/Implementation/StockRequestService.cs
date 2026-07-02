@@ -745,10 +745,16 @@ public class StockRequestService(
         if (IsRole(RoleNames.ShopUser))
             throw new ForbiddenException("Shop users cannot move items to back-order.");
 
-        if (request.ItemIds is null || request.ItemIds.Count == 0)
+        if (request.Items is null || request.Items.Count == 0)
             throw new ValidationException(new[] {
-                new ValidationFailure(nameof(request.ItemIds),
+                new ValidationFailure(nameof(request.Items),
                     "Select at least one item to move to back-order.")
+            });
+
+        if (request.Items.Any(i => i.Qty <= 0))
+            throw new ValidationException(new[] {
+                new ValidationFailure(nameof(request.Items),
+                    "Every item's back-order qty must be positive.")
             });
 
         var userId = currentUser.UserId
@@ -771,10 +777,15 @@ public class StockRequestService(
                     $"Cannot move items to back-order — request is '{existing.Status}' (must be Pending or Approved).")
             });
 
+        // Serialise as snake_case {id, qty} to match the SP's jsonb_extract keys.
+        var itemsJson = JsonSerializer.Serialize(
+            request.Items.Select(i => new { id = i.Id, qty = i.Qty }),
+            JsonOpts);
+
         // Convert to UTC — Npgsql rejects non-UTC DateTimeOffset on timestamptz.
         var eta = request.ExpectedArrivalAt?.ToUniversalTime();
 
-        await requests.MoveToBackorderAsync(id, request.ItemIds, eta, userId, ct);
+        await requests.MoveToBackorderAsync(id, itemsJson, eta, userId, ct);
 
         // Return the refreshed PARENT — the FE detail page for the parent is
         // where the godown pressed the button, so this is what should re-render.
