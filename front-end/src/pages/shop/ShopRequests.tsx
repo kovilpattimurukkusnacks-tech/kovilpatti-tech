@@ -11,6 +11,7 @@ import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { StockRequestDto, RequestStatus, RequestType, StockRequestListFilters } from '../../api/stock-requests/types'
+import { GOLD_GRADIENT, GOLD_GRADIENT_HOVER } from '../../theme'
 
 // Quick-filter chip presets. Per client feedback (demo, 26 May 2026), shop
 // users only care about three lifecycle buckets — All / Pending / Received —
@@ -178,11 +179,11 @@ export default function ShopRequests() {
                   ? isReturn
                     ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
                     : {
-                      background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                      background: GOLD_GRADIENT,
                       color: '#1F1F1F',
                       borderColor: '#C28A00',
                       '&:hover': {
-                        background: 'linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%)',
+                        background: GOLD_GRADIENT_HOVER,
                       },
                     }
                   : isReturn

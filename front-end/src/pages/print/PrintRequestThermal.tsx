@@ -1,9 +1,12 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react'
+import { Fragment, useMemo } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { computeDeliveredAmount } from '../../utils/computeDeliveredAmount'
+import { BRAND_NAME } from '../../utils/brand'
+import { useAutoPrint, PrintButton } from '../../hooks/useAutoPrint'
 import './thermal.css'
 
 /**
@@ -17,7 +20,6 @@ import './thermal.css'
  * the request's shopContactPhone (shops.contact_phone_1). Falls back
  * to a placeholder if a legacy request comes back without the field.
  */
-const BRAND_NAME             = 'Kovilpatti Murukku & Snacks'
 const BRAND_CONTACT_FALLBACK = '—'
 
 export default function PrintRequestThermal() {
@@ -27,23 +29,11 @@ export default function PrintRequestThermal() {
   // Auto-open browser print dialog ONCE when data lands. Same ref-guard
   // as the A4 picklist — React Query refetches / StrictMode double-render
   // would otherwise queue ghost print dialogs.
-  const printedRef = useRef(false)
-  useEffect(() => {
-    if (!request || printedRef.current) return
-    printedRef.current = true
-    const t = setTimeout(() => window.print(), 300)
-    return () => clearTimeout(t)
-  }, [request])
+  useAutoPrint(!!request)
 
   // Same effective-qty rule as the A4 picklist: post-dispatch shows what
   // was actually delivered, pre-dispatch shows what the shop asked for.
-  const deliveredAmount = useMemo(() => {
-    if (!request) return 0
-    return (request.items ?? []).reduce(
-      (sum, it) => sum + (it.dispatchedQty ?? it.requestedQty) * it.unitPrice,
-      0,
-    )
-  }, [request])
+  const deliveredAmount = useMemo(() => computeDeliveredAmount(request?.items), [request])
 
   // Two-level grouping — category → weight → items. Same shape as the
   // A4 picklist; we render it more densely below to fit 72mm.
@@ -221,9 +211,7 @@ export default function PrintRequestThermal() {
         </div>
 
         <div className="thermal-actions">
-          <button onClick={() => window.print()} className="thermal-print-btn">
-            Print
-          </button>
+          <PrintButton className="thermal-print-btn" />
         </div>
       </div>
     </div>

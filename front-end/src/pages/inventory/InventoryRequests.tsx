@@ -12,16 +12,9 @@ import {
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
+import { STATUS_COLOR } from '../../utils/statusColor'
+import { GOLD_GRADIENT, GOLD_GRADIENT_HOVER } from '../../theme'
 import '../Products.css'
-
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Inventory list excludes Draft server-side. Mapping kept for type-safety.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
 
 // Quick-filter presets. Per client feedback (demo, 26 May 2026), the inventory
 // list shows four lifecycle buckets:
@@ -361,11 +354,11 @@ export default function InventoryRequests() {
                   ? isReturn
                     ? { bgcolor: '#C62828', color: '#FFFFFF', '&:hover': { bgcolor: '#A82020' } }
                     : {
-                        background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                        background: GOLD_GRADIENT,
                         color: '#1F1F1F',
                         borderColor: '#C28A00',
                         '&:hover': {
-                          background: 'linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%)',
+                          background: GOLD_GRADIENT_HOVER,
                         },
                       }
                   : isReturn
@@ -432,11 +425,11 @@ export default function InventoryRequests() {
                   fontWeight: 600,
                   ...(active
                     ? {
-                        background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                        background: GOLD_GRADIENT,
                         color: '#1F1F1F',
                         borderColor: '#C28A00',
                         '&:hover': {
-                          background: 'linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%)',
+                          background: GOLD_GRADIENT_HOVER,
                         },
                       }
                     : {

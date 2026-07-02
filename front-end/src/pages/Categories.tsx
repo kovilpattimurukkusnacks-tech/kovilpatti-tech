@@ -14,7 +14,7 @@ import {
   useCategories, useCreateCategory, useUpdateCategory, useDeleteCategory,
 } from '../hooks/useCategories'
 import type { CategoryDto } from '../api/categories/types'
-import { ValidationError } from '../api/errors'
+import { mutationErrorMessage } from '../utils/mutationError'
 import './Products.css'
 
 // Form modes — the 'create' branch carries an optional parent so the per-node
@@ -282,13 +282,6 @@ const HEAD_SX = {
   textTransform: 'uppercase' as const,
   letterSpacing: 0.5,
   fontSize: 11,
-}
-
-function mutationErrorMessage(err: unknown): string | null {
-  if (!err) return null
-  if (err instanceof ValidationError) return err.flatten()
-  if (err instanceof Error)           return err.message
-  return 'Something went wrong.'
 }
 
 // Recursive descendant set for the edit mode — a category can't move under

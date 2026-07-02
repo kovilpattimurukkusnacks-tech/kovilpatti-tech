@@ -49,13 +49,6 @@ export type ProductListFilters = {
   pageSize?: number
 }
 
-export type PagedResult<T> = {
-  items: T[]
-  total: number
-  page: number
-  pageSize: number
-}
-
 export type ImportProductError = {
   rowNumber: number
   message: string

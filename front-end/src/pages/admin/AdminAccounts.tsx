@@ -55,6 +55,17 @@ export default function AdminAccounts() {
     // with new ids, or an old shared link). Without this, an id that resolves
     // to nothing becomes an invisible filter that silently zeroes the whole
     // page. Until the lists load we leave the ids untouched.
+    //
+    // NOTE: this is a soft self-heal, not a hard gate. `filters` (and the
+    // queries below that consume it) recompute as soon as shopsData /
+    // categoriesData resolve — which can happen on the same render the query
+    // hooks below fire with the still-stale (unfiltered raw URL) ids, before
+    // the useEffect further down has a chance to strip them from the URL.
+    // So it's possible for one BE request to go out with a stale/unfiltered
+    // id before cleanup catches up on the next render. This is intentionally
+    // left as-is: it self-corrects within a render or two and the cost is at
+    // most one extra query, not a persistent bug — don't "fix" this without
+    // understanding that the self-heal already covers the steady state.
     if (shopsData && shopIds) {
       const known = new Set(shopsData.map(s => s.id))
       shopIds = shopIds.filter(id => known.has(id))

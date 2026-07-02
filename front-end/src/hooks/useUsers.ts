@@ -1,7 +1,8 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { usersApi } from '../api/users/api'
+import type { PagedResult } from '../api/types'
 import type {
-  CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest, PagedResult, UserDto,
+  CreateStaffRequest, UpdateStaffRequest, ResetPasswordRequest, UserDto,
 } from '../api/users/types'
 
 export const usersKeys = {

@@ -2,7 +2,7 @@ import { createBrowserRouter, createRoutesFromElements, Navigate, Route, RouterP
 import { ThemeProvider, CssBaseline } from '@mui/material'
 
 import { AppProvider, useApp } from './context/AppContext'
-import { roleHomePath } from './routes'
+import { roleHomePath, type Role } from './routes'
 import { theme } from './theme'
 
 import Layout from './components/Layout'
@@ -29,7 +29,7 @@ import PrintCumulative from './pages/print/PrintCumulative'
 
 // Role gate — bounces unauthenticated users to login, and any authenticated
 // user whose role doesn't match this section to their own home page.
-function RoleGate({ allow, children }: { allow: NonNullable<import('./types').CurrentUser>['role']; children: React.ReactNode }) {
+function RoleGate({ allow, children }: { allow: Role; children: React.ReactNode }) {
   const { currentUser } = useApp()
   if (!currentUser) return <Navigate to="/" replace />
   if (currentUser.role !== allow) return <Navigate to={roleHomePath(currentUser.role)} replace />

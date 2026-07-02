@@ -1,5 +1,7 @@
 /** Mirrors the BE LoginRequest / LoginResponse DTOs. */
 
+import type { UserRole } from '../users/types'
+
 export type LoginRequest = {
   username: string
   password: string
@@ -11,7 +13,7 @@ export type LoginResponse = {
   userId: string     // UUID
   username: string
   fullName: string
-  role: 'Admin' | 'ShopUser' | 'Inventory'
+  role: UserRole
   shopId: string | null
   inventoryId: string | null
 }

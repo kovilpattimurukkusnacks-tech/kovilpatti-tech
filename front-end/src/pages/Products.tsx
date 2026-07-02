@@ -16,6 +16,7 @@ import type {
 import type { CategoryDto } from '../api/categories/types'
 import { ValidationError } from '../api/errors'
 import { formatINR } from '../utils/format'
+import { mutationErrorMessage } from '../utils/mutationError'
 import './Products.css'
 
 type FormMode =
@@ -100,11 +101,8 @@ export default function Products() {
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return
-    try {
-      await remove.mutateAsync(pendingDelete.id)
-    } finally {
-      setPendingDelete(null)
-    }
+    await remove.mutateAsync(pendingDelete.id)
+    setPendingDelete(null)
   }
 
   const columns = useMemo<GridColDef<ProductDto>[]>(() => [
@@ -148,13 +146,13 @@ export default function Products() {
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', product: row })}>
             <Edit2 className="w-4 h-4" />
           </IconButton>
-          <IconButton size="small" color="error" onClick={() => setPendingDelete(row)}>
+          <IconButton size="small" color="error" onClick={() => { remove.reset(); setPendingDelete(row) }}>
             <Trash2 className="w-4 h-4" />
           </IconButton>
         </Box>
       ),
     },
-  ], [])
+  ], [remove])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load products.')
@@ -296,6 +294,8 @@ export default function Products() {
         title="Delete product"
         message={`Are you sure you want to delete "${pendingDelete?.name ?? ''}"? This will deactivate it.`}
         confirmLabel="Delete"
+        submitting={remove.isPending}
+        submitError={mutationErrorMessage(remove.error)}
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
@@ -314,13 +314,6 @@ export default function Products() {
       />
     </div>
   )
-}
-
-function mutationErrorMessage(err: unknown): string | null {
-  if (!err) return null
-  if (err instanceof ValidationError) return err.flatten()
-  if (err instanceof Error)           return err.message
-  return 'Something went wrong.'
 }
 
 function ProductFormDialog({ open, product, categories, submitting, submitError, onClose, onSave }: {
@@ -370,7 +363,16 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setCategoryId(product?.categoryId ?? (categories[0]?.id ?? ''))
     setType(product?.type ?? 'pack')
     setWeightValue(product?.weightValue?.toString() ?? '')
-    setWeightUnit((product?.weightUnit as 'g' | 'kg' | 'pcs' | 'pkt') ?? 'g')
+    // Validate the server value against the Select's actual options before
+    // trusting it as form state — a cast alone would silently accept an
+    // unexpected backend string and mismatch every option in the dropdown.
+    const allowedUnits: ReadonlyArray<'g' | 'kg' | 'pcs' | 'pkt'> = ['g', 'kg', 'pcs', 'pkt']
+    const rawUnit = product?.weightUnit
+    setWeightUnit(
+      allowedUnits.includes(rawUnit as 'g' | 'kg' | 'pcs' | 'pkt')
+        ? (rawUnit as 'g' | 'kg' | 'pcs' | 'pkt')
+        : 'g',
+    )
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)

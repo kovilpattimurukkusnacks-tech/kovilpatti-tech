@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { shopsApi } from '../api/shops/api'
-import type { CreateShopRequest, UpdateShopRequest, PagedResult, ShopDto } from '../api/shops/types'
+import type { PagedResult } from '../api/types'
+import type { CreateShopRequest, UpdateShopRequest, ShopDto } from '../api/shops/types'
 
 export const shopsKeys = {
   all: ['shops'] as const,

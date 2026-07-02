@@ -15,20 +15,11 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
 } from '../../hooks/useStockRequests'
-import type { RequestStatus, StockRequestItemDto } from '../../api/stock-requests/types'
+import type { StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
-
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // 'Draft' is filtered out of admin lists/detail endpoints by the BE, so
-  // this branch shouldn't render in practice — the value is here to keep
-  // the type system happy if a Draft ever leaks through.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
+import { STATUS_COLOR } from '../../utils/statusColor'
+import { GOLD_GRADIENT } from '../../theme'
 
 export default function AdminRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -140,7 +131,7 @@ export default function AdminRequestDetail() {
       {/* Category header — metallic gold gradient with dark text. */}
       <Box
         sx={{
-          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          background: GOLD_GRADIENT,
           color: '#1F1F1F',
           borderBottom: '2px solid #1F1F1F',
           px: 2,

@@ -1,5 +1,6 @@
 import { apiClient } from '../client'
-import type { ShopDto, CreateShopRequest, UpdateShopRequest, PagedResult } from './types'
+import type { PagedResult } from '../types'
+import type { ShopDto, CreateShopRequest, UpdateShopRequest } from './types'
 
 export const shopsApi = {
   list:      ()                                    => apiClient.get<ShopDto[]>('/api/shops'),

@@ -20,19 +20,10 @@ import {
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
-import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
-
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Inventory never sees Draft requests (BE excludes them from /incoming).
-  // Mapping kept to satisfy the exhaustive Record type.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
+import { STATUS_COLOR } from '../../utils/statusColor'
+import { GOLD_GRADIENT } from '../../theme'
 
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -379,7 +370,7 @@ export default function InventoryRequestDetail() {
       {/* Category header — metallic gold gradient with dark text. */}
       <Box
         sx={{
-          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          background: GOLD_GRADIENT,
           color: '#1F1F1F',
           borderBottom: '2px solid #1F1F1F',
           px: 2,

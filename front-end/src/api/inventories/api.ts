@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
+import type { PagedResult } from '../types'
 import type {
-  InventoryDto, CreateInventoryRequest, UpdateInventoryRequest, PagedResult,
+  InventoryDto, CreateInventoryRequest, UpdateInventoryRequest,
 } from './types'
 
 export const inventoriesApi = {

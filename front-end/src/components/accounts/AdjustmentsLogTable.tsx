@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useMemo } from 'react'
 import { Box, Button, Card, CardContent, Chip, CircularProgress, Link as MuiLink, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
@@ -7,6 +7,7 @@ import type { AccountsAdjustmentRowDto, AccountsFilters, AccountsSummaryDto } fr
 import { accountsExport } from '../../api/accounts/api'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
+import { useExcelExport } from '../../hooks/useExcelExport'
 
 type Props = {
   rows: AccountsAdjustmentRowDto[] | undefined
@@ -30,7 +31,7 @@ type Props = {
 export default function AdjustmentsLogTable({ rows, loading, filters, summary }: Props) {
   const navigate = useNavigate()
   // Excel export typically takes 2-5 seconds — spinner during BE render.
-  const [exporting, setExporting] = useState(false)
+  const { exporting, handleExport } = useExcelExport()
 
   // 19-Jun-2026 (client #13): view-mode lens filter — keep audits whose
   // request_type matches the active view. The summary KPI (count + net
@@ -146,12 +147,7 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
             size="small"
             variant="outlined"
             startIcon={exporting ? <CircularProgress size={14} thickness={5} sx={{ color: 'inherit' }} /> : <Download size={16} />}
-            onClick={async () => {
-              if (exporting) return
-              setExporting(true)
-              try { await accountsExport.adjustments(filters) }
-              finally { setExporting(false) }
-            }}
+            onClick={() => handleExport(() => accountsExport.adjustments(filters))}
             disabled={exporting || loading || visibleRows.length === 0}
             sx={{ textTransform: 'none', fontWeight: 600 }}
           >

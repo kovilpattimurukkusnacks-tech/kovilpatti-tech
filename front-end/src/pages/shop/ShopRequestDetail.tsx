@@ -18,6 +18,7 @@ import { useSettings } from '../../hooks/useSettings'
 import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
+import { GOLD_GRADIENT } from '../../theme'
 
 const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
   // Drafts are reached via the dedicated draft endpoint, not the detail
@@ -131,7 +132,7 @@ export default function ShopRequestDetail() {
           reads warm + premium against the cream weight strip below. */}
       <Box
         sx={{
-          background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+          background: GOLD_GRADIENT,
           color: '#1F1F1F',
           borderBottom: '2px solid #1F1F1F',
           px: 2,

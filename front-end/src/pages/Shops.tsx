@@ -13,7 +13,7 @@ import type {
   ShopDto, CreateShopRequest, UpdateShopRequest,
 } from '../api/shops/types'
 import type { InventoryDto } from '../api/inventories/types'
-import { ValidationError } from '../api/errors'
+import { mutationErrorMessage } from '../utils/mutationError'
 
 type FormMode =
   | { kind: 'closed' }
@@ -69,11 +69,8 @@ export default function Shops() {
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return
-    try {
-      await remove.mutateAsync(pendingDelete.id)
-    } finally {
-      setPendingDelete(null)
-    }
+    await remove.mutateAsync(pendingDelete.id)
+    setPendingDelete(null)
   }
 
   const columns = useMemo<GridColDef<ShopDto>[]>(() => [
@@ -112,13 +109,13 @@ export default function Shops() {
           <IconButton size="small" onClick={() => setFormMode({ kind: 'edit', shop: row })}>
             <Edit2 className="w-4 h-4" />
           </IconButton>
-          <IconButton size="small" color="error" onClick={() => setPendingDelete(row)}>
+          <IconButton size="small" color="error" onClick={() => { remove.reset(); setPendingDelete(row) }}>
             <Trash2 className="w-4 h-4" />
           </IconButton>
         </Box>
       ),
     },
-  ], [])
+  ], [remove])
 
   const errorMessage = list.isError
     ? (list.error instanceof Error ? list.error.message : 'Failed to load shops.')
@@ -188,18 +185,13 @@ export default function Shops() {
         title="Delete shop"
         message={`Are you sure you want to delete "${pendingDelete?.name ?? ''}"? This will deactivate it.`}
         confirmLabel="Delete"
+        submitting={remove.isPending}
+        submitError={mutationErrorMessage(remove.error)}
         onConfirm={handleConfirmDelete}
         onCancel={() => setPendingDelete(null)}
       />
     </div>
   )
-}
-
-function mutationErrorMessage(err: unknown): string | null {
-  if (!err) return null
-  if (err instanceof ValidationError) return err.flatten()
-  if (err instanceof Error)           return err.message
-  return 'Something went wrong.'
 }
 
 function ShopFormDialog({ open, shop, inventories, submitting, submitError, onClose, onSave }: {
