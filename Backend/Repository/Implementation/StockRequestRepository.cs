@@ -52,12 +52,18 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     }
 
     public async Task<IReadOnlyList<CumulativePendingLine>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default)
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id)";
+        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id, @p_request_ids)";
         var rows = await conn.QueryAsync<CumulativePendingLine>(new CommandDefinition(
-            sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+            sql, new
+            {
+                p_inventory_id = inventoryId,
+                p_request_ids  = requestIds?.ToArray(),
+            }, cancellationToken: ct));
         return rows.ToList();
     }
 
@@ -330,6 +336,39 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         const string sql = "SELECT * FROM fn_request_list_inventory_dispatch_drafts(@p_inventory_id)";
         var rows = await conn.QueryAsync<StockRequest>(new CommandDefinition(
             sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    // ── Back-order (02-Jul-2026) ──────────────────────────────────
+
+    public async Task<Guid> MoveToBackorderAsync(
+        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
+        Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = @"
+            SELECT fn_request_move_to_backorder(
+                @p_id, @p_items::jsonb, @p_user_id, @p_eta)";
+        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+        {
+            p_id       = id,
+            p_items    = itemsJson,
+            p_user_id  = userId,
+            p_eta      = expectedArrivalAt,
+        }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<OutstandingBackorderRow>> ListOutstandingBackordersAsync(
+        Guid? inventoryId, IReadOnlyList<Guid>? shopIds,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_request_list_outstanding_backorders(@p_inventory_id, @p_shop_ids)";
+        var rows = await conn.QueryAsync<OutstandingBackorderRow>(new CommandDefinition(sql, new
+        {
+            p_inventory_id = inventoryId,
+            p_shop_ids     = shopIds?.ToArray(),
+        }, cancellationToken: ct));
         return rows.ToList();
     }
 }

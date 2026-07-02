@@ -99,7 +99,7 @@ LANGUAGE sql STABLE AS $$
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -144,9 +144,9 @@ LANGUAGE sql STABLE AS $$
   -- applies per item, matching those breakdowns.
   item_sums AS (
     SELECT
-      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
+      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
                         THEN it.requested_qty * it.unit_price END), 0)                            AS requested_amount,
-      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
+      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
                         THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
                         THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount
@@ -161,7 +161,7 @@ LANGUAGE sql STABLE AS $$
   SELECT
     (SELECT s.requested_amount  FROM item_sums s)::numeric(14,2)                                             AS requested_amount,
     (SELECT s.dispatched_amount FROM item_sums s)::numeric(14,2)                                             AS dispatched_amount,
-    COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Order'), 0)::bigint                                    AS dispatched_request_count,
+    COALESCE(COUNT(*) FILTER (WHERE f.request_type IN ('Order', 'Backorder')), 0)::bigint                                    AS dispatched_request_count,
     (SELECT s.returns_amount    FROM item_sums s)::numeric(14,2)                                             AS returns_amount,
     COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Return'), 0)::bigint                                   AS returns_request_count,
     -- Net = live Dispatched − live Returns. Adjustments are NOT added: the
@@ -232,7 +232,7 @@ LANGUAGE sql STABLE AS $$
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -260,10 +260,10 @@ LANGUAGE sql STABLE AS $$
   )
   SELECT
     s.bucket_start,
-    COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)::numeric(14,2) AS dispatched_amount,
+    COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')  THEN f.total_amount END), 0)::numeric(14,2) AS dispatched_amount,
     COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)::numeric(14,2) AS returns_amount,
     (
-      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
+      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')  THEN f.total_amount END), 0)
     - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
     )::numeric(14,2) AS net_amount
   FROM series s
@@ -346,7 +346,7 @@ LANGUAGE sql STABLE AS $$
     SELECT r.id, r.shop_id, r.total_amount
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
-      AND r.request_type = 'Order'
+      AND r.request_type IN ('Order', 'Backorder')
       AND r.status       = 'Received'
       AND r.received_at >= g.lo AND r.received_at < g.hi
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -583,24 +583,24 @@ LANGUAGE sql STABLE AS $$
     SELECT
       p.category_id,
       -- Signed aggregates (existing behaviour — kept for the Net columns).
-      CASE WHEN r.request_type = 'Order'
+      CASE WHEN r.request_type IN ('Order', 'Backorder')
            THEN COALESCE(it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END                                                                                     AS signed_qty,
-      CASE WHEN r.request_type = 'Order'
+      CASE WHEN r.request_type IN ('Order', 'Backorder')
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END                                                                                     AS signed_amount,
-      CASE WHEN r.request_type = 'Order'
+      CASE WHEN r.request_type IN ('Order', 'Backorder')
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
       END                                                                                     AS signed_cost,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
-      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
-      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
@@ -608,7 +608,7 @@ LANGUAGE sql STABLE AS $$
     , range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -708,20 +708,20 @@ LANGUAGE sql STABLE AS $$
       p.weight_value,
       p.weight_unit,
       -- Signed (existing — for the Net columns in 'All' view).
-      CASE WHEN r.request_type = 'Order'
+      CASE WHEN r.request_type IN ('Order', 'Backorder')
            THEN COALESCE(it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END AS signed_qty,
-      CASE WHEN r.request_type = 'Order'
+      CASE WHEN r.request_type IN ('Order', 'Backorder')
            THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END AS signed_amount,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
-      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
-      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
@@ -729,7 +729,7 @@ LANGUAGE sql STABLE AS $$
     , range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -887,7 +887,7 @@ LANGUAGE sql STABLE AS $$
     MIN(r.dispatched_at)                          AS oldest_dispatched_at
   FROM stock_requests r
   WHERE r.is_deleted   = false
-    AND r.request_type = 'Order'
+    AND r.request_type IN ('Order', 'Backorder')
     AND r.status       = 'Dispatched'
     AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
     AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids));

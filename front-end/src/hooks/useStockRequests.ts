@@ -7,6 +7,7 @@ import type {
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
+  MoveToBackorderRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -53,11 +54,17 @@ export function useStockRequest(id: string | undefined) {
   })
 }
 
-/** Cumulative pending workload — used by the kitchen batch report. */
-export function useCumulativePending(inventoryId?: string) {
+/** Cumulative pending workload — used by the kitchen batch report.
+ *  requestIds narrows to a specific selection (02-Jul-2026); empty/omitted
+ *  = every Approved request in the inventory scope. Key encodes both
+ *  filters so caches don't collide across select-subset invocations. */
+export function useCumulativePending(inventoryId?: string, requestIds?: string[]) {
+  const idsKey = requestIds && requestIds.length
+    ? [...requestIds].sort().join(',')  // stable order → stable key
+    : 'all'
   return useQuery({
-    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all'] as const,
-    queryFn: () => stockRequestsApi.cumulative(inventoryId),
+    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all', idsKey] as const,
+    queryFn: () => stockRequestsApi.cumulative(inventoryId, requestIds),
     // Print page mounts, fetches, prints. No need to cache long.
     staleTime: 0,
   })
@@ -435,6 +442,43 @@ export function useCancelStockRequest() {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
     },
+  })
+}
+
+/** Godown carves items off a parent Order into a linked Backorder sibling.
+ *  Returns the REFRESHED PARENT DTO. Cache updates: parent detail patched
+ *  directly; every list cache patched (parent has updated totals + a new
+ *  backorderChildren array); the newly-created child appears when its list
+ *  is refetched. Outstanding-backorder strip queries are invalidated. */
+export function useMoveToBackorder() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: MoveToBackorderRequest }) =>
+      stockRequestsApi.moveToBackorder(id, req),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      patchAllListCaches(qc, updated)
+      // New Backorder child appears on lists — refetch scopes it correctly.
+      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+      // The Outstanding Back-orders strip on shop/inv/admin uses these
+      // keys — force a refetch so the new row shows up.
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'outstanding-backorders'] })
+    },
+  })
+}
+
+/** Pipeline snapshot of Pending Backorders. Drives:
+ *   • Shop banner "N back-orders outstanding"
+ *   • Inventory persistent banner + Procurement preset chip
+ *   • Admin Accounts pipeline strip (cross-month; date filter not applied) */
+export function useOutstandingBackorders(inventoryId?: string, options?: { enabled?: boolean }) {
+  return useQuery({
+    queryKey: ['stock-requests', 'outstanding-backorders', inventoryId ?? 'scope'] as const,
+    queryFn: () => stockRequestsApi.outstandingBackorders(inventoryId),
+    enabled: options?.enabled ?? true,
+    // 60s is fine — the strip doesn't need to reflect the very last second's
+    // change; explicit invalidations handle same-tab actions.
+    staleTime: 60_000,
   })
 }
 

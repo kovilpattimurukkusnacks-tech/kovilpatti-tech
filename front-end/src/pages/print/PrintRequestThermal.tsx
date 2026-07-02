@@ -105,7 +105,9 @@ export default function PrintRequestThermal() {
             Contact: {request.shopContactPhone ?? BRAND_CONTACT_FALLBACK}
           </div>
           <div className="thermal-title">
-            {request.requestType === 'Return' ? 'Return Bill' : 'Stock Request'}
+            {request.requestType === 'Return'   ? 'Return Bill'
+              : request.requestType === 'Backorder' ? 'Back-order'
+              : 'Stock Request'}
           </div>
         </div>
 
@@ -135,6 +137,21 @@ export default function PrintRequestThermal() {
             <>
               <span className="label">By:</span>
               <span className="value">{request.submittedByName}</span>
+            </>
+          )}
+          {/* Back-order lineage on the thermal slip too. */}
+          {request.requestType === 'Backorder' && request.parentRequestCode && (
+            <>
+              <span className="label">Of:</span>
+              <span className="value">{request.parentRequestCode}</span>
+              {request.expectedArrivalAt && (
+                <>
+                  <span className="label">ETA:</span>
+                  <span className="value">
+                    {new Date(request.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
+                  </span>
+                </>
+              )}
             </>
           )}
         </div>

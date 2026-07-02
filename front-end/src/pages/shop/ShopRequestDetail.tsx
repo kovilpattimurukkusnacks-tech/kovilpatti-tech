@@ -352,6 +352,71 @@ export default function ShopRequestDetail() {
         </Alert>
       )}
 
+      {/* Back-order children banner (02-Jul-2026). Shown on the PARENT
+          Order once godown has carved off Backorder siblings. */}
+      {request.backorderChildren && request.backorderChildren.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.5, mb: 2, borderRadius: 2,
+            bgcolor: '#FFE0B2', border: '1px solid #E8A758',
+            display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
+          }}
+        >
+          <Box sx={{ flex: 1, minWidth: 0 }}>
+            <Box sx={{ fontSize: 13, fontWeight: 700, color: '#7C4A00' }}>
+              {request.backorderChildren.reduce((s, c) => s + c.totalItems, 0)} item{request.backorderChildren.reduce((s, c) => s + c.totalItems, 0) === 1 ? '' : 's'} on back-order
+            </Box>
+            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
+              Godown is procuring these from vendors and will dispatch as{' '}
+              {request.backorderChildren.map((c, i) => (
+                <Fragment key={c.id}>
+                  <Box
+                    component="span"
+                    onClick={() => navigate(`/shop/requests/${c.id}`)}
+                    sx={{ fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}
+                  >
+                    {c.code}
+                  </Box>
+                  {c.expectedArrivalAt && (
+                    <> (ETA {new Date(c.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})</>
+                  )}
+                  {i < request.backorderChildren!.length - 1 && ', '}
+                </Fragment>
+              ))}
+              .
+            </Box>
+          </Box>
+        </Paper>
+      )}
+
+      {/* If THIS request IS a Backorder — link back to parent. */}
+      {request.parentRequestId && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.5, mb: 2, borderRadius: 2,
+            bgcolor: '#FFE0B2', border: '1px solid #E8A758',
+          }}
+        >
+          <Box sx={{ fontSize: 13, fontWeight: 700, color: '#7C4A00' }}>
+            Back-order from your order{' '}
+            <Box
+              component="span"
+              onClick={() => navigate(`/shop/requests/${request.parentRequestId}`)}
+              sx={{ textDecoration: 'underline', cursor: 'pointer' }}
+            >
+              {request.parentRequestCode}
+            </Box>
+          </Box>
+          {request.expectedArrivalAt && (
+            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
+              ETA {new Date(request.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+            </Box>
+          )}
+        </Paper>
+      )}
+
       {/* Timeline */}
       <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF' }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2 }}>

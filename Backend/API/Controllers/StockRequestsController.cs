@@ -66,8 +66,24 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<IReadOnlyList<CumulativePendingLineDto>>> Cumulative(
         [FromQuery] Guid? inventoryId,
+        // Comma-separated request UUIDs; empty / omitted = aggregate every
+        // Approved request in scope (legacy behaviour). Powers the FE's
+        // "select which requests to cumulate" dialog (02-Jul-2026).
+        [FromQuery] string? requestIds,
         CancellationToken ct)
-        => Ok(await requests.GetPendingCumulativeAsync(inventoryId, ct));
+    {
+        IReadOnlyList<Guid>? ids = null;
+        if (!string.IsNullOrWhiteSpace(requestIds))
+        {
+            ids = requestIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+                .Where(g => g.HasValue)
+                .Select(g => g!.Value)
+                .ToList();
+        }
+        return Ok(await requests.GetPendingCumulativeAsync(inventoryId, ids, ct));
+    }
 
     // ─── Per-shop request counts (Inventory + Admin) ─────────
     // Drives the list page's shop quick-filter chips. status=… mirrors the
@@ -281,6 +297,27 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromBody] EditDispatchedQtyRequest request,
         CancellationToken ct)
         => Ok(await requests.EditDispatchedQtyAsync(id, itemId, request, ct));
+
+    // ─── Back-order (02-Jul-2026) ─────────────────────────────
+    // Godown carves selected items off a parent Order into a linked
+    // Backorder sibling (item moves out of the parent, new REQxxxx-B row
+    // is created). Only Orders in Pending/Approved may be carved.
+    [HttpPost("{id:guid}/move-to-backorder")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> MoveToBackorder(
+        Guid id,
+        [FromBody] MoveToBackorderRequest request,
+        CancellationToken ct)
+        => Ok(await requests.MoveToBackorderAsync(id, request, ct));
+
+    // Pipeline snapshot of Pending Backorders. Never date-filtered. Role
+    // scoping (own shop / own inv / tenant-wide) is service-side.
+    [HttpGet("outstanding-backorders")]
+    [Authorize]
+    public async Task<ActionResult<IReadOnlyList<OutstandingBackorderDto>>> OutstandingBackorders(
+        [FromQuery] Guid? inventoryId,
+        CancellationToken ct)
+        => Ok(await requests.ListOutstandingBackordersAsync(inventoryId, ct));
 
     // ─── Inventory dispatch drafts list (Inventory + Admin) ──
     // Returns Pending/Approved requests that have at least one item with a
