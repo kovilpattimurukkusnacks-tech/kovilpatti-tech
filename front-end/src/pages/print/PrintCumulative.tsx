@@ -214,10 +214,19 @@ export default function PrintCumulative() {
                 </thead>
                 <tbody>
                   <tr><td>
-                    <div className="print-dense-grid">
+                    {/* A root with a single sub-cat card has nothing to balance
+                        against — rendering it inside the 2-col flex grid would
+                        still only claim half the page width (flex:1 1 0 splits
+                        evenly regardless of the other column being empty).
+                        Render it full-width instead. */}
+                    {rg.children.length === 1 ? (
                       <div className="print-dense-col">{left.map(renderCard)}</div>
-                      <div className="print-dense-col">{right.map(renderCard)}</div>
-                    </div>
+                    ) : (
+                      <div className="print-dense-grid">
+                        <div className="print-dense-col">{left.map(renderCard)}</div>
+                        <div className="print-dense-col">{right.map(renderCard)}</div>
+                      </div>
+                    )}
                   </td></tr>
                 </tbody>
               </table>

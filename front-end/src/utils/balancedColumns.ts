@@ -20,19 +20,34 @@ export function splitBalancedColumns<T>(
   items: readonly T[],
   heightOf: (item: T) => number,
 ): { left: T[]; right: T[] } {
-  const left: T[] = []
-  const right: T[] = []
+  // Decide column membership via a Longest-Processing-Time-first greedy:
+  // assign the biggest items first, always to the currently shorter side.
+  // Assigning in original (encounter) order instead can badly misbalance
+  // when a large item shows up after the smaller ones already committed —
+  // e.g. heights [4, 10, 15] in order puts 4+15=19 on one side and only
+  // 10 on the other, leaving a large blank gap under the short column.
+  // Sorting by size first for the assignment decision (while still
+  // rendering each column in original order below) keeps both sides
+  // close to balanced regardless of input order.
+  const indexed = items.map((item, index) => ({ item, index, h: heightOf(item) }))
+  const bySizeDesc = [...indexed].sort((a, b) => b.h - a.h)
+
+  const leftIndices = new Set<number>()
   let lH = 0
   let rH = 0
-  for (const it of items) {
-    const h = heightOf(it)
+  for (const { index, h } of bySizeDesc) {
     if (lH <= rH) {
-      left.push(it)
+      leftIndices.add(index)
       lH += h
     } else {
-      right.push(it)
       rH += h
     }
+  }
+
+  const left: T[] = []
+  const right: T[] = []
+  for (const { item, index } of indexed) {
+    (leftIndices.has(index) ? left : right).push(item)
   }
   return { left, right }
 }
