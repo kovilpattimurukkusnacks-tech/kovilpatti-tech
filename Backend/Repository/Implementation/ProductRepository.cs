@@ -76,21 +76,22 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
             SELECT fn_product_create(
                 @p_code, @p_name, @p_category_id, @p_type,
                 @p_weight_value, @p_weight_unit, @p_mrp, @p_purchase_price,
-                @p_gst, @p_active, @p_user_id)";
+                @p_gst, @p_active, @p_is_vendor_procured, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
-            p_code           = product.Code,
-            p_name           = product.Name,
-            p_category_id    = product.CategoryId,
-            p_type           = product.Type,
-            p_weight_value   = product.WeightValue,
-            p_weight_unit    = product.WeightUnit,
-            p_mrp            = product.Mrp,
-            p_purchase_price = product.PurchasePrice,
-            p_gst            = product.Gst,
-            p_active         = product.Active,
-            p_user_id        = userId
+            p_code              = product.Code,
+            p_name              = product.Name,
+            p_category_id       = product.CategoryId,
+            p_type              = product.Type,
+            p_weight_value      = product.WeightValue,
+            p_weight_unit       = product.WeightUnit,
+            p_mrp               = product.Mrp,
+            p_purchase_price    = product.PurchasePrice,
+            p_gst               = product.Gst,
+            p_active            = product.Active,
+            p_is_vendor_procured = product.IsVendorProcured,
+            p_user_id           = userId
         }, cancellationToken: ct));
     }
 
@@ -98,27 +99,29 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         // p_code is the 2nd arg (07-Jun-2026, client #10) — service decides
-        // whether it's the existing or a new value.
+        // whether it's the existing or a new value. p_is_vendor_procured
+        // was appended at the end so older signatures roll over cleanly.
         const string sql = @"
             SELECT fn_product_update(
                 @p_id, @p_code, @p_name, @p_category_id, @p_type,
                 @p_weight_value, @p_weight_unit, @p_mrp, @p_purchase_price,
-                @p_gst, @p_active, @p_user_id)";
+                @p_gst, @p_active, @p_is_vendor_procured, @p_user_id)";
 
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
         {
-            p_id             = product.Id,
-            p_code           = product.Code,
-            p_name           = product.Name,
-            p_category_id    = product.CategoryId,
-            p_type           = product.Type,
-            p_weight_value   = product.WeightValue,
-            p_weight_unit    = product.WeightUnit,
-            p_mrp            = product.Mrp,
-            p_purchase_price = product.PurchasePrice,
-            p_gst            = product.Gst,
-            p_active         = product.Active,
-            p_user_id        = userId
+            p_id                = product.Id,
+            p_code              = product.Code,
+            p_name              = product.Name,
+            p_category_id       = product.CategoryId,
+            p_type              = product.Type,
+            p_weight_value      = product.WeightValue,
+            p_weight_unit       = product.WeightUnit,
+            p_mrp               = product.Mrp,
+            p_purchase_price    = product.PurchasePrice,
+            p_gst               = product.Gst,
+            p_active            = product.Active,
+            p_is_vendor_procured = product.IsVendorProcured,
+            p_user_id           = userId
         }, cancellationToken: ct));
     }
 
@@ -143,16 +146,17 @@ public class ProductRepository(IDbConnectionFactory factory) : IProductRepositor
         // via COALESCE; non-blank → SP uses the admin-provided value.
         var payload = JsonSerializer.Serialize(products.Select(p => new
         {
-            code           = p.Code,
-            name           = p.Name,
-            category_id    = p.CategoryId,
-            type           = p.Type,
-            weight_value   = p.WeightValue,
-            weight_unit    = p.WeightUnit,
-            mrp            = p.Mrp,
-            purchase_price = p.PurchasePrice,
-            gst            = p.Gst,
-            active         = p.Active,
+            code               = p.Code,
+            name               = p.Name,
+            category_id        = p.CategoryId,
+            type               = p.Type,
+            weight_value       = p.WeightValue,
+            weight_unit        = p.WeightUnit,
+            mrp                = p.Mrp,
+            purchase_price     = p.PurchasePrice,
+            gst                = p.Gst,
+            active             = p.Active,
+            is_vendor_procured = p.IsVendorProcured,
         }));
 
         const string sql = "SELECT * FROM fn_product_create_bulk(@p_products::jsonb, @p_user_id)";

@@ -271,6 +271,9 @@ export default function ShopRequestNew() {
         purchasePrice: null,
         gst: null,
         active: true,
+        // Shop cart doesn't surface the flag anywhere; stub with false so
+        // the ProductDto shape stays satisfied.
+        isVendorProcured: false,
       }
       map.set(it.productId, { product: stub, qty: it.requestedQty })
     }
@@ -1518,7 +1521,29 @@ const ProductRow = memo(function ProductRow({
             const n = parseInt(v, 10)
             if (!Number.isNaN(n) && n >= 0) onSetQty(product, n)
           }}
-          onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+          onKeyDown={e => {
+            if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
+            // Enter → jump to the next qty input, same visual traversal as
+            // Tab. Every qty <input> carries .qty-input; document-order
+            // query gives us the list in tab order. 02-Jul-2026.
+            if (e.key === 'Enter') {
+              e.preventDefault()
+              const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
+              const idx = inputs.indexOf(e.currentTarget)
+              inputs[idx + 1]?.focus()
+            }
+          }}
+          // Block mouse-wheel from adjusting the qty (default browser
+          // behaviour on <input type="number"> steps the value on scroll —
+          // shop user was hitting this by accident while scrolling the
+          // long product list). Blur so the wheel event scrolls the page
+          // instead. 02-Jul-2026.
+          onWheel={e => (e.target as HTMLInputElement).blur()}
+          // Auto-center focused qty in the viewport so tab-navigation across
+          // the long product list stays self-guiding (same rationale as
+          // inventory dispatch). Handles both directions — down through
+          // the list, and back up when tab wraps into a new column.
+          onFocus={e => (e.target as HTMLInputElement).scrollIntoView({ block: 'center', behavior: 'smooth' })}
           className="qty-input"
           style={{
             backgroundColor: inCart ? '#FFF8DC' : '#FFFFFF',

@@ -18,7 +18,9 @@ public interface IStockRequestService
     /// inventory; admin → may pass an inventoryId to scope, or NULL for
     /// tenant-wide totals; shop user → ForbiddenException.
     Task<IReadOnlyList<CumulativePendingLineDto>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default);
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default);
 
     /// Per-shop request counts for a given status filter (NULL = all). Used
     /// by the list page's shop quick-filter chips. Inventory role scoped to
@@ -107,5 +109,20 @@ public interface IStockRequestService
     /// inventory; admin may pass inventoryId or NULL for tenant-wide;
     /// shop user blocked.
     Task<IReadOnlyList<StockRequestDto>> ListInventoryDispatchDraftsAsync(
+        Guid? inventoryId, CancellationToken ct = default);
+
+    // ── Back-order (02-Jul-2026) ──
+    /// Godown carves selected items off a parent Order into a linked
+    /// Backorder sibling. Returns the parent Order's refreshed DTO —
+    /// the child's DTO is embedded in ParentBackorderChildren[]. Callers
+    /// that need the new child directly should GET /{newBackorderId}.
+    Task<StockRequestDto> MoveToBackorderAsync(
+        Guid id, MoveToBackorderRequest request, CancellationToken ct = default);
+
+    /// Pipeline-scoped list of Pending Backorders. Never date-filtered so
+    /// the strip stays visible across month boundaries. Role-scoped:
+    /// ShopUser → forced to own shop; Inventory → forced to own godown;
+    /// Admin → tenant-wide (or optional inventoryId filter).
+    Task<IReadOnlyList<OutstandingBackorderDto>> ListOutstandingBackordersAsync(
         Guid? inventoryId, CancellationToken ct = default);
 }

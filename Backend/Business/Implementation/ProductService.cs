@@ -75,16 +75,18 @@ public class ProductService(
 
         var product = new Product
         {
-            Code           = code,
-            Name           = name,
-            CategoryId     = request.CategoryId,
-            Type           = type,
-            WeightValue    = request.WeightValue,
-            WeightUnit     = weightUnit,
-            Mrp            = request.Mrp,
-            PurchasePrice  = request.PurchasePrice,
-            Gst            = request.Gst,
-            Active         = request.Active
+            Code             = code,
+            Name             = name,
+            CategoryId       = request.CategoryId,
+            Type             = type,
+            WeightValue      = request.WeightValue,
+            WeightUnit       = weightUnit,
+            Mrp              = request.Mrp,
+            PurchasePrice    = request.PurchasePrice,
+            Gst              = request.Gst,
+            Active           = request.Active,
+            // Explicit null on Create → default to in-house (false).
+            IsVendorProcured = request.IsVendorProcured ?? false,
         };
 
         var newId = await products.CreateAsync(product, userId, ct);
@@ -130,19 +132,21 @@ public class ProductService(
 
         var updated = new Product
         {
-            Id             = id,
-            Code           = code,
-            Name           = name,
-            CategoryId     = request.CategoryId,
-            Type           = type,
-            WeightValue    = request.WeightValue,
-            WeightUnit     = weightUnit,
-            Mrp            = request.Mrp,
-            PurchasePrice  = request.PurchasePrice,
+            Id               = id,
+            Code             = code,
+            Name             = name,
+            CategoryId       = request.CategoryId,
+            Type             = type,
+            WeightValue      = request.WeightValue,
+            WeightUnit       = weightUnit,
+            Mrp              = request.Mrp,
+            PurchasePrice    = request.PurchasePrice,
             // FE form doesn't expose GST yet — if the request omits it, keep
             // whatever was persisted so the update doesn't wipe the value.
-            Gst            = request.Gst ?? existing.Gst,
-            Active         = request.Active
+            Gst              = request.Gst ?? existing.Gst,
+            Active           = request.Active,
+            // Null → keep existing; explicit bool overrides.
+            IsVendorProcured = request.IsVendorProcured ?? existing.IsVendorProcured,
         };
 
         var ok = await products.UpdateAsync(updated, userId, ct);
@@ -444,18 +448,19 @@ public class ProductService(
     {
         var hidePurchase = string.Equals(currentUser.Role, RoleNames.ShopUser, StringComparison.OrdinalIgnoreCase);
         return new ProductDto(
-            Id:            p.Id,
-            Code:          p.Code,
-            Name:          p.Name,
-            CategoryId:    p.CategoryId,
-            CategoryName:  p.CategoryName,
-            Type:          p.Type,
-            WeightValue:   p.WeightValue,
-            WeightUnit:    p.WeightUnit,
-            Mrp:           p.Mrp,
-            PurchasePrice: hidePurchase ? null : p.PurchasePrice,
-            Gst:           p.Gst,
-            Active:        p.Active
+            Id:               p.Id,
+            Code:             p.Code,
+            Name:             p.Name,
+            CategoryId:       p.CategoryId,
+            CategoryName:     p.CategoryName,
+            Type:             p.Type,
+            WeightValue:      p.WeightValue,
+            WeightUnit:       p.WeightUnit,
+            Mrp:              p.Mrp,
+            PurchasePrice:    hidePurchase ? null : p.PurchasePrice,
+            Gst:              p.Gst,
+            Active:           p.Active,
+            IsVendorProcured: p.IsVendorProcured
         );
     }
 }
