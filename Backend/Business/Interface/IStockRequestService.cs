@@ -18,7 +18,9 @@ public interface IStockRequestService
     /// inventory; admin → may pass an inventoryId to scope, or NULL for
     /// tenant-wide totals; shop user → ForbiddenException.
     Task<IReadOnlyList<CumulativePendingLineDto>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default);
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default);
 
     /// Per-shop request counts for a given status filter (NULL = all). Used
     /// by the list page's shop quick-filter chips. Inventory role scoped to

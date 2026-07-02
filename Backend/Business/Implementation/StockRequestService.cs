@@ -70,7 +70,9 @@ public class StockRequestService(
     }
 
     public async Task<IReadOnlyList<CumulativePendingLineDto>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default)
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default)
     {
         // Role gates:
         //   • ShopUser  → never (they don't pack batches).
@@ -82,7 +84,14 @@ public class StockRequestService(
 
         Guid? scope = IsRole(RoleNames.Inventory) ? currentUser.InventoryId : inventoryId;
 
-        var rows = await requests.GetPendingCumulativeAsync(scope, ct);
+        // requestIds is a client-side "select the specific requests to include"
+        // filter (02-Jul-2026). Normalise empty array → null so the SP treats
+        // it as "no filter". Inventory scope guard above still applies —
+        // rows for requests outside the caller's inventory are silently
+        // filtered out even if their id is in the array.
+        var ids = requestIds is { Count: > 0 } ? requestIds : null;
+
+        var rows = await requests.GetPendingCumulativeAsync(scope, ids, ct);
         return rows.Select(r => new CumulativePendingLineDto(
             r.Product_Id, r.Product_Code, r.Product_Name, r.Category_Name, r.Type,
             r.Weight_Value, r.Weight_Unit, r.Total_Qty, r.Request_Count)).ToList();

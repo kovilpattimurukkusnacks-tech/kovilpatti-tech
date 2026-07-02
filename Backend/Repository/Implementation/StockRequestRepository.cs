@@ -52,12 +52,18 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     }
 
     public async Task<IReadOnlyList<CumulativePendingLine>> GetPendingCumulativeAsync(
-        Guid? inventoryId, CancellationToken ct = default)
+        Guid? inventoryId,
+        IReadOnlyList<Guid>? requestIds = null,
+        CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id)";
+        const string sql = "SELECT * FROM fn_request_pending_cumulative(@p_inventory_id, @p_request_ids)";
         var rows = await conn.QueryAsync<CumulativePendingLine>(new CommandDefinition(
-            sql, new { p_inventory_id = inventoryId }, cancellationToken: ct));
+            sql, new
+            {
+                p_inventory_id = inventoryId,
+                p_request_ids  = requestIds?.ToArray(),
+            }, cancellationToken: ct));
         return rows.ToList();
     }
 

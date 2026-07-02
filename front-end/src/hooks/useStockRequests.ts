@@ -54,11 +54,17 @@ export function useStockRequest(id: string | undefined) {
   })
 }
 
-/** Cumulative pending workload — used by the kitchen batch report. */
-export function useCumulativePending(inventoryId?: string) {
+/** Cumulative pending workload — used by the kitchen batch report.
+ *  requestIds narrows to a specific selection (02-Jul-2026); empty/omitted
+ *  = every Approved request in the inventory scope. Key encodes both
+ *  filters so caches don't collide across select-subset invocations. */
+export function useCumulativePending(inventoryId?: string, requestIds?: string[]) {
+  const idsKey = requestIds && requestIds.length
+    ? [...requestIds].sort().join(',')  // stable order → stable key
+    : 'all'
   return useQuery({
-    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all'] as const,
-    queryFn: () => stockRequestsApi.cumulative(inventoryId),
+    queryKey: ['stock-requests', 'cumulative', inventoryId ?? 'all', idsKey] as const,
+    queryFn: () => stockRequestsApi.cumulative(inventoryId, requestIds),
     // Print page mounts, fetches, prints. No need to cache long.
     staleTime: 0,
   })

@@ -546,8 +546,31 @@ export default function InventoryRequestDetail() {
                             size="small"
                             value={dispatchQtys.get(item.id) ?? ''}
                             onChange={e => setItemQty(item.id, e.target.value, item.requestedQty)}
-                            onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
-                            slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px' } } }}
+                            onKeyDown={e => {
+                              if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
+                              // Enter → next qty input (same traversal as Tab).
+                              // .disp-qty-input is on every dispatch qty <input>
+                              // via slotProps.htmlInput.className below.
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.disp-qty-input'))
+                                const idx = inputs.indexOf(e.target as HTMLInputElement)
+                                inputs[idx + 1]?.focus()
+                              }
+                            }}
+                            // Block mouse-wheel stepping — see 02-Jul-2026 shop-side
+                            // comment. Blur so the page scrolls instead.
+                            onWheel={e => (e.target as HTMLInputElement).blur()}
+                            // Tab-nav across a long product list moves focus to
+                            // qty inputs that sit off-screen — the dispatcher
+                            // couldn't tell where their cursor had jumped to.
+                            // Center the focused input in the viewport on
+                            // focus so tab is self-guiding both directions
+                            // (scrolls down as they walk down the list,
+                            // scrolls back up when tab wraps into the second
+                            // column). 02-Jul-2026.
+                            onFocus={e => (e.target as HTMLInputElement).scrollIntoView({ block: 'center', behavior: 'smooth' })}
+                            slotProps={{ htmlInput: { min: 0, inputMode: 'numeric', className: 'disp-qty-input', style: { textAlign: 'center', padding: '4px 8px' } } }}
                             sx={{
                               width: 86,
                               '& .MuiOutlinedInput-root': {
@@ -1192,6 +1215,7 @@ export default function InventoryRequestDetail() {
                   placeholder="Qty"
                   value={addPickerQty}
                   onChange={e => setAddPickerQty(e.target.value)}
+                  onWheel={e => (e.target as HTMLInputElement).blur()}
                   slotProps={{ htmlInput: { min: 1, inputMode: 'numeric' } }}
                   sx={{ width: 90 }}
                 />

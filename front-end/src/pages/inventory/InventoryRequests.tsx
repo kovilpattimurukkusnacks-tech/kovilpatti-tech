@@ -2,7 +2,7 @@ import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff, Hourglass } from 'lucide-react'
 import { BackorderChip } from '../../components/BackorderChip'
-import { Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper, TextField, Tooltip } from '@mui/material'
+import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
@@ -131,13 +131,44 @@ export default function InventoryRequests() {
       : undefined
 
   const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
-  const openPrintCumulative = () => {
-    window.open('/print/cumulative', '_blank', 'noopener,noreferrer')
+  // Selection dialog state (02-Jul-2026). User picks which Approved
+  // requests to fold into the cumulative print. All start pre-checked
+  // ("Print all" = one click); unchecking narrows the aggregation.
+  const [printSelectionOpen, setPrintSelectionOpen] = useState(false)
+  const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set())
+  // Fetch the Approved request list ONLY when the selection dialog is open —
+  // keeps the list page's query pool lean. pageSize 200 covers realistic
+  // inventory queues without paging.
+  const approvedForSelection = useIncomingStockRequests(
+    { status: 'Approved', pageSize: 200 },
+  )
+  const approvedRows = approvedForSelection.data?.items ?? []
+  const openPrintCumulative = (ids?: string[]) => {
+    const qs = new URLSearchParams()
+    if (ids && ids.length) qs.set('requestIds', ids.join(','))
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    window.open(`/print/cumulative${suffix}`, '_blank', 'noopener,noreferrer')
+  }
+  const openPrintSelection = () => {
+    // Pre-check every Approved request so the "Print all" flow stays a
+    // single confirm-click. Uses the current cache; if it's still loading,
+    // the effect below will re-seed once it lands.
+    setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    setPrintSelectionOpen(true)
   }
   const onPrintCumulativeClick = () => {
     if (totalPending > 0) setPrintConfirmOpen(true)
-    else openPrintCumulative()
+    else openPrintSelection()
   }
+  // Re-seed selection whenever approved rows arrive (or the dialog opens
+  // before the query resolves).
+  useEffect(() => {
+    if (!printSelectionOpen) return
+    if (selectedRequestIds.size === 0 && approvedRows.length > 0) {
+      setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printSelectionOpen, approvedRows.length])
 
   // Pending/Approved requests with a saved dispatch draft — surfaced as
   // strips below the page title so the user can jump back into any WIP
@@ -636,14 +667,132 @@ export default function InventoryRequests() {
         open={printConfirmOpen}
         title={`${totalPending} ${totalPending === 1 ? 'request is' : 'requests are'} still pending`}
         message={`Only the in-progress (approved) requests will be included in this batch plan. Pending requests won't appear here until they're approved. Print anyway?`}
-        confirmLabel="Yes, print approved"
+        confirmLabel="Yes, choose requests"
         cancelLabel="Cancel"
         onConfirm={() => {
           setPrintConfirmOpen(false)
-          openPrintCumulative()
+          openPrintSelection()
         }}
         onCancel={() => setPrintConfirmOpen(false)}
       />
+
+      {/* Selection dialog (02-Jul-2026). Lists every Approved request in
+          scope; user un-checks the ones they don't want to pack in this
+          batch. Print button opens the cumulative report scoped to only
+          those IDs. Default: everything checked → one-click "Print all". */}
+      <Dialog
+        open={printSelectionOpen}
+        onClose={() => setPrintSelectionOpen(false)}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Select requests for the batch plan
+          <IconButton size="small" onClick={() => setPrintSelectionOpen(false)}>
+            <XIcon className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {approvedForSelection.isLoading ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>Loading approved requests…</Box>
+          ) : approvedRows.length === 0 ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+              No approved requests in the queue.
+            </Box>
+          ) : (
+            <>
+              <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', mb: 1, fontSize: 12 }}>
+                <Box sx={{ color: '#1F1F1F99' }}>
+                  {selectedRequestIds.size} of {approvedRows.length} selected
+                </Box>
+                <Box sx={{ display: 'flex', gap: 1 }}>
+                  <Button
+                    size="small"
+                    onClick={() => setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))}
+                    sx={{ textTransform: 'none', fontSize: 12, minHeight: 0, py: 0.25 }}
+                  >
+                    Select all
+                  </Button>
+                  <Button
+                    size="small"
+                    onClick={() => setSelectedRequestIds(new Set())}
+                    sx={{ textTransform: 'none', fontSize: 12, minHeight: 0, py: 0.25 }}
+                  >
+                    Clear
+                  </Button>
+                </Box>
+              </Box>
+              <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+                {approvedRows.map(r => {
+                  const checked = selectedRequestIds.has(r.id)
+                  return (
+                    <Box
+                      key={r.id}
+                      onClick={() => {
+                        setSelectedRequestIds(prev => {
+                          const n = new Set(prev)
+                          if (n.has(r.id)) n.delete(r.id); else n.add(r.id)
+                          return n
+                        })
+                      }}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        px: 1.5, py: 0.75,
+                        borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        '&:last-child': { borderBottom: 'none' },
+                        cursor: 'pointer',
+                        bgcolor: checked ? '#FFFBE6' : 'transparent',
+                        '&:hover': { bgcolor: '#FFF8DC' },
+                      }}
+                    >
+                      <Box
+                        component="input"
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {}}   // click handled on the row for larger hit target
+                        sx={{ pointerEvents: 'none' }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ fontSize: 13, fontWeight: 700 }}>
+                          {r.code} <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}>· {r.shopName}</Box>
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {r.totalItems} items · {r.totalQty} units · {formatIstDateTime(r.submittedAt)}
+                        </Box>
+                      </Box>
+                    </Box>
+                  )
+                })}
+              </Box>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setPrintSelectionOpen(false)}
+            variant="outlined"
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={selectedRequestIds.size === 0}
+            onClick={() => {
+              const ids = Array.from(selectedRequestIds)
+              // If user kept EVERY request selected, drop the filter entirely
+              // so the SP takes the fast path (no ANY() lookup on ~50 UUIDs).
+              const allSelected = ids.length === approvedRows.length
+              openPrintCumulative(allSelected ? undefined : ids)
+              setPrintSelectionOpen(false)
+            }}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            Print {selectedRequestIds.size} selected
+          </Button>
+        </DialogActions>
+      </Dialog>
     </div>
   )
 }

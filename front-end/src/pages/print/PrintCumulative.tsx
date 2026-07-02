@@ -32,7 +32,10 @@ const BRAND_NAME = 'Kovilpatti Murukku & Snacks'
 export default function PrintCumulative() {
   const [params] = useSearchParams()
   const invId = params.get('inventoryId') ?? undefined
-  const { data: rows, isLoading, error } = useCumulativePending(invId)
+  // requestIds param — comma-separated UUIDs. Empty/omitted → every Approved
+  // request in scope (legacy behaviour). Populated → cumulate only those.
+  const requestIds = params.get('requestIds')?.split(',').map(s => s.trim()).filter(Boolean)
+  const { data: rows, isLoading, error } = useCumulativePending(invId, requestIds)
 
   // Fire the print dialog ONCE per page life. Without this guard, React
   // Query data refetches (or StrictMode double-invoke) can queue multiple

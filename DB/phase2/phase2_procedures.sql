@@ -320,8 +320,14 @@ $$;
 -- physically different SKUs to pack.
 --
 -- p_inventory_id NULL → cross-inventory total (admin-only use).
+-- p_request_ids  NULL / empty → every Approved request in the scope.
+--                populated → aggregate only those request IDs (still
+--                gated to Approved + inventory scope so the caller can't
+--                sneak in a request outside their inventory). Powers the
+--                Cumulative-print selection dialog (02-Jul-2026).
 CREATE OR REPLACE FUNCTION fn_request_pending_cumulative(
-  p_inventory_id uuid DEFAULT NULL
+  p_inventory_id uuid   DEFAULT NULL,
+  p_request_ids  uuid[] DEFAULT NULL
 )
 RETURNS TABLE (
   product_id      uuid,
@@ -354,6 +360,8 @@ LANGUAGE sql STABLE AS $$
     -- source from Pending.
     AND r.status = 'Approved'
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
+    AND (p_request_ids  IS NULL OR cardinality(p_request_ids) = 0
+         OR r.id = ANY(p_request_ids))
   GROUP BY p.id, p.code, p.name, c.name, p.type, it.weight_value, it.weight_unit
   ORDER BY p.code;
 $$;

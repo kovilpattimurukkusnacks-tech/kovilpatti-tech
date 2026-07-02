@@ -504,6 +504,14 @@
   vertical-align: top;
 }
 
+/* Never split a single product row across a page boundary — was clipping
+ * the last row on a page in half so the bottom looked "erased" on paper.
+ * 02-Jul-2026. */
+.print-dense-table tr {
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+
 /* Weight subheading inside a category — slim eyebrow, no background. */
 .print-dense-table tr.print-weight-row-dense td {
   padding: 5px 6px 2px 12px;
@@ -561,8 +569,13 @@
   }
   @page {
     size: A4;
-    /* 18mm side margin so the printed sheet has visible breathing room
-     * on each edge (client req 30-Jun-2026); top/bottom stay at 12mm. */
-    margin: 12mm 18mm;
+    /* 18mm sides for breathing room (client req 30-Jun-2026). Top 12mm.
+     * Bottom bumped to 18mm 02-Jul-2026 — consumer printers reserve a
+     * ~6-10mm non-printable strip at the paper edge, and the 12mm we
+     * had was letting the last row on a page get clipped ("words look
+     * erased" on the printed cumulative). Extra 6mm buys margin of
+     * safety across every printer without wasting a row of real
+     * content (page-break-inside on rows keeps splits above the gap). */
+    margin: 12mm 18mm 18mm 18mm;
   }
 }

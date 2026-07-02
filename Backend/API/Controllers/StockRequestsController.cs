@@ -66,8 +66,24 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     [Authorize(Roles = "Inventory,Admin")]
     public async Task<ActionResult<IReadOnlyList<CumulativePendingLineDto>>> Cumulative(
         [FromQuery] Guid? inventoryId,
+        // Comma-separated request UUIDs; empty / omitted = aggregate every
+        // Approved request in scope (legacy behaviour). Powers the FE's
+        // "select which requests to cumulate" dialog (02-Jul-2026).
+        [FromQuery] string? requestIds,
         CancellationToken ct)
-        => Ok(await requests.GetPendingCumulativeAsync(inventoryId, ct));
+    {
+        IReadOnlyList<Guid>? ids = null;
+        if (!string.IsNullOrWhiteSpace(requestIds))
+        {
+            ids = requestIds
+                .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(s => Guid.TryParse(s, out var g) ? g : (Guid?)null)
+                .Where(g => g.HasValue)
+                .Select(g => g!.Value)
+                .ToList();
+        }
+        return Ok(await requests.GetPendingCumulativeAsync(inventoryId, ids, ct));
+    }
 
     // ─── Per-shop request counts (Inventory + Admin) ─────────
     // Drives the list page's shop quick-filter chips. status=… mirrors the

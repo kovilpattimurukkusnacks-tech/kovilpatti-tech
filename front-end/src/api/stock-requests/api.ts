@@ -35,11 +35,19 @@ export const stockRequestsApi = {
   // Inventory user — incoming for own godown
   listIncoming: (f?: StockRequestListFilters)      => apiClient.get<PagedResult<StockRequestDto>>(`/api/stock-requests/incoming${toQuery(f)}`),
 
-  // Cumulative-pending workload report (Inventory + Admin)
-  cumulative:   (inventoryId?: string)             =>
-    apiClient.get<CumulativePendingLine[]>(
-      `/api/stock-requests/print/cumulative${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
-    ),
+  // Cumulative-pending workload report (Inventory + Admin). requestIds
+  // (optional) narrows the aggregation to just those requests — powers
+  // the selection dialog on the inventory list page. Empty/omitted =
+  // every Approved request in scope (legacy behaviour).
+  cumulative:   (inventoryId?: string, requestIds?: string[])   => {
+    const p = new URLSearchParams()
+    if (inventoryId)                     p.set('inventoryId', inventoryId)
+    if (requestIds && requestIds.length) p.set('requestIds', requestIds.join(','))
+    const qs = p.toString()
+    return apiClient.get<CumulativePendingLine[]>(
+      `/api/stock-requests/print/cumulative${qs ? `?${qs}` : ''}`,
+    )
+  },
 
   // Per-shop request count for the active status filter (Inventory + Admin).
   // Drives the shop quick-filter chips below the status presets.
