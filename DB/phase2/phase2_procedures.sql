@@ -1124,6 +1124,8 @@ CREATE OR REPLACE FUNCTION fn_request_revoke(
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
+DECLARE
+  v_did_revoke boolean;
 BEGIN
   UPDATE stock_requests
   SET status           = 'Pending',
@@ -1132,11 +1134,28 @@ BEGIN
       rejection_reason = NULL,
       cancelled_at     = NULL,
       cancelled_by     = NULL,
+      draft_name       = NULL,     -- draft label was tied to Approved state
+      pinned_at        = NULL,     -- pinning a Pending request is meaningless
       updated_by       = p_user_id
   WHERE id = p_id
     AND status IN ('Approved', 'Rejected', 'Cancelled')
     AND is_deleted = false;
-  RETURN FOUND;
+  v_did_revoke := FOUND;
+
+  -- Also clear per-item dispatch drafts. The auto-fill that happens on
+  -- Approve seeds draft_dispatched_qty with requested_qty; keeping those
+  -- around after a revoke leaves the request "Pending" but still showing
+  -- a Draft chip + pre-filled dispatch qtys, which contradicts the
+  -- pre-approval state. Only touches rows for the affected request; safe
+  -- when there's nothing to clear.
+  IF v_did_revoke THEN
+    UPDATE stock_request_items
+    SET    draft_dispatched_qty = NULL
+    WHERE  request_id = p_id
+      AND  draft_dispatched_qty IS NOT NULL;
+  END IF;
+
+  RETURN v_did_revoke;
 END
 $$;
 

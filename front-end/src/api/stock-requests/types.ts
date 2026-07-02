@@ -151,7 +151,11 @@ export type UpdateStockRequestRequest = CreateStockRequestRequest
 
 export type RejectRequest = { reason: string }
 
-export type DispatchItem = { id: string; dispatchedQty: number }
+// dispatchedQty is nullable ONLY on the SAVE-DRAFT path — sending null
+// tells the SP to clear this item's persisted draft (used when the
+// godown erases a qty mid-edit). On the FINAL dispatch endpoint the BE
+// still validates non-null; the shared type keeps both paths honest.
+export type DispatchItem = { id: string; dispatchedQty: number | null }
 export type DispatchRequest = { items: DispatchItem[] }
 
 /** Set / clear the godown's free-text label on a saved dispatch draft.

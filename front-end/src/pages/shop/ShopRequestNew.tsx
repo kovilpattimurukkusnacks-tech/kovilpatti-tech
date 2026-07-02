@@ -1539,11 +1539,15 @@ const ProductRow = memo(function ProductRow({
           // long product list). Blur so the wheel event scrolls the page
           // instead. 02-Jul-2026.
           onWheel={e => (e.target as HTMLInputElement).blur()}
-          // Auto-center focused qty in the viewport so tab-navigation across
-          // the long product list stays self-guiding (same rationale as
-          // inventory dispatch). Handles both directions — down through
-          // the list, and back up when tab wraps into a new column.
-          onFocus={e => (e.target as HTMLInputElement).scrollIntoView({ block: 'center', behavior: 'smooth' })}
+          // Auto-center focused qty in the viewport + auto-select the
+          // existing value so tab-navigation stays self-guiding AND a
+          // fresh type replaces the value instead of appending. Same
+          // treatment as inventory dispatch qty inputs.
+          onFocus={e => {
+            const el = e.target as HTMLInputElement
+            el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+            el.select()
+          }}
           className="qty-input"
           style={{
             backgroundColor: inCart ? '#FFF8DC' : '#FFFFFF',
