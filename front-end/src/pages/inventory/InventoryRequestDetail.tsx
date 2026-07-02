@@ -203,6 +203,22 @@ export default function InventoryRequestDetail() {
       })
   }, [grouped, categoriesQuery.data])
 
+  // Items in the same order the detail page renders them: root category
+  // priority → leaf-cat card order → weight-group order → items. Used by
+  // the Move-to-Back-order dialog so the picker matches the visual list
+  // the godown just scanned above.
+  const orderedItems = useMemo(() => {
+    const out: typeof items = []
+    for (const rg of rootGroups) {
+      for (const cg of rg.children) {
+        for (const wg of cg.weightGroups) {
+          for (const it of wg.items) out.push(it)
+        }
+      }
+    }
+    return out
+  }, [rootGroups])
+
   // Layout note: cards go into a CSS `column-count` container below — the
   // browser auto-balances them across 2 columns (1 on mobile) so column
   // heights stay close. break-inside: avoid keeps each card whole.
@@ -1354,7 +1370,7 @@ export default function InventoryRequestDetail() {
             you'll fulfil later once the vendor ships them. Shop will see both requests linked.
           </Box>
           <Box sx={{ maxHeight: 320, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1, mb: 2 }}>
-            {items.map(it => {
+            {orderedItems.map(it => {
               const checked = backorderQtys.has(it.id)
               const qty     = backorderQtys.get(it.id) ?? it.requestedQty
               return (
