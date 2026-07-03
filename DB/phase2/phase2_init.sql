@@ -260,6 +260,19 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
 
   requested_qty   int           NOT NULL,
   dispatched_qty  int,                                                  -- NULL until dispatch
+  -- What the shop actually counted at receive time (02-Jul-2026). NULL
+  -- means "no discrepancy noted" — the confirm-receipt dialog leaves
+  -- this NULL when received == dispatched so admin can filter for
+  -- "shop reported a mismatch" cheaply. Set by fn_request_receive
+  -- when the shop passes an items JSON on confirm.
+  received_qty    int,
+  -- Return-only partial-weight claim in grams (02-Jul-2026). Non-NULL
+  -- means the shop is claiming credit for a fraction of a pack — e.g.
+  -- 400 g of a 1 kg pack (damage claim, no physical goods movement).
+  -- Value calc at rollup: (return_weight_g / pack_weight_in_g) × unit_price.
+  -- Only surfaces on Return-type rows for products with weight_unit
+  -- IN ('g', 'kg'); other units keep the units-only requested_qty flow.
+  return_weight_g numeric(10,3),
   -- Inventory user's saved-but-not-finalised dispatch quantity (the WIP
   -- "Save as Draft" on the dispatch screen). NULL when no draft is in
   -- flight. Cleared by fn_request_dispatch when the dispatch is finalised.
@@ -293,7 +306,11 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
   CONSTRAINT chk_dispatched_qty_bounds
     CHECK (dispatched_qty IS NULL OR dispatched_qty >= 0),
   CONSTRAINT chk_draft_dispatched_qty_bounds
-    CHECK (draft_dispatched_qty IS NULL OR draft_dispatched_qty >= 0)
+    CHECK (draft_dispatched_qty IS NULL OR draft_dispatched_qty >= 0),
+  CONSTRAINT chk_received_qty_bounds
+    CHECK (received_qty IS NULL OR received_qty >= 0),
+  CONSTRAINT chk_return_weight_g_bounds
+    CHECK (return_weight_g IS NULL OR return_weight_g > 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_request ON stock_request_items(request_id);

@@ -26,6 +26,15 @@ export type StockRequestItemDto = {
   weightUnit: string | null   // 'g' | 'kg'
   requestedQty: number
   dispatchedQty: number | null
+  /** Shop's actual counted qty at confirm-receipt time. Null = "no
+   *  discrepancy noted" (received == dispatched); non-null = shop
+   *  entered a different number. Drives the short/over highlight on
+   *  the shop/admin detail pages after status=Received. */
+  receivedQty: number | null
+  /** Return-only partial-weight claim (grams). Null on Orders + full-pack
+   *  Returns. Non-null = shop asked for credit on a fraction of a pack
+   *  (damage claim, no physical goods movement). Only set on g/kg SKUs. */
+  returnWeightG: number | null
   // Inventory user's saved-but-not-finalised dispatch qty. Used to pre-fill
   // the dispatch screen's qty inputs from a saved draft. Null when no draft
   // exists (or after the dispatch has been finalised).
@@ -140,6 +149,9 @@ export type StockRequestDto = {
 export type CreateStockRequestItem = {
   productId: string
   requestedQty: number
+  /** Return-only. Non-null → shop is claiming credit for `returnWeightG`
+   *  grams from `requestedQty` pack(s). Only valid on g/kg SKUs. */
+  returnWeightG?: number | null
 }
 
 export type CreateStockRequestRequest = {
@@ -156,6 +168,13 @@ export type RejectRequest = { reason: string }
 // godown erases a qty mid-edit). On the FINAL dispatch endpoint the BE
 // still validates non-null; the shared type keeps both paths honest.
 export type DispatchItem = { id: string; dispatchedQty: number | null }
+
+/** Shop's confirm-receipt payload. Items list is OPTIONAL — omit / empty
+ *  for the one-click "as-dispatched" confirm. Populate to record a
+ *  discrepancy (short or over-count). Only lines that differ from the
+ *  dispatched qty need to be in the list. */
+export type ReceiveItem = { id: string; receivedQty: number }
+export type ReceiveRequest = { items?: ReceiveItem[] }
 export type DispatchRequest = { items: DispatchItem[] }
 
 /** Set / clear the godown's free-text label on a saved dispatch draft.

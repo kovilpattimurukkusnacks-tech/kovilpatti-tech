@@ -565,6 +565,20 @@ export default function InventoryRequestDetail() {
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, fontSize: 14 }}>
                           <span>{item.productName}</span>
                           {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Partial-weight return chip — shop claimed a
+                              fraction of a pack (B2 damage claim). */}
+                          {item.returnWeightG != null && (
+                            <Chip
+                              label={`Partial · ${item.returnWeightG}g`}
+                              size="small"
+                              sx={{
+                                ml: 0.5,
+                                bgcolor: '#FFE0B2', color: '#7C4A00',
+                                border: '1px solid #E8A758',
+                                height: 20, fontSize: 10, fontWeight: 700,
+                              }}
+                            />
+                          )}
                           {/* Trash icon only for inv-added items while
                               request is still editable — removes just
                               this line via the inv-remove endpoint. */}
@@ -871,6 +885,33 @@ export default function InventoryRequestDetail() {
           </Button>
         </Box>
       )}
+
+      {/* Shop-reported receipt discrepancy (02-Jul-2026). Godown side
+          view of the same banner rendered on shop + admin detail pages.
+          Only renders on Received requests where the shop's count didn't
+          match dispatched. */}
+      {(() => {
+        let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        for (const it of items) {
+          if (it.receivedQty == null) continue
+          const disp = it.dispatchedQty ?? 0
+          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
+          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+        }
+        if (shortLines === 0 && overLines === 0) return null
+        return (
+          <Alert severity={shortLines > 0 ? 'error' : 'warning'} sx={{ mb: 2 }}>
+            <strong>Shop reported a receipt discrepancy.</strong>{' '}
+            {shortLines > 0 && (
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+            )}
+            {shortLines > 0 && overLines > 0 && ' · '}
+            {overLines > 0 && (
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+            )}
+          </Alert>
+        )
+      })()}
 
       {/* Back-order children banner (02-Jul-2026). Shown on the PARENT
           Order once the godown has carved off one or more Backorder

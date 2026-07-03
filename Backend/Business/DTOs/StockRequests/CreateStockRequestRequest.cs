@@ -15,7 +15,12 @@ public record CreateStockRequestRequest(
 
 public record CreateStockRequestItem(
     Guid ProductId,
-    int  RequestedQty
+    int  RequestedQty,
+    /// Return-only partial-weight claim in grams (02-Jul-2026). Non-null
+    /// on Return payloads where the shop is claiming credit for a
+    /// fraction of a pack (damage claim). Ignored on Order / draft
+    /// payloads by the SPs that consume this shape. Only g/kg SKUs.
+    decimal? ReturnWeightG = null
 );
 
 public record UpdateStockRequestRequest(

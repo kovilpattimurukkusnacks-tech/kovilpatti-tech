@@ -26,7 +26,14 @@ import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { formatIstTime } from '../../utils/formatDate'
 
-type CartLine = { product: ProductDto; qty: number }
+type CartLine = {
+  product: ProductDto
+  qty: number
+  /** Return-only partial-weight claim in grams. Undefined = full-pack
+   *  return (existing behaviour). Set when the shop toggles a g/kg row
+   *  to "partial" mode on the Return-review dialog. 02-Jul-2026. */
+  returnWeightG?: number
+}
 
 // Large pageSize so we effectively load all matching products in one shot —
 // the UI renders them in a two-column layout with no pagination footer.
@@ -597,6 +604,11 @@ export default function ShopRequestNew() {
    * Only shown in the new-request flow for shop users (hidden for edit mode
    * and admin — both work on existing rows, not new Returns).
    */
+  // Return Stock click opens a dedicated config dialog where the shop
+  // can flip any g/kg cart line to "Partial (weight)" mode and enter
+  // grams to claim (damage claim; no physical goods movement).
+  const [returnConfigOpen, setReturnConfigOpen] = useState(false)
+
   const handleSubmitAsReturn = async () => {
     setLocalErr(null)
     if (cart.size === 0) {
@@ -606,6 +618,7 @@ export default function ShopRequestNew() {
     const items = Array.from(cart.values()).map(l => ({
       productId: l.product.id,
       requestedQty: l.qty,
+      returnWeightG: l.returnWeightG,   // undefined → omitted from JSON
     }))
     try {
       const res = await createReturnMutation.mutateAsync({
@@ -1213,7 +1226,10 @@ export default function ShopRequestNew() {
               forward actions so the user doesn't fat-finger it. */}
           {showReturnButton && (
             <Button
-              onClick={handleSubmitAsReturn}
+              // 02-Jul-2026: opens the Return-config dialog first so shop can
+              // flip any g/kg line to a partial-weight damage claim. From
+              // that dialog Submit calls handleSubmitAsReturn.
+              onClick={() => setReturnConfigOpen(true)}
               variant="outlined"
               disabled={cart.size === 0 || activeMutation.isPending}
               sx={{
@@ -1223,7 +1239,7 @@ export default function ShopRequestNew() {
                 mr: 'auto',
               }}
             >
-              {createReturnMutation.isPending ? 'Returning…' : 'Return Stock'}
+              Return Stock
             </Button>
           )}
 
@@ -1249,6 +1265,183 @@ export default function ShopRequestNew() {
             {activeMutation.isPending
               ? (isEditMode ? 'Updating…' : 'Submitting…')
               : isEditMode ? 'Update' : 'Submit'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Return-config dialog (02-Jul-2026). Opened when the shop clicks
+          "Return Stock" in the review dialog. Lists every cart line + lets
+          the shop flip any g/kg SKU to "Partial (weight)" mode and enter
+          grams to claim — the damage-claim (B2) flow. Bookkeeping-only:
+          no physical goods movement. Submit from here calls
+          handleSubmitAsReturn with returnWeightG per affected line. */}
+      <Dialog
+        open={returnConfigOpen}
+        onClose={(_e, reason) => {
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          if (createReturnMutation.isPending) return
+          setReturnConfigOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Return Stock — configure
+          <IconButton size="small" onClick={() => setReturnConfigOpen(false)} disabled={createReturnMutation.isPending}>
+            <X className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
+            Full pack returns credit the whole MRP. For a partial damage claim on a g/kg product,
+            switch to <strong>Partial</strong> and enter the grams. Godown will review before crediting.
+          </Box>
+          <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+            {Array.from(cart.values()).map(line => {
+              const p = line.product
+              const unit = p.weightUnit ?? ''
+              const isWeightBased = (unit === 'g' || unit === 'kg') && (p.weightValue ?? 0) > 0
+              const packG = isWeightBased ? Number(p.weightValue) * (unit === 'kg' ? 1000 : 1) : 0
+              const maxG  = packG * line.qty
+              const isPartial = line.returnWeightG != null
+              const credit = isPartial && packG > 0
+                ? (line.returnWeightG! / packG) * Number(p.mrp)
+                : line.qty * Number(p.mrp)
+              return (
+                <Box
+                  key={p.id}
+                  sx={{
+                    display: 'flex', flexDirection: 'column', gap: 0.5,
+                    px: 1.5, py: 1,
+                    borderBottom: '1px solid rgba(31,31,31,0.08)',
+                    '&:last-child': { borderBottom: 'none' },
+                    bgcolor: isPartial ? '#FFF8E1' : 'transparent',
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ fontSize: 13, fontWeight: 700 }}>{p.name}</Box>
+                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                        {p.code} · {line.qty} × {formatINR(Number(p.mrp))}
+                        {isWeightBased && ` · pack ${p.weightValue}${unit}`}
+                      </Box>
+                    </Box>
+                    {isWeightBased ? (
+                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                        <Button
+                          size="small"
+                          variant={!isPartial ? 'contained' : 'outlined'}
+                          onClick={() => {
+                            setCart(prev => {
+                              const n = new Map(prev)
+                              const l = n.get(p.id)!
+                              n.set(p.id, { ...l, returnWeightG: undefined })
+                              return n
+                            })
+                          }}
+                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
+                        >
+                          Full
+                        </Button>
+                        <Button
+                          size="small"
+                          variant={isPartial ? 'contained' : 'outlined'}
+                          onClick={() => {
+                            setCart(prev => {
+                              const n = new Map(prev)
+                              const l = n.get(p.id)!
+                              // Default to half-pack when toggling on — safe non-zero start.
+                              n.set(p.id, { ...l, returnWeightG: Math.round(packG / 2) })
+                              return n
+                            })
+                          }}
+                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
+                        >
+                          Partial
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Box sx={{ fontSize: 10.5, color: '#1F1F1F55', fontStyle: 'italic' }}>
+                        full-pack only
+                      </Box>
+                    )}
+                  </Box>
+                  {isPartial && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                      <Box sx={{ fontSize: 11, fontWeight: 600, color: '#7C4A00' }}>Weight (g):</Box>
+                      <TextField
+                        type="text"
+                        size="small"
+                        value={line.returnWeightG ?? ''}
+                        onChange={e => {
+                          const v = e.target.value
+                          if (v === '') return
+                          if (!/^\d+$/.test(v)) return
+                          const parsed = parseInt(v, 10)
+                          if (!Number.isFinite(parsed)) return
+                          const clamped = Math.max(1, Math.min(parsed, maxG))
+                          setCart(prev => {
+                            const n = new Map(prev)
+                            const l = n.get(p.id)!
+                            n.set(p.id, { ...l, returnWeightG: clamped })
+                            return n
+                          })
+                        }}
+                        onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                        onFocus={e => (e.target as HTMLInputElement).select()}
+                        slotProps={{ htmlInput: { inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px', width: 72 } } }}
+                        sx={{ width: 92 }}
+                      />
+                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                        of {maxG}g · credit {formatINR(credit)}
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>
+          {(() => {
+            const total = Array.from(cart.values()).reduce((s, l) => {
+              const p = l.product
+              const unit = p.weightUnit ?? ''
+              const packG = (unit === 'g' || unit === 'kg') ? Number(p.weightValue ?? 0) * (unit === 'kg' ? 1000 : 1) : 0
+              const val = l.returnWeightG != null && packG > 0
+                ? (l.returnWeightG / packG) * Number(p.mrp)
+                : l.qty * Number(p.mrp)
+              return s + val
+            }, 0)
+            return (
+              <Box sx={{ mt: 1.5, fontSize: 13, fontWeight: 700 }}>
+                Total credit claimed: {formatINR(total)}
+              </Box>
+            )
+          })()}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setReturnConfigOpen(false)}
+            variant="outlined"
+            disabled={createReturnMutation.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={cart.size === 0 || createReturnMutation.isPending}
+            onClick={async () => {
+              await handleSubmitAsReturn()
+              setReturnConfigOpen(false)
+            }}
+            sx={{
+              textTransform: 'none', fontWeight: 700,
+              background: '#C62828', color: '#FFFFFF',
+              '&:hover': { background: '#A82020' },
+            }}
+          >
+            {createReturnMutation.isPending ? 'Submitting…' : 'Submit Return'}
           </Button>
         </DialogActions>
       </Dialog>

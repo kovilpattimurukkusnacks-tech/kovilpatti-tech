@@ -257,6 +257,19 @@ export default function AdminRequestDetail() {
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>
                           {item.productName}
                           {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Partial-weight return (02-Jul-2026, B2). */}
+                          {item.returnWeightG != null && (
+                            <Chip
+                              label={`Partial · ${item.returnWeightG}g`}
+                              size="small"
+                              sx={{
+                                ml: 1,
+                                bgcolor: '#FFE0B2', color: '#7C4A00',
+                                border: '1px solid #E8A758',
+                                height: 20, fontSize: 10, fontWeight: 700,
+                              }}
+                            />
+                          )}
                         </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
@@ -358,6 +371,38 @@ export default function AdminRequestDetail() {
           />
         )}
       </Box>
+
+      {/* Shop-reported receipt discrepancy (02-Jul-2026). Renders whenever
+          any item's received_qty differs from dispatched_qty — could be
+          shortage (shop got less) or over-count (shop got more). Kept
+          separate from the Rejected/Cancelled banners so multiple
+          conditions can co-render. */}
+      {(() => {
+        const items = request.items ?? []
+        let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        for (const it of items) {
+          if (it.receivedQty == null) continue
+          const disp = it.dispatchedQty ?? 0
+          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
+          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+        }
+        if (shortLines === 0 && overLines === 0) return null
+        return (
+          <Alert
+            severity={shortLines > 0 ? 'error' : 'warning'}
+            sx={{ mb: 2 }}
+          >
+            <strong>Shop reported a receipt discrepancy.</strong>{' '}
+            {shortLines > 0 && (
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+            )}
+            {shortLines > 0 && overLines > 0 && ' · '}
+            {overLines > 0 && (
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+            )}
+          </Alert>
+        )
+      })()}
 
       {/* Rejected banner — surfaces the rejection reason (when present) and
           exposes the Undo Rejection action right here at the top so admin

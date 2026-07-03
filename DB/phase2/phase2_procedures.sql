@@ -670,6 +670,13 @@ LANGUAGE sql STABLE AS $$
                'weight_unit',    it.weight_unit,
                'requested_qty',  it.requested_qty,
                'dispatched_qty', it.dispatched_qty,
+               -- Shop's actual count at receive time (02-Jul-2026). NULL
+               -- means "no discrepancy noted" (received == dispatched);
+               -- non-NULL means the shop entered a different number.
+               'received_qty',   it.received_qty,
+               -- Return-only partial-weight claim in grams (02-Jul-2026).
+               -- Null on Orders + full-pack Returns.
+               'return_weight_g', it.return_weight_g,
                -- Inventory user's WIP dispatch qty (NULL when no draft saved).
                -- Used by the dispatch screen to pre-fill the qty inputs so a
                -- saved draft survives navigating away.
@@ -1501,12 +1508,28 @@ $$;
 
 
 -- Dispatched → Received (shop user)
+--
+-- p_items (02-Jul-2026 client req): OPTIONAL JSON array of
+--   [{ id: uuid, received_qty: int }] — shop's actual count at receive
+--   time. Only rows the shop typed a number for appear; matching lines
+--   (received == dispatched) stay out of the payload and their
+--   received_qty column stays NULL ("no discrepancy noted"). When
+--   p_items is NULL / empty, this reduces to the previous one-click
+--   confirm behaviour — every line is treated as "as-dispatched".
+--
+-- Signature changed → drop the old 2-arg shape first (CREATE OR REPLACE
+-- can't extend the arg list).
+DROP FUNCTION IF EXISTS fn_request_receive(uuid, uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_receive(
   p_id      uuid,
-  p_user_id uuid
+  p_user_id uuid,
+  p_items   jsonb DEFAULT NULL
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
+DECLARE
+  v_flipped boolean;
 BEGIN
   UPDATE stock_requests
   SET status      = 'Received',
@@ -1516,7 +1539,22 @@ BEGIN
   WHERE id = p_id
     AND status = 'Dispatched'
     AND is_deleted = false;
-  RETURN FOUND;
+  v_flipped := FOUND;
+
+  -- Per-item received_qty write. Only fires when the shop actually sent
+  -- an items payload (partial receipt with discrepancies). Guarded by
+  -- v_flipped so a no-op receive attempt on a non-Dispatched row can't
+  -- silently mutate items.
+  IF v_flipped AND p_items IS NOT NULL AND jsonb_typeof(p_items) = 'array' THEN
+    UPDATE stock_request_items it
+    SET    received_qty = (e.value->>'received_qty')::int
+    FROM   jsonb_array_elements(p_items) AS e(value)
+    WHERE  it.id = (e.value->>'id')::uuid
+      AND  it.request_id = p_id
+      AND  (e.value->>'received_qty') IS NOT NULL;
+  END IF;
+
+  RETURN v_flipped;
 END
 $$;
 
@@ -1583,6 +1621,11 @@ DECLARE
   v_item         jsonb;
   v_qty          int;
   v_price        numeric(10,2);
+  v_ret_wg       numeric(10,3);
+  v_wv           numeric(10,3);
+  v_wu           varchar(5);
+  v_pack_g       numeric(10,3);
+  v_line_credit  numeric(12,2);
 BEGIN
   IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'Return must include at least one item';
@@ -1601,28 +1644,56 @@ BEGIN
   ) RETURNING id INTO v_id;
 
   FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
-    v_qty   := (v_item->>'requested_qty')::int;
-    v_price := (v_item->>'unit_price')::numeric(10,2);
+    v_qty     := (v_item->>'requested_qty')::int;
+    v_price   := (v_item->>'unit_price')::numeric(10,2);
+    v_ret_wg  := NULLIF(v_item->>'return_weight_g', '')::numeric(10,3);
 
-    -- Same item shape as Orders: requested_qty = "what shop says it's
-    -- returning". Snapshot weight from the current product master so the
-    -- Return's audit row doesn't drift if the product is later repacked.
+    -- Snapshot product pack weight — needed both for the item row (audit
+    -- consistency) and for the credit calc when return_weight_g is set.
+    SELECT p.weight_value, p.weight_unit
+      INTO v_wv, v_wu
+    FROM   products p
+    WHERE  p.id = (v_item->>'product_id')::uuid;
+
+    IF v_ret_wg IS NOT NULL THEN
+      -- Partial-weight return (02-Jul-2026): only allowed on g/kg SKUs.
+      -- BE-side validation should have already rejected other units, but
+      -- guard here too so a bad payload can't slip through.
+      IF v_wu IS NULL OR v_wu NOT IN ('g', 'kg') THEN
+        RAISE EXCEPTION 'Partial-weight return only allowed on g/kg SKUs (product % has unit %)',
+          (v_item->>'product_id'), COALESCE(v_wu, '<null>');
+      END IF;
+      v_pack_g := v_wv * CASE v_wu WHEN 'kg' THEN 1000 ELSE 1 END;
+      IF v_pack_g <= 0 THEN
+        RAISE EXCEPTION 'Product % has invalid pack weight (%)', (v_item->>'product_id'), v_pack_g;
+      END IF;
+      IF v_ret_wg > v_pack_g * v_qty THEN
+        RAISE EXCEPTION 'return_weight_g (%) exceeds available pack weight (% × % = %) for product %',
+          v_ret_wg, v_qty, v_pack_g, v_pack_g * v_qty, (v_item->>'product_id');
+      END IF;
+      -- Prorated credit: (weight claimed / total pack weight across N packs) × line MRP.
+      v_line_credit := ROUND((v_ret_wg / v_pack_g) * v_price, 2);
+    ELSE
+      v_line_credit := v_qty * v_price;
+    END IF;
+
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit
+      weight_value, weight_unit, return_weight_g
     )
     SELECT v_id,
            p.id,
            v_qty,
            v_price,
            p.weight_value,
-           p.weight_unit
+           p.weight_unit,
+           v_ret_wg
     FROM   products p
     WHERE  p.id = (v_item->>'product_id')::uuid;
 
     v_total_items  := v_total_items + 1;
     v_total_qty    := v_total_qty   + v_qty;
-    v_total_amount := v_total_amount + (v_qty * v_price);
+    v_total_amount := v_total_amount + v_line_credit;
   END LOOP;
 
   UPDATE stock_requests
