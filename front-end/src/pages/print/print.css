@@ -480,7 +480,7 @@
  * its own line. */
 .print-dense-banner {
   display: flex;
-  align-items: baseline;
+  align-items: flex-start;
   gap: 5px;
   background: #FFF8DC;
   border-left: 3px solid #FCD835;
@@ -515,12 +515,15 @@
   text-transform: uppercase;
 }
 
+/* 03-Jul-2026 (3rd pass) — was a strict single-line truncation
+ * (white-space:nowrap + ellipsis), which clipped the SKU/unit count on
+ * longer category names (e.g. "Murukku & Snacks Packed") instead of just
+ * the rare case it was meant for. Letting it wrap keeps every banner's
+ * meta info intact; only the few long-name cards grow to 2 lines, most
+ * stay single-line as before. */
 .print-dense-banner-name {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .print-dense-table {
