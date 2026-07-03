@@ -1,4 +1,4 @@
-import { Fragment, useState } from 'react'
+import { Fragment, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Package, Plus, Search } from 'lucide-react'
 import {
@@ -8,6 +8,7 @@ import {
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { useMyStockRequests, useShopDraft, useOutstandingBackorders } from '../../hooks/useStockRequests'
+import { useApp } from '../../context/AppContext'
 import { BackorderChip } from '../../components/BackorderChip'
 import { Hourglass } from 'lucide-react'
 import { formatINR } from '../../utils/format'
@@ -90,6 +91,66 @@ export default function ShopRequests() {
   // Shop's single live draft (or null). Resume Draft strip renders only when
   // this resolves to non-null.
   const draftQuery = useShopDraft()
+
+  // sessionStorage fallback (03-Jul-2026 bug fix). If the user typed on
+  // /shop/requests/new and navigated back to this list without waiting
+  // for auto-save to hit the server, the server-side draft is empty and
+  // draftQuery.data is null — the "You have an unsent draft" strip
+  // vanishes even though the local snapshot still holds the cart.
+  // Read the sessionStorage snapshot here and derive a lightweight
+  // fallback so the strip stays visible until the auto-save catches up.
+  const { currentUser } = useApp()
+  const shopId = currentUser?.shopId
+  const [localDraft, setLocalDraft] = useState<{
+    itemCount: number
+    unitCount: number
+    savedAt: string
+  } | null>(null)
+
+  useEffect(() => {
+    if (!shopId) return
+    const key = `shop-request-new-cart:${shopId}`
+    try {
+      const raw = sessionStorage.getItem(key)
+      if (!raw) { setLocalDraft(null); return }
+      const parsed = JSON.parse(raw) as {
+        items?: Array<{ qty: number }>
+        savedAt?: string
+      }
+      if (!parsed?.items?.length) { setLocalDraft(null); return }
+      const units = parsed.items.reduce((s, it) => s + (Number(it.qty) || 0), 0)
+      setLocalDraft({
+        itemCount: parsed.items.length,
+        unitCount: units,
+        savedAt: parsed.savedAt ?? new Date().toISOString(),
+      })
+    } catch { setLocalDraft(null) }
+    // Re-check when the server draft state changes (e.g. auto-save landed
+    // on /new and the list refetched) so we don't stack a stale localDraft
+    // on top of a resolved server one.
+  }, [shopId, draftQuery.data])
+
+  // Merge: prefer server data (authoritative) when present; otherwise
+  // surface the local snapshot so the strip still shows.
+  const draftDisplay = useMemo(() => {
+    if (draftQuery.data) {
+      return {
+        products: draftQuery.data.totalItems,
+        units:    draftQuery.data.totalQty,
+        savedAt:  draftQuery.data.updatedAt,
+        source:   'server' as const,
+      }
+    }
+    if (localDraft) {
+      return {
+        products: localDraft.itemCount,
+        units:    localDraft.unitCount,
+        savedAt:  localDraft.savedAt,
+        source:   'local' as const,
+      }
+    }
+    return null
+  }, [draftQuery.data, localDraft])
 
   // Dispatched-orders peek (01-Jul-2026): a tiny page-size:1 query only to
   // read `total`. Powers the "N orders awaiting your receipt" banner at
@@ -218,7 +279,7 @@ export default function ShopRequests() {
           The "Last saved" timestamp comes from the row's updated_at, which
           refreshes on every save (vs submitted_at which is the original
           create time). */}
-      {draftQuery.data && (
+      {draftDisplay && (
         <Paper
           elevation={0}
           sx={{
@@ -238,9 +299,9 @@ export default function ShopRequests() {
           <Box sx={{ flex: 1, minWidth: 0 }}>
             <Box sx={{ fontWeight: 700, fontSize: 14 }}>You have an unsent draft</Box>
             <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
-              {draftQuery.data.totalItems} {draftQuery.data.totalItems === 1 ? 'product' : 'products'}
-              · {draftQuery.data.totalQty} {draftQuery.data.totalQty === 1 ? 'unit' : 'units'}
-              · Last saved {formatIstDateTime(draftQuery.data.updatedAt)}
+              {draftDisplay.products} {draftDisplay.products === 1 ? 'product' : 'products'}
+              · {draftDisplay.units} {draftDisplay.units === 1 ? 'unit' : 'units'}
+              · Last saved {formatIstDateTime(draftDisplay.savedAt)}
             </Box>
           </Box>
           <Button

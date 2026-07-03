@@ -165,12 +165,13 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         }, cancellationToken: ct));
     }
 
-    public async Task<bool> ReceiveAsync(Guid id, Guid userId, CancellationToken ct = default)
+    public async Task<bool> ReceiveAsync(Guid id, Guid userId, string? itemsJson = null, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT fn_request_receive(@p_id, @p_user_id)";
+        // Cast p_items to jsonb; NULL falls through as SQL null (no discrepancy).
+        const string sql = "SELECT fn_request_receive(@p_id, @p_user_id, @p_items::jsonb)";
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-            sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
+            sql, new { p_id = id, p_user_id = userId, p_items = itemsJson }, cancellationToken: ct));
     }
 
     public async Task<bool> CancelAsync(Guid id, Guid userId, CancellationToken ct = default)

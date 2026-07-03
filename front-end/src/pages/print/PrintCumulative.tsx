@@ -45,6 +45,10 @@ export default function PrintCumulative() {
   // requestIds param — comma-separated UUIDs. Empty/omitted → every Approved
   // request in scope (legacy behaviour). Populated → cumulate only those.
   const requestIds = params.get('requestIds')?.split(',').map(s => s.trim()).filter(Boolean)
+  // Shop names (comma-joined) passed alongside requestIds so the header
+  // reads "Anna Nagar" / "Ambatur, Anna Nagar" — makes the batch plan
+  // unambiguous when a single godown packs for multiple shops. 03-Jul-2026.
+  const shopNamesParam = params.get('shopNames')?.trim() ?? ''
   const { data: rows, isLoading, error } = useCumulativePending(invId, requestIds)
 
   // Fire the print dialog ONCE per page life. Without this guard, React
@@ -134,6 +138,15 @@ export default function PrintCumulative() {
       <header className="print-brand-header">
         <div className="print-brand-name">{BRAND_NAME}</div>
         <div className="print-brand-subtitle">Cumulative Batch Plan</div>
+        {/* Shop names — only when caller narrowed to specific shops.
+            03-Jul-2026 client req. Comma-joined for multi-shop prints so
+            the picker at the godown knows exactly which shops this batch
+            covers. */}
+        {shopNamesParam && (
+          <div style={{ textAlign: 'center', fontSize: 13, fontWeight: 700, marginTop: 2, color: '#7C4A00' }}>
+            {shopNamesParam}
+          </div>
+        )}
       </header>
 
       <div className="print-meta-inline">
@@ -181,7 +194,7 @@ export default function PrintCumulative() {
                       {section.category}
                       <span className="muted">
                         · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
-                        · {subtotalQty} units
+                        · {subtotalQty.toLocaleString('en-IN')} units
                       </span>
                     </span>
                   </div>
@@ -203,7 +216,7 @@ export default function PrintCumulative() {
                             {r.type === 'jar' && <span className="print-badge">JAR</span>}
                           </td>
                           <td className="muted print-dense-weight-col">{r.weightLabel}</td>
-                          <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
+                          <td style={{ textAlign: 'right' }} className="strong">{r.totalQty.toLocaleString('en-IN')}</td>
                         </tr>
                       ))}
                     </tbody>
@@ -229,7 +242,7 @@ export default function PrintCumulative() {
                   <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
                 </div>
                 <div>
-                  {totalUnits} units
+                  {totalUnits.toLocaleString('en-IN')} units
                   {totalRequests > 0 && (
                     <span className="muted">
                       {' '}· from up to {totalRequests} request{totalRequests === 1 ? '' : 's'}

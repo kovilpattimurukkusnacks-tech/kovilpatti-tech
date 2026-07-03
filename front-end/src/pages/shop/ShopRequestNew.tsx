@@ -2,7 +2,7 @@ import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useR
 import { useNavigate, useParams } from 'react-router-dom'
 import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
-  Alert, Autocomplete, Badge, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle,
+  Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField,
 } from '@mui/material'
@@ -16,17 +16,27 @@ import {
   useCreateReturn,
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
+import { BASE_URL } from '../../api/config'
+import { tokenStore } from '../../api/tokenStore'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
+import type { CategoryDto } from '../../api/categories/types'
 import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { formatIstTime } from '../../utils/formatDate'
 
-type CartLine = { product: ProductDto; qty: number }
+type CartLine = {
+  product: ProductDto
+  qty: number
+  /** Return-only partial-weight claim in grams. Undefined = full-pack
+   *  return (existing behaviour). Set when the shop toggles a g/kg row
+   *  to "partial" mode on the Return-review dialog. 02-Jul-2026. */
+  returnWeightG?: number
+}
 
 // Large pageSize so we effectively load all matching products in one shot —
 // the UI renders them in a two-column layout with no pagination footer.
@@ -191,13 +201,19 @@ export default function ShopRequestNew() {
   )
   const hasPrevCat = currentCatIndex > 0
   const hasNextCat = currentCatIndex >= 0 && currentCatIndex < sortedRootCats.length - 1
+  // Ref-based auto-focus: gotoCat flips the flag, then a useEffect
+  // watches productsQuery.data (new-category products land here) and
+  // focuses the first .qty-input once it renders. Replaces the earlier
+  // rAF+setTimeout timer which raced against React-Query's fetch.
+  // Initialised TRUE so the first product's qty grabs focus on page
+  // mount too — restored 03-Jul-2026 after the gotoCat refactor
+  // accidentally removed the mount-time focus behaviour.
+  const pendingFocusRef = useRef(true)
   const gotoCat = useCallback((id: number) => {
     setSelectedCategoryId(id)
     setVisitedCategoryIds(prev => prev.has(id) ? prev : new Set(prev).add(id))
-    // Scroll to top of the products area so the user lands on the new
-    // category's first product, not their previous scroll position from
-    // the prior category.
     window.scrollTo({ top: 0, behavior: 'smooth' })
+    pendingFocusRef.current = true
   }, [])
   const gotoPrevCat = useCallback(() => {
     if (!hasPrevCat) return
@@ -219,6 +235,16 @@ export default function ShopRequestNew() {
   // Type filter options — mirrors the type dropdown in the Add Product form
   // (pages/Products.tsx). Keep these in sync if a new type is ever added.
   const TYPE_OPTIONS = ['pack', 'jar'] as const
+
+  // sessionStorage key — per-shop scoped so multi-shop-account users
+  // (rare, but possible) don't cross-hydrate. 03-Jul-2026: added as a
+  // failsafe against F5 during typing — auto-save is debounced, and the
+  // beforeunload keepalive fetch isn't 100% reliable across browsers.
+  // sessionStorage is synchronous + survives refresh; we hydrate cart
+  // from it on mount and clear it on submit.
+  const draftLocalKey = currentUser?.shopId
+    ? `shop-request-new-cart:${currentUser.shopId}`
+    : null
 
   // Cart state — Map keyed by productId so add/update/remove is O(1).
   // Persists across category / type / search / page changes (intentionally).
@@ -290,19 +316,80 @@ export default function ShopRequestNew() {
   // Only fires when (a) we've seeded, (b) rootCats has loaded, and (c)
   // the seeded source actually had items. A bare empty-draft (none today
   // but defensive against future changes) doesn't trip this.
+  // 03-Jul-2026: mark visited = every root category that has at least one
+  // cart item under it. Runs on every cart/allCats change so both
+  // sessionStorage-hydration AND user-driven navigation build up the
+  // visit set precisely — not the "mark ALL 11" hammer from the seed
+  // effect above. Fixes: Back → New Request lost the visit progress
+  // because the sessionStorage path doesn't set seededFromSource.
   useEffect(() => {
-    if (!seeded) return
-    if (rootCats.length === 0) return
-    const source = isEditMode ? existing : draftQuery.data
-    if (!source?.items?.length) return
+    if (cart.size === 0) return
+    if (allCats.length === 0 || rootCats.length === 0) return
+    // Resolve leaf category name → owning root id. Walk allCats: for
+    // each cart item, find its category, then follow parent chain to
+    // the root, collect root ids.
+    const byName = new Map<string, CategoryDto>()
+    for (const c of allCats) if (!byName.has(c.name)) byName.set(c.name, c)
+    const byId = new Map<number, CategoryDto>()
+    for (const c of allCats) byId.set(c.id, c)
+    const rootsForCart = new Set<number>()
+    for (const line of cart.values()) {
+      // Prefer categoryId (unique, precise) over categoryName (may
+      // collide across roots). Stub products hydrated from sessionStorage
+      // have categoryId=0 as a placeholder; those fall through to the
+      // name lookup below.
+      let cat: CategoryDto | undefined =
+        (line.product.categoryId ? byId.get(line.product.categoryId) : undefined)
+        ?? byName.get(line.product.categoryName)
+      if (!cat) continue
+      // Walk up parents until root.
+      let guard = 0
+      while (cat.parentId != null && guard++ < 20) {
+        const parent = byId.get(cat.parentId)
+        if (!parent) break
+        cat = parent
+      }
+      rootsForCart.add(cat.id)
+    }
+    if (rootsForCart.size === 0) return
     setVisitedCategoryIds(prev => {
-      // Already saturated — avoid an unnecessary state update + re-render.
-      if (prev.size >= rootCats.length) return prev
+      // Union — never remove; only add roots that aren't already there.
+      let changed = false
       const next = new Set(prev)
-      for (const c of rootCats) next.add(c.id)
-      return next
+      for (const id of rootsForCart) if (!next.has(id)) { next.add(id); changed = true }
+      return changed ? next : prev
     })
-  }, [seeded, rootCats, isEditMode, existing, draftQuery.data])
+  }, [cart, allCats, rootCats])
+
+  // Jump-to-first-unvisited on resume (03-Jul-2026). When the user comes
+  // back to /new with a hydrated cart (from server draft OR sessionStorage)
+  // and has already visited N categories, land them on the first unvisited
+  // category so they don't have to click Prev/Next through work they've
+  // already done. Fires exactly ONCE per mount — a useRef guard prevents
+  // re-triggering as the user then legitimately walks through the rest.
+  const hasAutoNavigatedRef = useRef(false)
+  useEffect(() => {
+    if (hasAutoNavigatedRef.current) return
+    if (isEditMode) return
+    if (sortedRootCats.length === 0) return
+    // Only jump when the cart is HYDRATED — an empty cart means the user
+    // is starting fresh; leaving them on cat 1 is correct.
+    if (cart.size === 0) return
+    // Also wait until the visit set has been populated by either the
+    // sessionStorage restore or the derive-from-cart pass. If it's still
+    // just the auto-select single entry, hydration hasn't settled yet.
+    if (visitedCategoryIds.size === 0) return
+    const firstUnvisited = sortedRootCats.find(c => !visitedCategoryIds.has(c.id))
+    if (!firstUnvisited) return   // every category done — keep current selection
+    hasAutoNavigatedRef.current = true
+    setSelectedCategoryId(firstUnvisited.id)
+    // Mark this as an implicit visit so the counter increments on landing.
+    setVisitedCategoryIds(prev => prev.has(firstUnvisited.id) ? prev : new Set(prev).add(firstUnvisited.id))
+    // Flag pendingFocusRef so the qty-input focus effect grabs the first
+    // product's input on landing — matches Next-button behaviour.
+    pendingFocusRef.current = true
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [sortedRootCats, visitedCategoryIds, cart, isEditMode])
 
   // Edit-mode guard:
   //   • Shop user — only Pending, and only within editable_until.
@@ -319,6 +406,35 @@ export default function ShopRequestNew() {
   // Use `allCats` / `rootCats` directly — the legacy `categories` alias is
   // gone since every call site has been migrated to the right source.
   const products = productsQuery.data?.items ?? []
+
+  // Auto-focus the first qty input of the freshly-loaded category after
+  // a Prev/Next navigation. gotoCat flags pendingFocusRef; here we
+  // fire on either (a) the selected category changing, or (b) products
+  // finishing a fetch. Whichever completes second — once the DOM has
+  // the new .qty-input rows — grabs focus. Both deps stay in the array
+  // so a same-count cached-cat transition still triggers the focus.
+  // 02-Jul-2026.
+  useEffect(() => {
+    if (!pendingFocusRef.current) return
+    if (productsQuery.isFetching) return
+    if (products.length === 0) return
+    pendingFocusRef.current = false
+    // Poll for the first .qty-input to appear + steal focus. React-Query's
+    // cache-refresh timing vs React's commit vs the smooth scroll all
+    // race in different orders on different runs, so a fixed rAF/timeout
+    // isn't reliable. Loop up to 500 ms in 50-ms ticks; bail on first hit.
+    let ticks = 0
+    const tryFocus = () => {
+      const first = document.querySelector<HTMLInputElement>('.qty-input')
+      if (first) {
+        first.focus()
+        first.select()
+        return
+      }
+      if (ticks++ < 10) setTimeout(tryFocus, 50)
+    }
+    tryFocus()
+  }, [selectedCategoryId, productsQuery.isFetching, products.length])
 
   // Memoized Autocomplete value — stable reference unless the selection
   // changes, otherwise MUI's option-equality scan reruns every render.
@@ -435,6 +551,10 @@ export default function ShopRequestNew() {
     if (!draftEnabled || !isDraftDirty || cart.size === 0) return
     if (saveDraftMutation.isPending) return
 
+    // Debounce reduced 1500 → 400 ms on 03-Jul-2026 to shrink the "typed
+    // but not saved" window. Beforeunload keepalive covers the residual
+    // race, but a short debounce also means each keystroke persists
+    // within half a second — a hard refresh mid-typing loses almost nothing.
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
       const items = Array.from(cart.values()).map(l => ({
@@ -458,7 +578,7 @@ export default function ShopRequestNew() {
           // the cart review dialog surfaces the BE error if relevant.
         },
       )
-    }, 1500)
+    }, 400)
 
     return () => clearTimeout(timer)
     // saveDraftMutation.mutate's identity changes per render so we capture
@@ -466,6 +586,149 @@ export default function ShopRequestNew() {
     // want the effect to re-run when the previous save lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftEnabled, isDraftDirty, cart, notes, saveDraftMutation.isPending])
+
+  // sessionStorage failsafe (03-Jul-2026): mirror the cart + notes into
+  // sessionStorage on every change. If the user hits F5 mid-typing —
+  // before auto-save debounce fires OR before the beforeunload keepalive
+  // completes — the cart survives the reload via sessionStorage. On
+  // mount we hydrate from it (see the seed effect below). On successful
+  // Submit + successful auto-save landing == server draft we clear it.
+  useEffect(() => {
+    if (!draftEnabled || !draftLocalKey) return
+    // Do NOT clear on empty cart — this effect fires on initial mount
+    // (before the hydration effect below has read the storage) and would
+    // wipe a prior session's snapshot right when we need it. Cleared only
+    // on successful Submit (see submit handlers). 03-Jul-2026.
+    if (cart.size === 0) return
+    const snapshot = {
+      items: Array.from(cart.values()).map(l => ({
+        productId: l.product.id,
+        code:      l.product.code,
+        name:      l.product.name,
+        mrp:       l.product.mrp,
+        weightValue: l.product.weightValue,
+        weightUnit:  l.product.weightUnit,
+        // 03-Jul-2026: also persist categoryId so derive-from-cart on the
+        // rehydrated stub can look up the category directly instead of
+        // falling back to name-collision-prone lookup.
+        categoryId:   l.product.categoryId,
+        categoryName: l.product.categoryName,
+        qty: l.qty,
+      })),
+      notes,
+      // Persist the visit-history so post-F5 the "N/11 categories done"
+      // counter stays honest. Without this the user re-lands at 1/11
+      // even though their cart already spans multiple categories.
+      visitedCategoryIds: Array.from(visitedCategoryIds),
+      savedAt: new Date().toISOString(),
+    }
+    try { sessionStorage.setItem(draftLocalKey, JSON.stringify(snapshot)) } catch { /* noop */ }
+  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds])
+
+  // sessionStorage hydration (03-Jul-2026). Runs ONCE per mount if the
+  // server-side draft hasn't landed yet. Prevents the "F5 lost my typing"
+  // symptom regardless of whether auto-save / beforeunload actually made
+  // it to the BE. Server draft (once it arrives) takes over via the
+  // existing seed effect — if it happens to be MORE recent than the
+  // sessionStorage snapshot, the map is rebuilt fresh from it.
+  useEffect(() => {
+    if (!draftEnabled || !draftLocalKey) return
+    if (seeded) return
+    // Bail ONLY when the server actually returned a draft — its seed will
+    // win. If the server returned null (no draft) OR is still loading,
+    // hydrate from sessionStorage so an F5 mid-typing doesn't reset the
+    // cart just because the debounced auto-save hadn't reached the BE.
+    if (draftQuery.data) return
+    let raw: string | null = null
+    try { raw = sessionStorage.getItem(draftLocalKey) } catch { /* noop */ }
+    if (!raw) return
+    try {
+      const parsed = JSON.parse(raw) as {
+        items: Array<{
+          productId: string; code: string; name: string; mrp: number
+          weightValue: number | null; weightUnit: string | null
+          categoryId?: number    // 03-Jul-2026 addition, may be missing on older snapshots
+          categoryName: string; qty: number
+        }>
+        notes: string
+        visitedCategoryIds?: number[]
+      }
+      if (!parsed?.items?.length) return
+      const map = new Map<string, CartLine>()
+      for (const it of parsed.items) {
+        const stub: ProductDto = {
+          id: it.productId, code: it.code, name: it.name, mrp: it.mrp,
+          weightValue: it.weightValue, weightUnit: it.weightUnit,
+          // categoryId: real value when the snapshot was written by the
+          // 03-Jul-2026+ code; 0 for legacy snapshots (derive-from-cart
+          // falls back to categoryName lookup in that case).
+          categoryId: it.categoryId ?? 0,
+          categoryName: it.categoryName, type: '',
+          purchasePrice: null, gst: null, active: true, isVendorProcured: false,
+        }
+        map.set(it.productId, { product: stub, qty: it.qty })
+      }
+      setCart(map)
+      setNotes(parsed.notes ?? '')
+      // Restore the visit-history so the "N/11 categories done" counter
+      // reflects what the user had already ticked off before the reload.
+      // Falls back to derive-from-cart below if the snapshot is old-format
+      // and doesn't include a visitedCategoryIds array.
+      if (parsed.visitedCategoryIds?.length) {
+        setVisitedCategoryIds(new Set(parsed.visitedCategoryIds))
+      }
+      setSeeded(true)
+      setIsDraftDirty(true)  // still needs to sync to server
+    } catch { /* corrupted JSON — bail */ }
+    // Depends on draftQuery.data so that when the server responds with
+    // null (no draft), this effect re-fires and hydrates from
+    // sessionStorage. `seeded` guards against subsequent re-runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftEnabled, draftLocalKey, draftQuery.data])
+
+  // Flush the draft on page unload / F5 refresh (02-Jul-2026 client bug).
+  // Auto-save is debounced 1.5 s so a user typing qty + accidental F5
+  // within that window loses the in-progress cart. The browser prompt from
+  // useUnsavedChangesGuard warns them, but if they confirm the reload the
+  // save still hasn't fired. `fetch({ keepalive: true })` guarantees the
+  // POST completes even after the page starts unloading.
+  //
+  // beforeunload runs LAST (right before navigation), so we always have
+  // the latest cart / notes in the closure. No debounce here — every
+  // unload attempt fires a save if there are dirty changes.
+  useEffect(() => {
+    if (!draftEnabled) return
+    const handler = () => {
+      if (!isDraftDirty || cart.size === 0) return
+      const items = Array.from(cart.values()).map(l => ({
+        productId: l.product.id,
+        requestedQty: l.qty,
+      }))
+      const token = tokenStore.get()
+      if (!token) return
+      try {
+        fetch(`${BASE_URL}/api/stock-requests/draft`, {
+          method: 'POST',
+          keepalive: true,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ notes: notes.trim() || undefined, items }),
+        }).catch(() => { /* fire and forget */ })
+      } catch { /* fire and forget */ }
+    }
+    window.addEventListener('beforeunload', handler)
+    // visibilitychange = tab going background (Ctrl+Tab, minimising).
+    // Belt-and-braces: iOS Safari sometimes suspends beforeunload but
+    // still fires this. Fire the same save.
+    const visHandler = () => { if (document.visibilityState === 'hidden') handler() }
+    document.addEventListener('visibilitychange', visHandler)
+    return () => {
+      window.removeEventListener('beforeunload', handler)
+      document.removeEventListener('visibilitychange', visHandler)
+    }
+  }, [draftEnabled, isDraftDirty, cart, notes])
 
   // Review & Submit gate — shop user (new mode only) must have visited every
   // category before submitting. Edit-mode and admin-acting-on-shop bypass:
@@ -573,6 +836,7 @@ export default function ShopRequestNew() {
         // Submission is itself a "save" — flag the guard so the upcoming
         // navigate() doesn't trip the unsaved-changes modal.
         submittingRef.current = true
+        if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
       } else {
         const res = await createMutation.mutateAsync({
@@ -580,6 +844,7 @@ export default function ShopRequestNew() {
           items,
         })
         submittingRef.current = true
+        if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(`/shop/requests/${res.id}`)
       }
     } catch {
@@ -597,6 +862,11 @@ export default function ShopRequestNew() {
    * Only shown in the new-request flow for shop users (hidden for edit mode
    * and admin — both work on existing rows, not new Returns).
    */
+  // Return Stock click opens a dedicated config dialog where the shop
+  // can flip any g/kg cart line to "Partial (weight)" mode and enter
+  // grams to claim (damage claim; no physical goods movement).
+  const [returnConfigOpen, setReturnConfigOpen] = useState(false)
+
   const handleSubmitAsReturn = async () => {
     setLocalErr(null)
     if (cart.size === 0) {
@@ -606,6 +876,7 @@ export default function ShopRequestNew() {
     const items = Array.from(cart.values()).map(l => ({
       productId: l.product.id,
       requestedQty: l.qty,
+      returnWeightG: l.returnWeightG,   // undefined → omitted from JSON
     }))
     try {
       const res = await createReturnMutation.mutateAsync({
@@ -613,6 +884,7 @@ export default function ShopRequestNew() {
         items,
       })
       submittingRef.current = true
+      if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
       navigate(`/shop/requests/${res.id}`)
     } catch {
       // shown via apiErrorMessage below
@@ -666,6 +938,12 @@ export default function ShopRequestNew() {
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
+      // Also wipe the sessionStorage failsafe — otherwise an immediate
+      // F5 re-hydrates the just-discarded cart from the local snapshot.
+      // 03-Jul-2026.
+      if (draftLocalKey) {
+        try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ }
+      }
       setDiscardConfirmOpen(false)
     } catch {
       // shown via apiErrorMessage below — leave dialog open so user can retry
@@ -709,18 +987,38 @@ export default function ShopRequestNew() {
               : 'Update items or quantities. Changes apply until the cutoff.')
           : 'Type a quantity next to any product to add it to your request.'}
         action={
-          <Button
-            variant="outlined"
-            startIcon={<ArrowLeft className="w-4 h-4" />}
-            onClick={() => navigate(detailPath)}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Back
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* Draft badge — surfaces whenever there's an unsent cart
+                being auto-saved. Same amber/gold treatment as the
+                dispatch-draft chip on the inventory side. 03-Jul-2026. */}
+            {draftEnabled && cart.size > 0 && (
+              <Chip
+                label="Draft"
+                size="small"
+                variant="outlined"
+                sx={{
+                  borderColor: '#C28A00',
+                  color: '#7C4A00',
+                  bgcolor: '#FFF8E1',
+                  fontWeight: 700,
+                  fontSize: 11,
+                  letterSpacing: 0.5,
+                }}
+              />
+            )}
+            <Button
+              variant="outlined"
+              startIcon={<ArrowLeft className="w-4 h-4" />}
+              onClick={() => navigate(detailPath)}
+              sx={{
+                textTransform: 'none', fontWeight: 600,
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+              }}
+            >
+              Back
+            </Button>
+          </Box>
         }
       />
 
@@ -843,9 +1141,9 @@ export default function ShopRequestNew() {
             alignItems: 'flex-start',
           }}
         >
-          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} />
+          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           {rightCatGroups.length > 0 && (
-            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} />
+            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           )}
         </Box>
       )}
@@ -923,7 +1221,10 @@ export default function ShopRequestNew() {
                   size="small"
                   variant="outlined"
                   onClick={gotoPrevCat}
-                  disabled={!hasPrevCat}
+                  // Also gated on productsQuery.isFetching so rapid clicks
+                  // don't stack category-switches while the new category's
+                  // products are still loading. 03-Jul-2026.
+                  disabled={!hasPrevCat || productsQuery.isFetching}
                   startIcon={<ChevronLeft className="w-4 h-4" />}
                   sx={{
                     textTransform: 'none', fontWeight: 600,
@@ -944,7 +1245,11 @@ export default function ShopRequestNew() {
                   size="small"
                   variant="outlined"
                   onClick={gotoNextCat}
-                  disabled={!hasNextCat}
+                  // Also gated on productsQuery.isFetching so a spam-Next
+                  // burst doesn't skip ahead while the previous category's
+                  // products are still loading — categories then land
+                  // out-of-order + the auto-focus lands nowhere. 03-Jul-2026.
+                  disabled={!hasNextCat || productsQuery.isFetching}
                   endIcon={<ChevronRight className="w-4 h-4" />}
                   sx={{
                     textTransform: 'none', fontWeight: 600,
@@ -1213,7 +1518,10 @@ export default function ShopRequestNew() {
               forward actions so the user doesn't fat-finger it. */}
           {showReturnButton && (
             <Button
-              onClick={handleSubmitAsReturn}
+              // 02-Jul-2026: opens the Return-config dialog first so shop can
+              // flip any g/kg line to a partial-weight damage claim. From
+              // that dialog Submit calls handleSubmitAsReturn.
+              onClick={() => setReturnConfigOpen(true)}
               variant="outlined"
               disabled={cart.size === 0 || activeMutation.isPending}
               sx={{
@@ -1223,7 +1531,7 @@ export default function ShopRequestNew() {
                 mr: 'auto',
               }}
             >
-              {createReturnMutation.isPending ? 'Returning…' : 'Return Stock'}
+              Return Stock
             </Button>
           )}
 
@@ -1249,6 +1557,183 @@ export default function ShopRequestNew() {
             {activeMutation.isPending
               ? (isEditMode ? 'Updating…' : 'Submitting…')
               : isEditMode ? 'Update' : 'Submit'}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      {/* Return-config dialog (02-Jul-2026). Opened when the shop clicks
+          "Return Stock" in the review dialog. Lists every cart line + lets
+          the shop flip any g/kg SKU to "Partial (weight)" mode and enter
+          grams to claim — the damage-claim (B2) flow. Bookkeeping-only:
+          no physical goods movement. Submit from here calls
+          handleSubmitAsReturn with returnWeightG per affected line. */}
+      <Dialog
+        open={returnConfigOpen}
+        onClose={(_e, reason) => {
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          if (createReturnMutation.isPending) return
+          setReturnConfigOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Return Stock — configure
+          <IconButton size="small" onClick={() => setReturnConfigOpen(false)} disabled={createReturnMutation.isPending}>
+            <X className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
+            Full pack returns credit the whole MRP. For a partial damage claim on a g/kg product,
+            switch to <strong>Partial</strong> and enter the grams. Godown will review before crediting.
+          </Box>
+          <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+            {Array.from(cart.values()).map(line => {
+              const p = line.product
+              const unit = p.weightUnit ?? ''
+              const isWeightBased = (unit === 'g' || unit === 'kg') && (p.weightValue ?? 0) > 0
+              const packG = isWeightBased ? Number(p.weightValue) * (unit === 'kg' ? 1000 : 1) : 0
+              const maxG  = packG * line.qty
+              const isPartial = line.returnWeightG != null
+              const credit = isPartial && packG > 0
+                ? (line.returnWeightG! / packG) * Number(p.mrp)
+                : line.qty * Number(p.mrp)
+              return (
+                <Box
+                  key={p.id}
+                  sx={{
+                    display: 'flex', flexDirection: 'column', gap: 0.5,
+                    px: 1.5, py: 1,
+                    borderBottom: '1px solid rgba(31,31,31,0.08)',
+                    '&:last-child': { borderBottom: 'none' },
+                    bgcolor: isPartial ? '#FFF8E1' : 'transparent',
+                  }}
+                >
+                  <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ fontSize: 13, fontWeight: 700 }}>{p.name}</Box>
+                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                        {p.code} · {line.qty} × {formatINR(Number(p.mrp))}
+                        {isWeightBased && ` · pack ${p.weightValue}${unit}`}
+                      </Box>
+                    </Box>
+                    {isWeightBased ? (
+                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
+                        <Button
+                          size="small"
+                          variant={!isPartial ? 'contained' : 'outlined'}
+                          onClick={() => {
+                            setCart(prev => {
+                              const n = new Map(prev)
+                              const l = n.get(p.id)!
+                              n.set(p.id, { ...l, returnWeightG: undefined })
+                              return n
+                            })
+                          }}
+                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
+                        >
+                          Full
+                        </Button>
+                        <Button
+                          size="small"
+                          variant={isPartial ? 'contained' : 'outlined'}
+                          onClick={() => {
+                            setCart(prev => {
+                              const n = new Map(prev)
+                              const l = n.get(p.id)!
+                              // Default to half-pack when toggling on — safe non-zero start.
+                              n.set(p.id, { ...l, returnWeightG: Math.round(packG / 2) })
+                              return n
+                            })
+                          }}
+                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
+                        >
+                          Partial
+                        </Button>
+                      </Box>
+                    ) : (
+                      <Box sx={{ fontSize: 10.5, color: '#1F1F1F55', fontStyle: 'italic' }}>
+                        full-pack only
+                      </Box>
+                    )}
+                  </Box>
+                  {isPartial && (
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
+                      <Box sx={{ fontSize: 11, fontWeight: 600, color: '#7C4A00' }}>Weight (g):</Box>
+                      <TextField
+                        type="text"
+                        size="small"
+                        value={line.returnWeightG ?? ''}
+                        onChange={e => {
+                          const v = e.target.value
+                          if (v === '') return
+                          if (!/^\d+$/.test(v)) return
+                          const parsed = parseInt(v, 10)
+                          if (!Number.isFinite(parsed)) return
+                          const clamped = Math.max(1, Math.min(parsed, maxG))
+                          setCart(prev => {
+                            const n = new Map(prev)
+                            const l = n.get(p.id)!
+                            n.set(p.id, { ...l, returnWeightG: clamped })
+                            return n
+                          })
+                        }}
+                        onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                        onFocus={e => (e.target as HTMLInputElement).select()}
+                        slotProps={{ htmlInput: { inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px', width: 72 } } }}
+                        sx={{ width: 92 }}
+                      />
+                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                        of {maxG}g · credit {formatINR(credit)}
+                      </Box>
+                    </Box>
+                  )}
+                </Box>
+              )
+            })}
+          </Box>
+          {(() => {
+            const total = Array.from(cart.values()).reduce((s, l) => {
+              const p = l.product
+              const unit = p.weightUnit ?? ''
+              const packG = (unit === 'g' || unit === 'kg') ? Number(p.weightValue ?? 0) * (unit === 'kg' ? 1000 : 1) : 0
+              const val = l.returnWeightG != null && packG > 0
+                ? (l.returnWeightG / packG) * Number(p.mrp)
+                : l.qty * Number(p.mrp)
+              return s + val
+            }, 0)
+            return (
+              <Box sx={{ mt: 1.5, fontSize: 13, fontWeight: 700 }}>
+                Total credit claimed: {formatINR(total)}
+              </Box>
+            )
+          })()}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setReturnConfigOpen(false)}
+            variant="outlined"
+            disabled={createReturnMutation.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            disabled={cart.size === 0 || createReturnMutation.isPending}
+            onClick={async () => {
+              await handleSubmitAsReturn()
+              setReturnConfigOpen(false)
+            }}
+            sx={{
+              textTransform: 'none', fontWeight: 700,
+              background: '#C62828', color: '#FFFFFF',
+              '&:hover': { background: '#A82020' },
+            }}
+          >
+            {createReturnMutation.isPending ? 'Submitting…' : 'Submit Return'}
           </Button>
         </DialogActions>
       </Dialog>
@@ -1389,10 +1874,12 @@ function ProductsTable({
   catGroups,
   cart,
   onSetQty,
+  onEnterAtEnd,
 }: {
   catGroups: CategoryGroup[]
   cart: Map<string, CartLine>
   onSetQty: (product: ProductDto, qty: number) => void
+  onEnterAtEnd?: () => void
 }) {
   // Always render sub-cat headings — when the parent screen splits cat-groups
   // across two columns, a "hide when only one" rule on a per-column basis
@@ -1470,6 +1957,7 @@ function ProductsTable({
                           product={p}
                           qty={cart.get(p.id)?.qty ?? 0}
                           onSetQty={onSetQty}
+                          onEnterAtEnd={onEnterAtEnd}
                         />
                       ))}
                     </Fragment>
@@ -1495,10 +1983,15 @@ const ProductRow = memo(function ProductRow({
   product,
   qty,
   onSetQty,
+  onEnterAtEnd,
 }: {
   product: ProductDto
   qty: number
   onSetQty: (product: ProductDto, qty: number) => void
+  /** Optional: fires when Enter is pressed on the LAST .qty-input in
+   *  document order (nothing to advance to). Parent uses this to jump
+   *  to the next category. 02-Jul-2026. */
+  onEnterAtEnd?: () => void
 }) {
   const inCart = qty > 0
   return (
@@ -1530,7 +2023,17 @@ const ProductRow = memo(function ProductRow({
               e.preventDefault()
               const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
               const idx = inputs.indexOf(e.currentTarget)
-              inputs[idx + 1]?.focus()
+              const next = inputs[idx + 1]
+              if (next) { next.focus(); return }
+              if (onEnterAtEnd) {
+                // Blur to release focus + defer the state change one tick
+                // so the current keydown event finishes cleanly before
+                // React starts re-rendering. In-tick unmount of the
+                // focused input was breaking the follow-up programmatic
+                // focus() from useEffect (cursor stayed on <body>).
+                ;(e.currentTarget as HTMLInputElement).blur()
+                setTimeout(() => onEnterAtEnd(), 0)
+              }
             }
           }}
           // Block mouse-wheel from adjusting the qty (default browser

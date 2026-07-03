@@ -14,9 +14,35 @@ import { Box, Chip } from '@mui/material'
  *
  * Used in detail items tables and list grids' Dispatched columns.
  */
-export function DispatchedCell({ qty, requested }: { qty: number | null; requested: number }) {
+export function DispatchedCell({ qty, requested, received }: {
+  qty: number | null
+  requested: number
+  /** Shop's reported qty at confirm-receipt (02-Jul-2026). When set AND
+   *  different from dispatched, the cell renders "dispatched → received"
+   *  stacked so the shop-reported number is the eye-catch. Null =
+   *  no discrepancy → cell falls back to just showing dispatched. */
+  received?: number | null
+}) {
   if (qty == null) {
     return <span className="text-[#1F1F1F]/40">—</span>
+  }
+  // Shop reported a different count on receive — show BOTH, received wins the eye.
+  if (received != null && received !== qty) {
+    const short = received < qty
+    const color = short ? '#C62828' : '#E65100'
+    return (
+      <Box sx={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+        <Box sx={{ fontSize: 12, color, fontWeight: 700 }}>
+          {received}
+          <Box component="span" sx={{ ml: 0.5, fontSize: 9, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase' }}>
+            received
+          </Box>
+        </Box>
+        <Box sx={{ fontSize: 10, color: '#1F1F1F77', fontWeight: 500 }}>
+          dispatched {qty}
+        </Box>
+      </Box>
+    )
   }
   if (qty === 0) {
     return (
