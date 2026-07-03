@@ -166,7 +166,18 @@ export default function InventoryRequests() {
   )
   const openPrintCumulative = (ids?: string[]) => {
     const qs = new URLSearchParams()
-    if (ids && ids.length) qs.set('requestIds', ids.join(','))
+    if (ids && ids.length) {
+      qs.set('requestIds', ids.join(','))
+      // Also pass distinct shop names for the print header (03-Jul-2026).
+      // Derived from approvedRows so the print page doesn't need to
+      // re-fetch. Deduped + comma-joined; "Ambatur" for one shop,
+      // "Ambatur, Anna Nagar" for multi-shop selections.
+      const idSet = new Set(ids)
+      const shopNames = Array.from(new Set(
+        approvedRows.filter(r => idSet.has(r.id)).map(r => r.shopName),
+      )).sort()
+      if (shopNames.length > 0) qs.set('shopNames', shopNames.join(', '))
+    }
     const suffix = qs.toString() ? `?${qs.toString()}` : ''
     window.open(`/print/cumulative${suffix}`, '_blank', 'noopener,noreferrer')
   }
@@ -802,8 +813,16 @@ export default function InventoryRequests() {
               </TextField>
 
               <Box sx={{ mb: 1, fontSize: 12, color: '#1F1F1F99' }}>
-                {selectedRequestIds.size} of {approvedRows.length} selected
-                {printShopFilter && ` · showing ${visibleApprovedRows.length} in filter`}
+                {(() => {
+                  // With a shop filter active, count only the visible+checked
+                  // intersection (that's what actually prints). "12 of 12"
+                  // across all shops was confusing when only 3 are shown.
+                  if (printShopFilter) {
+                    const scoped = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
+                    return `${scoped} of ${visibleApprovedRows.length} selected in this shop`
+                  }
+                  return `${selectedRequestIds.size} of ${approvedRows.length} selected`
+                })()}
               </Box>
 
               <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
@@ -867,21 +886,33 @@ export default function InventoryRequests() {
           >
             Cancel
           </Button>
-          <Button
-            variant="contained"
-            disabled={selectedRequestIds.size === 0}
-            onClick={() => {
-              const ids = Array.from(selectedRequestIds)
-              // If user kept EVERY request selected, drop the filter entirely
-              // so the SP takes the fast path (no ANY() lookup on ~50 UUIDs).
-              const allSelected = ids.length === approvedRows.length
-              openPrintCumulative(allSelected ? undefined : ids)
-              setPrintSelectionOpen(false)
-            }}
-            sx={{ textTransform: 'none', fontWeight: 700 }}
-          >
-            Print {selectedRequestIds.size} selected
-          </Button>
+          {(() => {
+            // When a shop filter is active, scope the print to the
+            // visible+selected intersection ONLY — the user is looking at
+            // Ambatur's rows and expects only Ambatur's cumulative.
+            // Selections in other shops don't leak into this print run.
+            // 03-Jul-2026.
+            const scopedIds = printShopFilter
+              ? visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).map(r => r.id)
+              : Array.from(selectedRequestIds)
+            const scopedCount = scopedIds.length
+            // "All selected" fast-path only applies when NO shop filter
+            // is active AND every approved row is checked.
+            const allSelected = !printShopFilter && scopedCount === approvedRows.length
+            return (
+              <Button
+                variant="contained"
+                disabled={scopedCount === 0}
+                onClick={() => {
+                  openPrintCumulative(allSelected ? undefined : scopedIds)
+                  setPrintSelectionOpen(false)
+                }}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
+              >
+                Print {scopedCount} selected
+              </Button>
+            )
+          })()}
         </DialogActions>
       </Dialog>
     </div>
