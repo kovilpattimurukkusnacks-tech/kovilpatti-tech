@@ -124,11 +124,15 @@ export default function PrintCumulative() {
 
   return (
     <div className="print-page">
-      {/* Wrap whole sheet in a 1-column <table> so the <thead> block
-          (brand header + meta strip) repeats at the top of every printed
-          page when the kitchen plan spans multiple sheets (30-Jun-2026
-          client req). Screen view is unaffected — table renders as one
-          continuous flow on screen. */}
+      {/* Wrap whole sheet in a 1-column <table> so the <thead> block (brand
+          header only) repeats at the top of every printed page when the
+          kitchen plan spans multiple sheets (30-Jun-2026 client req).
+          Screen view is unaffected — table renders as one continuous flow
+          on screen.
+          03-Jul-2026 (client req) — the "Generated / Sourced from" meta
+          strip moved OUT of <thead> into the body: it was repeating on
+          every page along with the brand header, which only needs to show
+          once at the top of the document, not on every sheet. */}
       <table className="print-page-table">
         <thead>
           <tr>
@@ -137,7 +141,12 @@ export default function PrintCumulative() {
                 <div className="print-brand-name">{BRAND_NAME}</div>
                 <div className="print-brand-subtitle">Cumulative Batch Plan</div>
               </header>
-
+            </td>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>
               <div className="print-meta-strip">
                 <div>
                   <span className="muted">Generated: </span>
@@ -150,12 +159,6 @@ export default function PrintCumulative() {
                   </div>
                 )}
               </div>
-            </td>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
       {sections.length === 0 ? (
         <p style={{ marginTop: 32 }}>No in-progress requests right now — nothing to prepare.</p>
       ) : (
