@@ -211,31 +211,45 @@ export default function PrintCumulative() {
                 </section>
               )
             }
+            // 03-Jul-2026 (client req: fix the near-blank trailing page) —
+            // the grand-totals strip used to be its own full-width block
+            // AFTER the whole grid. If the tallest column ended too close
+            // to the page boundary to fit that ~26px strip, the entire
+            // strip (and nothing else) spilled onto an otherwise-empty new
+            // page. Appending it inside whichever column is shortest lets
+            // it fill existing leftover space instead of demanding a full
+            // new row of its own.
+            const colHeights = columns.map(col =>
+              col.reduce((s, c) => s + heightOfCatGroup(c.section), 0))
+            const shortestCol = colHeights.indexOf(Math.min(...colHeights))
+            const summary = (
+              <div key="summary" className="print-column-summary">
+                <div>
+                  {totalSkus} {totalSkus === 1 ? 'SKU' : 'SKUs'}
+                  <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
+                </div>
+                <div>
+                  {totalUnits} units
+                  {totalRequests > 0 && (
+                    <span className="muted">
+                      {' '}· from up to {totalRequests} request{totalRequests === 1 ? '' : 's'}
+                    </span>
+                  )}
+                </div>
+                <div className="muted">printed {formatIstDateTime(new Date())}</div>
+              </div>
+            )
             return (
               <div className="print-dense-grid">
                 {columns.map((col, i) => (
-                  <div className="print-dense-col" key={i}>{col.map(renderCard)}</div>
+                  <div className="print-dense-col" key={i}>
+                    {col.map(renderCard)}
+                    {i === shortestCol && summary}
+                  </div>
                 ))}
               </div>
             )
           })()}
-
-          {/* Compact grand-totals strip below the root sections. */}
-              <div className="print-dense-summary">
-                <span>
-              {totalSkus} {totalSkus === 1 ? 'SKU' : 'SKUs'}
-              <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
-            </span>
-            <span>
-              {totalUnits} units
-              {totalRequests > 0 && (
-                <span className="muted">
-                  {' '}· from up to {totalRequests} request{totalRequests === 1 ? '' : 's'}
-                </span>
-              )}
-              <span className="muted"> · printed {formatIstDateTime(new Date())}</span>
-            </span>
-          </div>
         </>
       )}
 

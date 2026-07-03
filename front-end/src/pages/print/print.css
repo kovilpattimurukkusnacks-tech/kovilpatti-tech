@@ -623,6 +623,28 @@
   color: #C62828;
 }
 
+/* Compact variant (03-Jul-2026, cumulative report only) — the grand-totals
+ * strip used to be its own full-width row below the whole grid, which
+ * could spill onto an otherwise-empty new page if the tallest column
+ * didn't leave quite enough room for it. Now appended inside whichever
+ * column ends up shortest (see PrintCumulative.tsx), so it needs to work
+ * as a narrow stacked block instead of a wide space-between row. */
+.print-column-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-top: 2px solid #1F1F1F;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.print-column-summary .muted {
+  font-weight: 500;
+  color: rgba(31, 31, 31, 0.6);
+}
+
 /* Browser-print rules. Hide UI affordances; tighten margins for paper. */
 @media print {
   body {
