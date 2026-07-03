@@ -313,7 +313,7 @@ export default function ShopRequestDetail() {
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
@@ -588,33 +588,108 @@ export default function ShopRequestDetail() {
         <Paper
           elevation={0}
           sx={{
-            p: 1.5,
             mb: 2,
             borderRadius: 2,
-            bgcolor: '#FFEBEE',
             border: '1px solid #C62828',
+            overflow: 'hidden',
           }}
         >
-          <Box sx={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#C62828', mb: 0.75 }}>
-            Out of stock — {outOfStockItems.length} {outOfStockItems.length === 1 ? 'product' : 'products'} not dispatched
+          <Box sx={{
+            px: 2, py: 1,
+            bgcolor: '#FFEBEE',
+            borderBottom: '1px solid #C62828',
+            fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#C62828',
+          }}>
+            Out of stock · {outOfStockItems.length} {outOfStockItems.length === 1 ? 'product' : 'products'} not dispatched
           </Box>
-          <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75 }}>
-            {outOfStockItems.map(it => (
-              <Chip
-                key={it.id}
-                label={`${it.productName} · req ${it.requestedQty}`}
-                size="small"
-                sx={{
-                  bgcolor: '#FFFFFF',
-                  border: '1px solid #C62828',
-                  color: '#7F1D1D',
-                  fontWeight: 600,
-                }}
-              />
-            ))}
-          </Box>
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#FFF5F5' }}>
+                <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7F1D1D' }}>Product</TableCell>
+                <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7F1D1D' }}>Req'd</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {outOfStockItems.map(it => (
+                <TableRow key={it.id}>
+                  <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600, color: '#1F1F1F' }}>
+                    {it.productName}
+                  </TableCell>
+                  <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: '#7F1D1D' }}>
+                    {it.requestedQty}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
         </Paper>
       )}
+
+      {/* Receipt-change log (02-Jul-2026). Compact table listing every line
+          where the shop's confirm-receipt count differed from the godown's
+          dispatched qty. Only surfaces when at least one item has
+          receivedQty set — otherwise the whole block is hidden. Sits
+          above the fixed footer so the shop can scroll to it as a quick
+          "what did I change?" reference. */}
+      {(() => {
+        const changed = (request.items ?? []).filter(it => it.receivedQty != null)
+        if (changed.length === 0) return null
+        return (
+          <Paper
+            elevation={0}
+            sx={{
+              mb: 2,
+              borderRadius: 2,
+              border: '1px solid rgba(31,31,31,0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            <Box sx={{
+              px: 2, py: 1,
+              bgcolor: '#FFF8DC',
+              borderBottom: '1px solid rgba(31,31,31,0.2)',
+              fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#1F1F1F',
+            }}>
+              Receipt changes · {changed.length} {changed.length === 1 ? 'product' : 'products'}
+            </Box>
+            <Table size="small">
+              <TableHead>
+                <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+                  <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Product</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Dispatched</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Received</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Change</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {changed.map(it => {
+                  const disp  = it.dispatchedQty ?? 0
+                  const rec   = it.receivedQty!
+                  const delta = rec - disp
+                  const short = delta < 0
+                  const over  = delta > 0
+                  return (
+                    <TableRow key={it.id}>
+                      <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>
+                        {it.productName}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>
+                        {disp}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {rec}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {short ? delta : over ? `+${delta}` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Paper>
+        )
+      })()}
 
       {/* Fixed summary bar — same pattern as the New Stock Request cart
           bar (sidebar-aware left offset, full-bleed right, elevation 6 for
@@ -829,12 +904,17 @@ export default function ShopRequestDetail() {
                         <TextField
                           type="text"
                           size="small"
-                          value={typed}
+                          // String-coerce so MUI doesn't switch from
+                          // controlled to uncontrolled when the number 0
+                          // (initial dispatched qty for a 0-OOS line, if
+                          // it slipped through the filter) reads as
+                          // falsy inside the input.
+                          value={String(typed)}
                           onChange={e => {
                             const v = e.target.value
                             if (v === '') {
-                              // Blank = reset to dispatched (no discrepancy).
-                              setReceivedQtys(prev => { const n = new Map(prev); n.set(it.id, disp); return n })
+                              // Blank = 0 (shop got nothing on that line).
+                              setReceivedQtys(prev => { const n = new Map(prev); n.set(it.id, 0); return n })
                               return
                             }
                             if (!/^\d+$/.test(v)) return
@@ -846,7 +926,30 @@ export default function ShopRequestDetail() {
                               return n
                             })
                           }}
-                          onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
+                          onKeyDown={e => {
+                            if (['e', 'E', '.', ','].includes(e.key)) { e.preventDefault(); return }
+                            // Keyboard stepper: + / - / ArrowUp / ArrowDown
+                            // adjust the qty by 1. Handy for quick nudges
+                            // when the shop's count is off by a few units.
+                            if (e.key === '+' || e.key === '=' || e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              setReceivedQtys(prev => {
+                                const n = new Map(prev)
+                                n.set(it.id, (n.get(it.id) ?? disp) + 1)
+                                return n
+                              })
+                              return
+                            }
+                            if (e.key === '-' || e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              setReceivedQtys(prev => {
+                                const n = new Map(prev)
+                                const cur = n.get(it.id) ?? disp
+                                if (cur > 0) n.set(it.id, cur - 1)
+                                return n
+                              })
+                            }
+                          }}
                           onWheel={e => (e.target as HTMLInputElement).blur()}
                           onFocus={e => (e.target as HTMLInputElement).select()}
                           slotProps={{

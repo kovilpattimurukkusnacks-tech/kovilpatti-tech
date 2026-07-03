@@ -2,7 +2,7 @@ import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useR
 import { useNavigate, useParams } from 'react-router-dom'
 import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
-  Alert, Autocomplete, Badge, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle,
+  Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField,
 } from '@mui/material'
@@ -16,6 +16,8 @@ import {
   useCreateReturn,
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
+import { BASE_URL } from '../../api/config'
+import { tokenStore } from '../../api/tokenStore'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
@@ -198,13 +200,19 @@ export default function ShopRequestNew() {
   )
   const hasPrevCat = currentCatIndex > 0
   const hasNextCat = currentCatIndex >= 0 && currentCatIndex < sortedRootCats.length - 1
+  // Ref-based auto-focus: gotoCat flips the flag, then a useEffect
+  // watches productsQuery.data (new-category products land here) and
+  // focuses the first .qty-input once it renders. Replaces the earlier
+  // rAF+setTimeout timer which raced against React-Query's fetch.
+  // Initialised TRUE so the first product's qty grabs focus on page
+  // mount too — restored 03-Jul-2026 after the gotoCat refactor
+  // accidentally removed the mount-time focus behaviour.
+  const pendingFocusRef = useRef(true)
   const gotoCat = useCallback((id: number) => {
     setSelectedCategoryId(id)
     setVisitedCategoryIds(prev => prev.has(id) ? prev : new Set(prev).add(id))
-    // Scroll to top of the products area so the user lands on the new
-    // category's first product, not their previous scroll position from
-    // the prior category.
     window.scrollTo({ top: 0, behavior: 'smooth' })
+    pendingFocusRef.current = true
   }, [])
   const gotoPrevCat = useCallback(() => {
     if (!hasPrevCat) return
@@ -227,6 +235,16 @@ export default function ShopRequestNew() {
   // (pages/Products.tsx). Keep these in sync if a new type is ever added.
   const TYPE_OPTIONS = ['pack', 'jar'] as const
 
+  // sessionStorage key — per-shop scoped so multi-shop-account users
+  // (rare, but possible) don't cross-hydrate. 03-Jul-2026: added as a
+  // failsafe against F5 during typing — auto-save is debounced, and the
+  // beforeunload keepalive fetch isn't 100% reliable across browsers.
+  // sessionStorage is synchronous + survives refresh; we hydrate cart
+  // from it on mount and clear it on submit.
+  const draftLocalKey = currentUser?.shopId
+    ? `shop-request-new-cart:${currentUser.shopId}`
+    : null
+
   // Cart state — Map keyed by productId so add/update/remove is O(1).
   // Persists across category / type / search / page changes (intentionally).
   const [cart, setCart] = useState<Map<string, CartLine>>(new Map())
@@ -234,6 +252,13 @@ export default function ShopRequestNew() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
   const [seeded, setSeeded] = useState(false)
+  // Only turns true when the seed genuinely came from an existing source
+  // (edit-mode request or a saved draft). `seeded` alone can't be trusted
+  // — it also flips on the user's first qty edit to lock out late-arriving
+  // draft data. The "mark all categories visited" side-effect must key off
+  // THIS flag, else auto-save's own draft refetch would prematurely
+  // saturate the visit counter and unlock Submit.
+  const [seededFromSource, setSeededFromSource] = useState(false)
   // True when the cart / notes have changed since the last successful save
   // (or since the cart was seeded from a saved draft). Drives the Save as
   // Draft button's disabled state so a user can't spam-save the same data.
@@ -287,6 +312,10 @@ export default function ShopRequestNew() {
     setCart(map)
     setNotes(source.notes ?? '')
     setSeeded(true)
+    // Only flipped here (real server-side seed) so the visit-gate side-
+    // effect below can distinguish "we hydrated from a draft/edit source"
+    // from "user is mid-editing and auto-save round-tripped".
+    setSeededFromSource(true)
   }, [isEditMode, existing, draftQuery.data, seeded])
 
   // 29-Jun-2026 bug fix: when a saved draft (or edit-mode request) seeds
@@ -298,7 +327,12 @@ export default function ShopRequestNew() {
   // the seeded source actually had items. A bare empty-draft (none today
   // but defensive against future changes) doesn't trip this.
   useEffect(() => {
-    if (!seeded) return
+    // 02-Jul-2026 bug fix: was keyed off `seeded`, which ALSO flips on
+    // the user's first qty change. That caused auto-save's own draft
+    // refetch to trip this effect and mark every category visited,
+    // opening the Submit gate before the user had actually reviewed
+    // each section. `seededFromSource` fires ONLY on genuine server-seed.
+    if (!seededFromSource) return
     if (rootCats.length === 0) return
     const source = isEditMode ? existing : draftQuery.data
     if (!source?.items?.length) return
@@ -309,7 +343,7 @@ export default function ShopRequestNew() {
       for (const c of rootCats) next.add(c.id)
       return next
     })
-  }, [seeded, rootCats, isEditMode, existing, draftQuery.data])
+  }, [seededFromSource, rootCats, isEditMode, existing, draftQuery.data])
 
   // Edit-mode guard:
   //   • Shop user — only Pending, and only within editable_until.
@@ -326,6 +360,35 @@ export default function ShopRequestNew() {
   // Use `allCats` / `rootCats` directly — the legacy `categories` alias is
   // gone since every call site has been migrated to the right source.
   const products = productsQuery.data?.items ?? []
+
+  // Auto-focus the first qty input of the freshly-loaded category after
+  // a Prev/Next navigation. gotoCat flags pendingFocusRef; here we
+  // fire on either (a) the selected category changing, or (b) products
+  // finishing a fetch. Whichever completes second — once the DOM has
+  // the new .qty-input rows — grabs focus. Both deps stay in the array
+  // so a same-count cached-cat transition still triggers the focus.
+  // 02-Jul-2026.
+  useEffect(() => {
+    if (!pendingFocusRef.current) return
+    if (productsQuery.isFetching) return
+    if (products.length === 0) return
+    pendingFocusRef.current = false
+    // Poll for the first .qty-input to appear + steal focus. React-Query's
+    // cache-refresh timing vs React's commit vs the smooth scroll all
+    // race in different orders on different runs, so a fixed rAF/timeout
+    // isn't reliable. Loop up to 500 ms in 50-ms ticks; bail on first hit.
+    let ticks = 0
+    const tryFocus = () => {
+      const first = document.querySelector<HTMLInputElement>('.qty-input')
+      if (first) {
+        first.focus()
+        first.select()
+        return
+      }
+      if (ticks++ < 10) setTimeout(tryFocus, 50)
+    }
+    tryFocus()
+  }, [selectedCategoryId, productsQuery.isFetching, products.length])
 
   // Memoized Autocomplete value — stable reference unless the selection
   // changes, otherwise MUI's option-equality scan reruns every render.
@@ -442,6 +505,10 @@ export default function ShopRequestNew() {
     if (!draftEnabled || !isDraftDirty || cart.size === 0) return
     if (saveDraftMutation.isPending) return
 
+    // Debounce reduced 1500 → 400 ms on 03-Jul-2026 to shrink the "typed
+    // but not saved" window. Beforeunload keepalive covers the residual
+    // race, but a short debounce also means each keystroke persists
+    // within half a second — a hard refresh mid-typing loses almost nothing.
     const timer = setTimeout(() => {
       const startCount = changeCountRef.current
       const items = Array.from(cart.values()).map(l => ({
@@ -465,7 +532,7 @@ export default function ShopRequestNew() {
           // the cart review dialog surfaces the BE error if relevant.
         },
       )
-    }, 1500)
+    }, 400)
 
     return () => clearTimeout(timer)
     // saveDraftMutation.mutate's identity changes per render so we capture
@@ -473,6 +540,141 @@ export default function ShopRequestNew() {
     // want the effect to re-run when the previous save lands.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [draftEnabled, isDraftDirty, cart, notes, saveDraftMutation.isPending])
+
+  // sessionStorage failsafe (03-Jul-2026): mirror the cart + notes into
+  // sessionStorage on every change. If the user hits F5 mid-typing —
+  // before auto-save debounce fires OR before the beforeunload keepalive
+  // completes — the cart survives the reload via sessionStorage. On
+  // mount we hydrate from it (see the seed effect below). On successful
+  // Submit + successful auto-save landing == server draft we clear it.
+  useEffect(() => {
+    if (!draftEnabled || !draftLocalKey) return
+    // Do NOT clear on empty cart — this effect fires on initial mount
+    // (before the hydration effect below has read the storage) and would
+    // wipe a prior session's snapshot right when we need it. Cleared only
+    // on successful Submit (see submit handlers). 03-Jul-2026.
+    if (cart.size === 0) return
+    const snapshot = {
+      items: Array.from(cart.values()).map(l => ({
+        productId: l.product.id,
+        code:      l.product.code,
+        name:      l.product.name,
+        mrp:       l.product.mrp,
+        weightValue: l.product.weightValue,
+        weightUnit:  l.product.weightUnit,
+        categoryName: l.product.categoryName,
+        qty: l.qty,
+      })),
+      notes,
+      // Persist the visit-history so post-F5 the "N/11 categories done"
+      // counter stays honest. Without this the user re-lands at 1/11
+      // even though their cart already spans multiple categories.
+      visitedCategoryIds: Array.from(visitedCategoryIds),
+      savedAt: new Date().toISOString(),
+    }
+    try { sessionStorage.setItem(draftLocalKey, JSON.stringify(snapshot)) } catch { /* noop */ }
+  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds])
+
+  // sessionStorage hydration (03-Jul-2026). Runs ONCE per mount if the
+  // server-side draft hasn't landed yet. Prevents the "F5 lost my typing"
+  // symptom regardless of whether auto-save / beforeunload actually made
+  // it to the BE. Server draft (once it arrives) takes over via the
+  // existing seed effect — if it happens to be MORE recent than the
+  // sessionStorage snapshot, the map is rebuilt fresh from it.
+  useEffect(() => {
+    if (!draftEnabled || !draftLocalKey) return
+    if (seeded) return
+    // Bail ONLY when the server actually returned a draft — its seed will
+    // win. If the server returned null (no draft) OR is still loading,
+    // hydrate from sessionStorage so an F5 mid-typing doesn't reset the
+    // cart just because the debounced auto-save hadn't reached the BE.
+    if (draftQuery.data) return
+    let raw: string | null = null
+    try { raw = sessionStorage.getItem(draftLocalKey) } catch { /* noop */ }
+    if (!raw) return
+    try {
+      const parsed = JSON.parse(raw) as {
+        items: Array<{
+          productId: string; code: string; name: string; mrp: number
+          weightValue: number | null; weightUnit: string | null
+          categoryName: string; qty: number
+        }>
+        notes: string
+        visitedCategoryIds?: number[]
+      }
+      if (!parsed?.items?.length) return
+      const map = new Map<string, CartLine>()
+      for (const it of parsed.items) {
+        const stub: ProductDto = {
+          id: it.productId, code: it.code, name: it.name, mrp: it.mrp,
+          weightValue: it.weightValue, weightUnit: it.weightUnit,
+          categoryId: 0, categoryName: it.categoryName, type: '',
+          purchasePrice: null, gst: null, active: true, isVendorProcured: false,
+        }
+        map.set(it.productId, { product: stub, qty: it.qty })
+      }
+      setCart(map)
+      setNotes(parsed.notes ?? '')
+      // Restore the visit-history so the "N/11 categories done" counter
+      // reflects what the user had already ticked off before the reload.
+      if (parsed.visitedCategoryIds?.length) {
+        setVisitedCategoryIds(new Set(parsed.visitedCategoryIds))
+      }
+      // Not `seededFromSource=true` — sessionStorage isn't a "server truth"
+      // source; but we DID restore the visit map above so the gate
+      // resumes at the right count.
+      setSeeded(true)
+      setIsDraftDirty(true)  // still needs to sync to server
+    } catch { /* corrupted JSON — bail */ }
+    // Depends on draftQuery.data so that when the server responds with
+    // null (no draft), this effect re-fires and hydrates from
+    // sessionStorage. `seeded` guards against subsequent re-runs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftEnabled, draftLocalKey, draftQuery.data])
+
+  // Flush the draft on page unload / F5 refresh (02-Jul-2026 client bug).
+  // Auto-save is debounced 1.5 s so a user typing qty + accidental F5
+  // within that window loses the in-progress cart. The browser prompt from
+  // useUnsavedChangesGuard warns them, but if they confirm the reload the
+  // save still hasn't fired. `fetch({ keepalive: true })` guarantees the
+  // POST completes even after the page starts unloading.
+  //
+  // beforeunload runs LAST (right before navigation), so we always have
+  // the latest cart / notes in the closure. No debounce here — every
+  // unload attempt fires a save if there are dirty changes.
+  useEffect(() => {
+    if (!draftEnabled) return
+    const handler = () => {
+      if (!isDraftDirty || cart.size === 0) return
+      const items = Array.from(cart.values()).map(l => ({
+        productId: l.product.id,
+        requestedQty: l.qty,
+      }))
+      const token = tokenStore.get()
+      if (!token) return
+      try {
+        fetch(`${BASE_URL}/api/stock-requests/draft`, {
+          method: 'POST',
+          keepalive: true,
+          headers: {
+            'Content-Type': 'application/json',
+            Authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ notes: notes.trim() || undefined, items }),
+        }).catch(() => { /* fire and forget */ })
+      } catch { /* fire and forget */ }
+    }
+    window.addEventListener('beforeunload', handler)
+    // visibilitychange = tab going background (Ctrl+Tab, minimising).
+    // Belt-and-braces: iOS Safari sometimes suspends beforeunload but
+    // still fires this. Fire the same save.
+    const visHandler = () => { if (document.visibilityState === 'hidden') handler() }
+    document.addEventListener('visibilitychange', visHandler)
+    return () => {
+      window.removeEventListener('beforeunload', handler)
+      document.removeEventListener('visibilitychange', visHandler)
+    }
+  }, [draftEnabled, isDraftDirty, cart, notes])
 
   // Review & Submit gate — shop user (new mode only) must have visited every
   // category before submitting. Edit-mode and admin-acting-on-shop bypass:
@@ -580,6 +782,7 @@ export default function ShopRequestNew() {
         // Submission is itself a "save" — flag the guard so the upcoming
         // navigate() doesn't trip the unsaved-changes modal.
         submittingRef.current = true
+        if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
       } else {
         const res = await createMutation.mutateAsync({
@@ -587,6 +790,7 @@ export default function ShopRequestNew() {
           items,
         })
         submittingRef.current = true
+        if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(`/shop/requests/${res.id}`)
       }
     } catch {
@@ -626,6 +830,7 @@ export default function ShopRequestNew() {
         items,
       })
       submittingRef.current = true
+      if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
       navigate(`/shop/requests/${res.id}`)
     } catch {
       // shown via apiErrorMessage below
@@ -679,6 +884,12 @@ export default function ShopRequestNew() {
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
+      // Also wipe the sessionStorage failsafe — otherwise an immediate
+      // F5 re-hydrates the just-discarded cart from the local snapshot.
+      // 03-Jul-2026.
+      if (draftLocalKey) {
+        try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ }
+      }
       setDiscardConfirmOpen(false)
     } catch {
       // shown via apiErrorMessage below — leave dialog open so user can retry
@@ -722,18 +933,38 @@ export default function ShopRequestNew() {
               : 'Update items or quantities. Changes apply until the cutoff.')
           : 'Type a quantity next to any product to add it to your request.'}
         action={
-          <Button
-            variant="outlined"
-            startIcon={<ArrowLeft className="w-4 h-4" />}
-            onClick={() => navigate(detailPath)}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Back
-          </Button>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+            {/* Draft badge — surfaces whenever there's an unsent cart
+                being auto-saved. Same amber/gold treatment as the
+                dispatch-draft chip on the inventory side. 03-Jul-2026. */}
+            {draftEnabled && cart.size > 0 && (
+              <Chip
+                label="Draft"
+                size="small"
+                variant="outlined"
+                sx={{
+                  borderColor: '#C28A00',
+                  color: '#7C4A00',
+                  bgcolor: '#FFF8E1',
+                  fontWeight: 700,
+                  fontSize: 11,
+                  letterSpacing: 0.5,
+                }}
+              />
+            )}
+            <Button
+              variant="outlined"
+              startIcon={<ArrowLeft className="w-4 h-4" />}
+              onClick={() => navigate(detailPath)}
+              sx={{
+                textTransform: 'none', fontWeight: 600,
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+              }}
+            >
+              Back
+            </Button>
+          </Box>
         }
       />
 
@@ -856,9 +1087,9 @@ export default function ShopRequestNew() {
             alignItems: 'flex-start',
           }}
         >
-          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} />
+          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           {rightCatGroups.length > 0 && (
-            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} />
+            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           )}
         </Box>
       )}
@@ -936,7 +1167,10 @@ export default function ShopRequestNew() {
                   size="small"
                   variant="outlined"
                   onClick={gotoPrevCat}
-                  disabled={!hasPrevCat}
+                  // Also gated on productsQuery.isFetching so rapid clicks
+                  // don't stack category-switches while the new category's
+                  // products are still loading. 03-Jul-2026.
+                  disabled={!hasPrevCat || productsQuery.isFetching}
                   startIcon={<ChevronLeft className="w-4 h-4" />}
                   sx={{
                     textTransform: 'none', fontWeight: 600,
@@ -957,7 +1191,11 @@ export default function ShopRequestNew() {
                   size="small"
                   variant="outlined"
                   onClick={gotoNextCat}
-                  disabled={!hasNextCat}
+                  // Also gated on productsQuery.isFetching so a spam-Next
+                  // burst doesn't skip ahead while the previous category's
+                  // products are still loading — categories then land
+                  // out-of-order + the auto-focus lands nowhere. 03-Jul-2026.
+                  disabled={!hasNextCat || productsQuery.isFetching}
                   endIcon={<ChevronRight className="w-4 h-4" />}
                   sx={{
                     textTransform: 'none', fontWeight: 600,
@@ -1582,10 +1820,12 @@ function ProductsTable({
   catGroups,
   cart,
   onSetQty,
+  onEnterAtEnd,
 }: {
   catGroups: CategoryGroup[]
   cart: Map<string, CartLine>
   onSetQty: (product: ProductDto, qty: number) => void
+  onEnterAtEnd?: () => void
 }) {
   // Always render sub-cat headings — when the parent screen splits cat-groups
   // across two columns, a "hide when only one" rule on a per-column basis
@@ -1663,6 +1903,7 @@ function ProductsTable({
                           product={p}
                           qty={cart.get(p.id)?.qty ?? 0}
                           onSetQty={onSetQty}
+                          onEnterAtEnd={onEnterAtEnd}
                         />
                       ))}
                     </Fragment>
@@ -1688,10 +1929,15 @@ const ProductRow = memo(function ProductRow({
   product,
   qty,
   onSetQty,
+  onEnterAtEnd,
 }: {
   product: ProductDto
   qty: number
   onSetQty: (product: ProductDto, qty: number) => void
+  /** Optional: fires when Enter is pressed on the LAST .qty-input in
+   *  document order (nothing to advance to). Parent uses this to jump
+   *  to the next category. 02-Jul-2026. */
+  onEnterAtEnd?: () => void
 }) {
   const inCart = qty > 0
   return (
@@ -1723,7 +1969,17 @@ const ProductRow = memo(function ProductRow({
               e.preventDefault()
               const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
               const idx = inputs.indexOf(e.currentTarget)
-              inputs[idx + 1]?.focus()
+              const next = inputs[idx + 1]
+              if (next) { next.focus(); return }
+              if (onEnterAtEnd) {
+                // Blur to release focus + defer the state change one tick
+                // so the current keydown event finishes cleanly before
+                // React starts re-rendering. In-tick unmount of the
+                // focused input was breaking the follow-up programmatic
+                // focus() from useEffect (cursor stayed on <body>).
+                ;(e.currentTarget as HTMLInputElement).blur()
+                setTimeout(() => onEnterAtEnd(), 0)
+              }
             }
           }}
           // Block mouse-wheel from adjusting the qty (default browser
