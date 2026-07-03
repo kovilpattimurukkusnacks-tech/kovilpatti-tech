@@ -24,6 +24,7 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { ProductDto } from '../../api/products/types'
+import type { CategoryDto } from '../../api/categories/types'
 import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { formatIstTime } from '../../utils/formatDate'
@@ -252,13 +253,6 @@ export default function ShopRequestNew() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
   const [seeded, setSeeded] = useState(false)
-  // Only turns true when the seed genuinely came from an existing source
-  // (edit-mode request or a saved draft). `seeded` alone can't be trusted
-  // — it also flips on the user's first qty edit to lock out late-arriving
-  // draft data. The "mark all categories visited" side-effect must key off
-  // THIS flag, else auto-save's own draft refetch would prematurely
-  // saturate the visit counter and unlock Submit.
-  const [seededFromSource, setSeededFromSource] = useState(false)
   // True when the cart / notes have changed since the last successful save
   // (or since the cart was seeded from a saved draft). Drives the Save as
   // Draft button's disabled state so a user can't spam-save the same data.
@@ -312,10 +306,6 @@ export default function ShopRequestNew() {
     setCart(map)
     setNotes(source.notes ?? '')
     setSeeded(true)
-    // Only flipped here (real server-side seed) so the visit-gate side-
-    // effect below can distinguish "we hydrated from a draft/edit source"
-    // from "user is mid-editing and auto-save round-tripped".
-    setSeededFromSource(true)
   }, [isEditMode, existing, draftQuery.data, seeded])
 
   // 29-Jun-2026 bug fix: when a saved draft (or edit-mode request) seeds
@@ -326,24 +316,80 @@ export default function ShopRequestNew() {
   // Only fires when (a) we've seeded, (b) rootCats has loaded, and (c)
   // the seeded source actually had items. A bare empty-draft (none today
   // but defensive against future changes) doesn't trip this.
+  // 03-Jul-2026: mark visited = every root category that has at least one
+  // cart item under it. Runs on every cart/allCats change so both
+  // sessionStorage-hydration AND user-driven navigation build up the
+  // visit set precisely — not the "mark ALL 11" hammer from the seed
+  // effect above. Fixes: Back → New Request lost the visit progress
+  // because the sessionStorage path doesn't set seededFromSource.
   useEffect(() => {
-    // 02-Jul-2026 bug fix: was keyed off `seeded`, which ALSO flips on
-    // the user's first qty change. That caused auto-save's own draft
-    // refetch to trip this effect and mark every category visited,
-    // opening the Submit gate before the user had actually reviewed
-    // each section. `seededFromSource` fires ONLY on genuine server-seed.
-    if (!seededFromSource) return
-    if (rootCats.length === 0) return
-    const source = isEditMode ? existing : draftQuery.data
-    if (!source?.items?.length) return
+    if (cart.size === 0) return
+    if (allCats.length === 0 || rootCats.length === 0) return
+    // Resolve leaf category name → owning root id. Walk allCats: for
+    // each cart item, find its category, then follow parent chain to
+    // the root, collect root ids.
+    const byName = new Map<string, CategoryDto>()
+    for (const c of allCats) if (!byName.has(c.name)) byName.set(c.name, c)
+    const byId = new Map<number, CategoryDto>()
+    for (const c of allCats) byId.set(c.id, c)
+    const rootsForCart = new Set<number>()
+    for (const line of cart.values()) {
+      // Prefer categoryId (unique, precise) over categoryName (may
+      // collide across roots). Stub products hydrated from sessionStorage
+      // have categoryId=0 as a placeholder; those fall through to the
+      // name lookup below.
+      let cat: CategoryDto | undefined =
+        (line.product.categoryId ? byId.get(line.product.categoryId) : undefined)
+        ?? byName.get(line.product.categoryName)
+      if (!cat) continue
+      // Walk up parents until root.
+      let guard = 0
+      while (cat.parentId != null && guard++ < 20) {
+        const parent = byId.get(cat.parentId)
+        if (!parent) break
+        cat = parent
+      }
+      rootsForCart.add(cat.id)
+    }
+    if (rootsForCart.size === 0) return
     setVisitedCategoryIds(prev => {
-      // Already saturated — avoid an unnecessary state update + re-render.
-      if (prev.size >= rootCats.length) return prev
+      // Union — never remove; only add roots that aren't already there.
+      let changed = false
       const next = new Set(prev)
-      for (const c of rootCats) next.add(c.id)
-      return next
+      for (const id of rootsForCart) if (!next.has(id)) { next.add(id); changed = true }
+      return changed ? next : prev
     })
-  }, [seededFromSource, rootCats, isEditMode, existing, draftQuery.data])
+  }, [cart, allCats, rootCats])
+
+  // Jump-to-first-unvisited on resume (03-Jul-2026). When the user comes
+  // back to /new with a hydrated cart (from server draft OR sessionStorage)
+  // and has already visited N categories, land them on the first unvisited
+  // category so they don't have to click Prev/Next through work they've
+  // already done. Fires exactly ONCE per mount — a useRef guard prevents
+  // re-triggering as the user then legitimately walks through the rest.
+  const hasAutoNavigatedRef = useRef(false)
+  useEffect(() => {
+    if (hasAutoNavigatedRef.current) return
+    if (isEditMode) return
+    if (sortedRootCats.length === 0) return
+    // Only jump when the cart is HYDRATED — an empty cart means the user
+    // is starting fresh; leaving them on cat 1 is correct.
+    if (cart.size === 0) return
+    // Also wait until the visit set has been populated by either the
+    // sessionStorage restore or the derive-from-cart pass. If it's still
+    // just the auto-select single entry, hydration hasn't settled yet.
+    if (visitedCategoryIds.size === 0) return
+    const firstUnvisited = sortedRootCats.find(c => !visitedCategoryIds.has(c.id))
+    if (!firstUnvisited) return   // every category done — keep current selection
+    hasAutoNavigatedRef.current = true
+    setSelectedCategoryId(firstUnvisited.id)
+    // Mark this as an implicit visit so the counter increments on landing.
+    setVisitedCategoryIds(prev => prev.has(firstUnvisited.id) ? prev : new Set(prev).add(firstUnvisited.id))
+    // Flag pendingFocusRef so the qty-input focus effect grabs the first
+    // product's input on landing — matches Next-button behaviour.
+    pendingFocusRef.current = true
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }, [sortedRootCats, visitedCategoryIds, cart, isEditMode])
 
   // Edit-mode guard:
   //   • Shop user — only Pending, and only within editable_until.
@@ -562,6 +608,10 @@ export default function ShopRequestNew() {
         mrp:       l.product.mrp,
         weightValue: l.product.weightValue,
         weightUnit:  l.product.weightUnit,
+        // 03-Jul-2026: also persist categoryId so derive-from-cart on the
+        // rehydrated stub can look up the category directly instead of
+        // falling back to name-collision-prone lookup.
+        categoryId:   l.product.categoryId,
         categoryName: l.product.categoryName,
         qty: l.qty,
       })),
@@ -597,6 +647,7 @@ export default function ShopRequestNew() {
         items: Array<{
           productId: string; code: string; name: string; mrp: number
           weightValue: number | null; weightUnit: string | null
+          categoryId?: number    // 03-Jul-2026 addition, may be missing on older snapshots
           categoryName: string; qty: number
         }>
         notes: string
@@ -608,7 +659,11 @@ export default function ShopRequestNew() {
         const stub: ProductDto = {
           id: it.productId, code: it.code, name: it.name, mrp: it.mrp,
           weightValue: it.weightValue, weightUnit: it.weightUnit,
-          categoryId: 0, categoryName: it.categoryName, type: '',
+          // categoryId: real value when the snapshot was written by the
+          // 03-Jul-2026+ code; 0 for legacy snapshots (derive-from-cart
+          // falls back to categoryName lookup in that case).
+          categoryId: it.categoryId ?? 0,
+          categoryName: it.categoryName, type: '',
           purchasePrice: null, gst: null, active: true, isVendorProcured: false,
         }
         map.set(it.productId, { product: stub, qty: it.qty })
@@ -617,12 +672,11 @@ export default function ShopRequestNew() {
       setNotes(parsed.notes ?? '')
       // Restore the visit-history so the "N/11 categories done" counter
       // reflects what the user had already ticked off before the reload.
+      // Falls back to derive-from-cart below if the snapshot is old-format
+      // and doesn't include a visitedCategoryIds array.
       if (parsed.visitedCategoryIds?.length) {
         setVisitedCategoryIds(new Set(parsed.visitedCategoryIds))
       }
-      // Not `seededFromSource=true` — sessionStorage isn't a "server truth"
-      // source; but we DID restore the visit map above so the gate
-      // resumes at the right count.
       setSeeded(true)
       setIsDraftDirty(true)  // still needs to sync to server
     } catch { /* corrupted JSON — bail */ }
