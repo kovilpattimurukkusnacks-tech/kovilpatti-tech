@@ -1,15 +1,25 @@
-import { Fragment, useEffect, useMemo, useRef } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useSearchParams } from 'react-router-dom'
 import { useCumulativePending } from '../../hooks/useStockRequests'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
-import { splitBalancedColumns } from '../../utils/balancedColumns'
+import { splitBalancedColumnsN } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
 
+// 03-Jul-2026 (client req: fit the batch plan into 3-4 sheets) — a card's
+// height no longer needs a "+1 per weight group" term: weight is now an
+// inline column on each item row instead of its own banner row, so the
+// only per-card overhead is the single category banner.
 const heightOfCatGroup = (cg: { weightGroups: { items: unknown[] }[] }) =>
-  1 + cg.weightGroups.reduce((s, wg) => s + 1 + wg.items.length, 0)
+  1 + cg.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
+
+// Max columns per root block. 3-Jul-2026: bumped 2 → 3 (client req: fit the
+// batch plan into 3-4 sheets instead of 7-8) — the dense table only needs
+// # / name / weight / qty, which comfortably fits a narrower column, so a
+// 3rd column is free real estate on an A4-portrait sheet.
+const MAX_COLUMNS = 3
 
 // Brand block — mirrors the thermal receipt + per-request picklist so all
 // three printouts feel like the same family. Contact phone is per-shop on
@@ -58,10 +68,17 @@ export default function PrintCumulative() {
   )
 
   // 30-Jun-2026 — bucket sections under their ROOT category in hard-coded
-  // priority order (1 KG Snacks → Packing Items → … → Shop Needs). Each
-  // root prints as its own block with an underline heading + a 2-col grid
-  // of its sub-cat cards. Mirrors the per-request picklist + the 3-inch
-  // thermal slip so the kitchen sees the same hierarchy everywhere.
+  // priority order (1 KG Snacks → Packing Items → … → Shop Needs).
+  //
+  // 03-Jul-2026 (client req: fit the batch plan into 3-4 sheets) — dropped
+  // the per-root page block (heading + its own balanced 2/3-col grid).
+  // Each root forced a structural break: if a root's cards didn't fully
+  // fill the page, the NEXT root still started fresh rather than flowing
+  // into that leftover space, so wasted tail-space compounded across every
+  // root (11 roots × up to ~1/3 page each ≈ 3-4 wasted sheets). Root order
+  // is preserved as a flat sequence and the root name now rides along as a
+  // small label on each card instead of its own heading block, and column
+  // balancing runs ONCE across the whole document — see flatCards below.
   const categoriesQuery = useCategories()
   const rootGroups = useMemo(() => {
     const lookup = buildRootLookup(categoriesQuery.data)
@@ -73,18 +90,16 @@ export default function PrintCumulative() {
       else byRoot.set(root, [sec])
     }
     return sortRootCategoryNames(Array.from(byRoot.keys()))
-      .map(root => {
-        const children = byRoot.get(root)!
-        const skuCount = children.reduce(
-          (sum, sec) => sum + sec.weightGroups.reduce((s, wg) => s + wg.items.length, 0),
-          0,
-        )
-        const unitCount = children.reduce(
-          (sum, sec) => sum + sec.weightGroups.reduce(
-            (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0), 0)
-        return { root, children, skuCount, unitCount }
-      })
+      .map(root => ({ root, children: byRoot.get(root)! }))
   }, [sections, categoriesQuery.data])
+
+  // Single flat sequence of (root, section) pairs in root-priority →
+  // alphabetical order — the unit the whole-document column balance
+  // operates on, instead of balancing separately per root.
+  const flatCards = useMemo(
+    () => rootGroups.flatMap(rg => rg.children.map(section => ({ root: rg.root, section }))),
+    [rootGroups],
+  )
 
   // Grand totals across all categories — shown in the footer.
   const { totalUnits, totalRequests, totalSkus } = useMemo(() => {
@@ -145,93 +160,73 @@ export default function PrintCumulative() {
         <p style={{ marginTop: 32 }}>No in-progress requests right now — nothing to prepare.</p>
       ) : (
         <>
-          {/* Items grouped by ROOT category in hard-coded priority order.
-              Each root block: an underline-style heading on top, then its
-              sub-cat banner cards flow into a 2-col grid below. Mirrors the
-              per-request picklist + the 3-inch thermal slip so the kitchen
-              sees the same hierarchy everywhere. */}
-          {rootGroups.map(rg => {
-            const { left, right } = splitBalancedColumns(rg.children, heightOfCatGroup)
-            const renderCard = (section: typeof rg.children[number]) => {
+          {/* Single flat 3-col grid across every root's cards (03-Jul-2026 —
+              see flatCards comment above for why this replaced per-root
+              page blocks). Root name rides along as a small eyebrow label
+              on each card so the kitchen still knows which production line
+              a card belongs to, without a heading block forcing a break. */}
+          {(() => {
+            const numCols = Math.min(MAX_COLUMNS, flatCards.length)
+            const columns = splitBalancedColumnsN(flatCards, c => heightOfCatGroup(c.section), numCols)
+            const renderCard = (card: typeof flatCards[number]) => {
+              const { root, section } = card
               const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
               const subtotalQty = section.weightGroups.reduce(
                 (s, wg) => s + wg.items.reduce((a, r) => a + r.totalQty, 0), 0)
+              // Flatten weight groups into one ordered row list — weight is
+              // now an inline column per row instead of its own banner row
+              // (03-Jul-2026, client req: cut the batch plan to 3-4 sheets).
+              // A dedicated banner row per weight bucket was pure structural
+              // overhead: ~70-90 rows across a typical catalogue that carry
+              // no SKU data at all.
+              const flatItems = section.weightGroups.flatMap(wg =>
+                wg.items.map(r => ({ ...r, weightLabel: wg.label })))
               return (
                 <section key={section.category} className="print-dense-section">
                   <div className="print-dense-banner">
-                    {section.category}
-                    <span className="muted">
-                      · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
-                      · {subtotalQty} units
-                    </span>
+                    <span className="print-dense-root-eyebrow">{root}</span>
+                    <div>
+                      {section.category}
+                      <span className="muted">
+                        · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
+                        · {subtotalQty} units
+                      </span>
+                    </div>
                   </div>
                   <table className="print-dense-table">
                     <colgroup>
-                      <col style={{ width: 22 }} />
+                      <col style={{ width: 18 }} />
                       <col />
-                      <col style={{ width: 60 }} />
-                      <col style={{ width: 48 }} />
+                      <col style={{ width: 42 }} />
+                      <col style={{ width: 40 }} />
                     </colgroup>
                     <tbody>
-                      {section.weightGroups.map(wg => {
-                        let idx = 0
-                        return (
-                          <Fragment key={`${section.category}__${wg.label}`}>
-                            <tr className="print-weight-row-dense">
-                              <td colSpan={4}>{wg.label}</td>
-                            </tr>
-                            {wg.items.map(r => {
-                              idx++
-                              return (
-                                <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
-                                  <td>{idx}</td>
-                                  <td><strong>{r.productName}</strong></td>
-                                  <td>{r.type}</td>
-                                  <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
-                                </tr>
-                              )
-                            })}
-                          </Fragment>
-                        )
-                      })}
+                      {flatItems.map((r, i) => (
+                        <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
+                          <td>{i + 1}</td>
+                          <td>
+                            <strong>{r.productName}</strong>
+                            {/* 'pack' is the overwhelming default (see Products
+                                form) — only call out the exception. */}
+                            {r.type === 'jar' && <span className="print-badge">JAR</span>}
+                          </td>
+                          <td className="muted print-dense-weight-col">{r.weightLabel}</td>
+                          <td style={{ textAlign: 'right' }} className="strong">{r.totalQty}</td>
+                        </tr>
+                      ))}
                     </tbody>
                   </table>
                 </section>
               )
             }
             return (
-              <table key={rg.root} className="print-root-section">
-                <thead>
-                  <tr><td>
-                    <h2 className="print-root-heading">
-                      {rg.root}
-                      <span className="muted">
-                        · {rg.skuCount} {rg.skuCount === 1 ? 'SKU' : 'SKUs'}
-                        · {rg.unitCount} units
-                      </span>
-                    </h2>
-                  </td></tr>
-                </thead>
-                <tbody>
-                  <tr><td>
-                    {/* A root with a single sub-cat card has nothing to balance
-                        against — rendering it inside the 2-col flex grid would
-                        still only claim half the page width (flex:1 1 0 splits
-                        evenly regardless of the other column being empty).
-                        Render it full-width instead. */}
-                    {rg.children.length === 1 ? (
-                      <div className="print-dense-col">{left.map(renderCard)}</div>
-                    ) : (
-                      <div className="print-dense-grid">
-                        <div className="print-dense-col">{left.map(renderCard)}</div>
-                        <div className="print-dense-col">{right.map(renderCard)}</div>
-                      </div>
-                    )}
-                  </td></tr>
-                </tbody>
-              </table>
+              <div className="print-dense-grid">
+                {columns.map((col, i) => (
+                  <div className="print-dense-col" key={i}>{col.map(renderCard)}</div>
+                ))}
+              </div>
             )
-          })}
+          })()}
 
           {/* Compact grand-totals strip below the root sections. */}
               <div className="print-dense-summary">

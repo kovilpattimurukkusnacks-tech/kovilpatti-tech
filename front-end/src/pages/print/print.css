@@ -492,6 +492,21 @@
   margin-left: 6px;
 }
 
+/* Root-category eyebrow (03-Jul-2026) — sits above the sub-category name
+ * inside the banner. Replaces the old standalone root heading block that
+ * used to force a break between roots; now the root just rides along on
+ * each card so the kitchen still knows which production line it belongs
+ * to, without costing a page-flow break. */
+.print-dense-root-eyebrow {
+  display: block;
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  color: rgba(31, 31, 31, 0.5);
+  text-transform: uppercase;
+  margin-bottom: 1px;
+}
+
 .print-dense-table {
   width: 100%;
   border-collapse: collapse;
@@ -512,7 +527,11 @@
   page-break-inside: avoid;
 }
 
-/* Weight subheading inside a category — slim eyebrow, no background. */
+/* Weight subheading inside a category — slim eyebrow, no background.
+ * Still used by the per-request picklist; the cumulative batch plan
+ * dropped this in favour of an inline weight column per row (03-Jul-2026,
+ * client req: cut the batch plan to 3-4 sheets — a banner row per weight
+ * bucket was pure overhead with no SKU data of its own). */
 .print-dense-table tr.print-weight-row-dense td {
   padding: 5px 6px 2px 12px;
   border-bottom: 1px solid rgba(31, 31, 31, 0.08);
@@ -521,6 +540,31 @@
   letter-spacing: 0.08em;
   font-size: 9px;
   font-weight: 700;
+}
+
+/* Inline weight column (cumulative batch plan only, 03-Jul-2026) — replaces
+ * the per-weight-group banner row above. Compact eyebrow-style label sitting
+ * next to the qty instead of on its own row. */
+.print-dense-weight-col {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Small exception badge — flags a SKU that deviates from the overwhelming
+ * default (e.g. type='jar' vs the default 'pack'). Same shape as the "INV"
+ * badge on the per-request picklist so exception call-outs read as one
+ * family across print pages. */
+.print-badge {
+  margin-left: 4px;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #0277BD;
+  border: 1px solid #0277BD;
+  border-radius: 2px;
+  white-space: nowrap;
 }
 
 /* Grand totals strip — same compact font as the cumulative tables. */
