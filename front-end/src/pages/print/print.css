@@ -451,7 +451,7 @@
  *     same height with no row-induced gaps. */
 .print-dense-grid {
   display: flex;
-  gap: 18px;
+  gap: 12px;
   align-items: flex-start;
   margin-top: 4px;
 }
@@ -461,7 +461,7 @@
   min-width: 0;       /* allow shrinking; long names ellipsis cleanly */
   display: flex;
   flex-direction: column;
-  gap: 12px;          /* vertical gap between cards within the column */
+  gap: 8px;           /* vertical gap between cards within the column */
 }
 
 .print-dense-section {
@@ -472,15 +472,24 @@
   min-width: 0;
 }
 
+/* 03-Jul-2026 (2nd pass) — shrunk from a 2-line stacked banner (root
+ * eyebrow above category name) to one compact line. The stacked version
+ * doubled banner height across ~32 cards, and the 4px yellow bar + 5-8px
+ * padding read as heavier than the density of the table below it
+ * warranted. Root now sits inline before the category name instead of on
+ * its own line. */
 .print-dense-banner {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
   background: #FFF8DC;
-  border-left: 4px solid #FCD835;
+  border-left: 3px solid #FCD835;
   border-bottom: 1px solid #1F1F1F;
-  padding: 5px 8px;
+  padding: 3px 6px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: #1F1F1F;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -492,19 +501,26 @@
   margin-left: 6px;
 }
 
-/* Root-category eyebrow (03-Jul-2026) — sits above the sub-category name
- * inside the banner. Replaces the old standalone root heading block that
- * used to force a break between roots; now the root just rides along on
- * each card so the kitchen still knows which production line it belongs
- * to, without costing a page-flow break. */
+/* Root-category label (03-Jul-2026) — inline before the sub-category name.
+ * Replaces the old standalone root heading block that used to force a
+ * break between roots; the root still rides along on each card so the
+ * kitchen knows which production line it belongs to, just without its own
+ * line or a page-flow break. */
 .print-dense-root-eyebrow {
-  display: block;
-  font-size: 9px;
+  flex: 0 0 auto;
+  font-size: 8px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   color: rgba(31, 31, 31, 0.5);
   text-transform: uppercase;
-  margin-bottom: 1px;
+}
+
+.print-dense-banner-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .print-dense-table {

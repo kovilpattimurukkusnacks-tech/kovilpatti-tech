@@ -185,13 +185,13 @@ export default function PrintCumulative() {
                 <section key={section.category} className="print-dense-section">
                   <div className="print-dense-banner">
                     <span className="print-dense-root-eyebrow">{root}</span>
-                    <div>
+                    <span className="print-dense-banner-name">
                       {section.category}
                       <span className="muted">
                         · {skuCount} {skuCount === 1 ? 'SKU' : 'SKUs'}
                         · {subtotalQty} units
                       </span>
-                    </div>
+                    </span>
                   </div>
                   <table className="print-dense-table">
                     <colgroup>
