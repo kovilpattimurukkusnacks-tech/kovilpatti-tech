@@ -257,11 +257,24 @@ export default function AdminRequestDetail() {
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>
                           {item.productName}
                           {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Partial-weight return (02-Jul-2026, B2). */}
+                          {item.returnWeightG != null && (
+                            <Chip
+                              label={`Partial · ${item.returnWeightG}g`}
+                              size="small"
+                              sx={{
+                                ml: 1,
+                                bgcolor: '#FFE0B2', color: '#7C4A00',
+                                border: '1px solid #E8A758',
+                                height: 20, fontSize: 10, fontWeight: 700,
+                              }}
+                            />
+                          )}
                         </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
@@ -358,6 +371,38 @@ export default function AdminRequestDetail() {
           />
         )}
       </Box>
+
+      {/* Shop-reported receipt discrepancy (02-Jul-2026). Renders whenever
+          any item's received_qty differs from dispatched_qty — could be
+          shortage (shop got less) or over-count (shop got more). Kept
+          separate from the Rejected/Cancelled banners so multiple
+          conditions can co-render. */}
+      {(() => {
+        const items = request.items ?? []
+        let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        for (const it of items) {
+          if (it.receivedQty == null) continue
+          const disp = it.dispatchedQty ?? 0
+          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
+          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+        }
+        if (shortLines === 0 && overLines === 0) return null
+        return (
+          <Alert
+            severity={shortLines > 0 ? 'error' : 'warning'}
+            sx={{ mb: 2 }}
+          >
+            <strong>Shop reported a receipt discrepancy.</strong>{' '}
+            {shortLines > 0 && (
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+            )}
+            {shortLines > 0 && overLines > 0 && ' · '}
+            {overLines > 0 && (
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+            )}
+          </Alert>
+        )
+      })()}
 
       {/* Rejected banner — surfaces the rejection reason (when present) and
           exposes the Undo Rejection action right here at the top so admin
@@ -498,6 +543,56 @@ export default function AdminRequestDetail() {
       {[flatErr(cancelMutation.error), flatErr(editQtyMutation.error), flatErr(revokeMutation.error)]
         .filter(Boolean)
         .map((m, i) => <Alert key={i} severity="error" sx={{ mb: 1, whiteSpace: 'pre-line' }}>{m}</Alert>)}
+
+      {/* Receipt-change log (02-Jul-2026). Same table shop + inv see —
+          admin visibility into the shop's reported discrepancy. */}
+      {(() => {
+        const changed = (request.items ?? []).filter(it => it.receivedQty != null)
+        if (changed.length === 0) return null
+        return (
+          <Paper
+            elevation={0}
+            sx={{ mb: 2, borderRadius: 2, border: '1px solid rgba(31,31,31,0.2)', overflow: 'hidden' }}
+          >
+            <Box sx={{
+              px: 2, py: 1, bgcolor: '#FFF8DC',
+              borderBottom: '1px solid rgba(31,31,31,0.2)',
+              fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#1F1F1F',
+            }}>
+              Shop-reported receipt changes · {changed.length} {changed.length === 1 ? 'product' : 'products'}
+            </Box>
+            <Table size="small">
+              <TableHead>
+                <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+                  <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Product</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Dispatched</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Received</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Change</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {changed.map(it => {
+                  const disp  = it.dispatchedQty ?? 0
+                  const rec   = it.receivedQty!
+                  const delta = rec - disp
+                  const short = delta < 0
+                  const over  = delta > 0
+                  return (
+                    <TableRow key={it.id}>
+                      <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>{it.productName}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{disp}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{rec}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {short ? delta : over ? `+${delta}` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Paper>
+        )
+      })()}
 
       {/* Fixed footer bar (01-Jul-2026 client req: action buttons no longer
           require scrolling). Stacks:

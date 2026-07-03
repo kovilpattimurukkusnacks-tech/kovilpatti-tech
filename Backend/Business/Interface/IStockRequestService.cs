@@ -38,7 +38,7 @@ public interface IStockRequestService
     Task<StockRequestDto> RejectAsync(Guid id, RejectRequest request, CancellationToken ct = default);
     Task<StockRequestDto> RevokeAsync(Guid id, CancellationToken ct = default);
     Task<StockRequestDto> DispatchAsync(Guid id, DispatchRequest request, CancellationToken ct = default);
-    Task<StockRequestDto> ReceiveAsync(Guid id, CancellationToken ct = default);
+    Task<StockRequestDto> ReceiveAsync(Guid id, ReceiveRequest? request = null, CancellationToken ct = default);
     Task<StockRequestDto> CancelAsync(Guid id, CancellationToken ct = default);
 
     // ── Return Stock ──

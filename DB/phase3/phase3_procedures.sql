@@ -146,8 +146,13 @@ LANGUAGE sql STABLE AS $$
     SELECT
       COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
                         THEN it.requested_qty * it.unit_price END), 0)                            AS requested_amount,
+      -- Order-side money uses received_qty first (shop's reported count
+       -- at receive time), falling back to dispatched_qty, then requested_qty.
+       -- 03-Jul-2026: keeps accounts + shop's declared receipt in sync so a
+       -- reported short-receipt reduces the ledger by exactly the missing
+       -- amount without an admin qty-edit round-trip.
       COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
-                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
+                        THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
                         THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount
     FROM finalised f
@@ -389,16 +394,18 @@ LANGUAGE sql STABLE AS $$
   -- matching fn_accounts_by_category.
   order_sums AS (
     SELECT o.shop_id,
-           SUM(it.requested_qty)::bigint                                                      AS requested_qty,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint                         AS dispatched_qty,
-           SUM(it.requested_qty * it.unit_price)                                              AS requested_amount,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)                 AS dispatched_amount,
+           SUM(it.requested_qty)::bigint                                                                    AS requested_qty,
+           -- received_qty first (shop's reported count), then dispatched, then requested.
+           -- 03-Jul-2026: keeps the shop's declared receipt discrepancy in the ledger.
+           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty))::bigint                      AS dispatched_qty,
+           SUM(it.requested_qty * it.unit_price)                                                            AS requested_amount,
+           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price)              AS dispatched_amount,
            -- Cost side of dispatched goods at current products.purchase_price.
            -- COALESCE handles products with no purchase_price set yet (treat
            -- as 0 cost so the row still totals). Documented limitation: this
            -- value can shift retroactively if the admin later edits a
            -- product's purchase_price — acceptable for now per client #12.
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS dispatched_cost
+           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS dispatched_cost
     FROM order_rows o
     JOIN stock_request_items it ON it.request_id = o.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -582,25 +589,27 @@ LANGUAGE sql STABLE AS $$
   contrib AS (
     SELECT
       p.category_id,
-      -- Signed aggregates (existing behaviour — kept for the Net columns).
+      -- 03-Jul-2026: Order-side uses received_qty first (shop's reported
+      -- count) so a declared receipt discrepancy flows through category
+      -- rollups. Return path unchanged — Returns have no received_qty.
       CASE WHEN r.request_type IN ('Order', 'Backorder')
-           THEN COALESCE(it.dispatched_qty, it.requested_qty)
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END                                                                                     AS signed_qty,
       CASE WHEN r.request_type IN ('Order', 'Backorder')
-           THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END                                                                                     AS signed_amount,
       CASE WHEN r.request_type IN ('Order', 'Backorder')
-           THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
       END                                                                                     AS signed_cost,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
       CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
       CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
@@ -708,20 +717,22 @@ LANGUAGE sql STABLE AS $$
       p.weight_value,
       p.weight_unit,
       -- Signed (existing — for the Net columns in 'All' view).
+      -- 03-Jul-2026: Order-side uses received_qty first when the shop has
+      -- reported a receipt discrepancy. Return path unchanged.
       CASE WHEN r.request_type IN ('Order', 'Backorder')
-           THEN COALESCE(it.dispatched_qty, it.requested_qty)
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END AS signed_qty,
       CASE WHEN r.request_type IN ('Order', 'Backorder')
-           THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END AS signed_amount,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
       CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
       CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id

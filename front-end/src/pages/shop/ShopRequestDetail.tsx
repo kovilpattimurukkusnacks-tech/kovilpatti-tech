@@ -1,9 +1,10 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer } from 'lucide-react'
+import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer, X as XIcon } from 'lucide-react'
 import {
-  Alert, Box, Button, Chip, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow,
+  Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  IconButton, Paper, Table, TableBody, TableCell, TableContainer,
+  TableHead, TableRow, TextField,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -50,15 +51,35 @@ export default function ShopRequestDetail() {
     .find(s => s.key === 'request_lock_enabled')?.value?.toLowerCase() !== 'false'
   const [cancelOpen, setCancelOpen]   = useState(false)
   const [receiveOpen, setReceiveOpen] = useState(false)
+  // Confirm-receipt dialog state (02-Jul-2026). Keyed by item.id → the
+  // qty the shop actually counted. Absence = "use dispatched as-is".
+  // Presence with a diff = discrepancy (short if < dispatched, over if >).
+  const [receivedQtys, setReceivedQtys] = useState<Map<string, number>>(new Map())
+
+  // Split into out-of-stock (dispatched_qty === 0) vs the rest. Godown
+  // marks a line 0 when they were out of stock at dispatch time — those
+  // items don't belong in the main products grid (they didn't ship) but
+  // shop still needs to see they weren't fulfilled. Rendered in a compact
+  // section above the fixed footer instead. 02-Jul-2026.
+  //
+  // dispatched_qty === null (pre-dispatch) is kept in the main list.
+  const outOfStockItems = useMemo(
+    () => (request?.items ?? []).filter(it => it.dispatchedQty === 0),
+    [request?.items],
+  )
+  const visibleItems = useMemo(
+    () => (request?.items ?? []).filter(it => it.dispatchedQty !== 0),
+    [request?.items],
+  )
 
   // Always compute the grouped items, even when `request` is still loading —
   // hooks order must stay stable across renders. The empty input → empty array.
   const grouped = useMemo(
     () => groupByCategoryWeight(
-      request?.items ?? [],
+      visibleItems,
       it => ({ category: it.categoryName, weightValue: it.weightValue, weightUnit: it.weightUnit }),
     ),
-    [request?.items],
+    [visibleItems],
   )
 
   // Two-level grouping: outer = root category (1 KG Snacks, Pickle/Thokku/Podi, …)
@@ -87,6 +108,21 @@ export default function ShopRequestDetail() {
         return { root, children, productCount }
       })
   }, [grouped, categoriesQuery.data])
+
+  // Flat item list in the same root-priority order used everywhere else.
+  // Drives the confirm-receipt dialog so its row order matches what the
+  // shop already scanned on the detail page above.
+  const orderedItems = useMemo(() => {
+    const out: NonNullable<typeof request>['items'] = [] as any
+    for (const rg of rootGroups) {
+      for (const cg of rg.children) {
+        for (const wg of cg.weightGroups) {
+          for (const it of wg.items) (out as any[]).push(it)
+        }
+      }
+    }
+    return out ?? []
+  }, [rootGroups])
 
   // Layout note: cards are placed into a CSS `column-count` container below,
   // so the browser auto-balances them across 2 columns (1 on mobile). No
@@ -148,8 +184,23 @@ export default function ShopRequestDetail() {
   }
 
   const handleReceive = async () => {
-    try { await receiveMutation.mutateAsync(request.id) }
-    finally { setReceiveOpen(false) }
+    // Only lines where the shop's count differs from the dispatched qty
+    // are sent. Everything else stays as "no discrepancy noted" on the
+    // DB side (received_qty column stays NULL). Empty diff-list = the
+    // one-click "as-dispatched" fast path.
+    const diffItems = (request.items ?? [])
+      .filter(it => {
+        const typed = receivedQtys.get(it.id)
+        return typed != null && typed !== (it.dispatchedQty ?? 0)
+      })
+      .map(it => ({ id: it.id, receivedQty: receivedQtys.get(it.id)! }))
+    const payload = diffItems.length > 0 ? { items: diffItems } : undefined
+    try {
+      await receiveMutation.mutateAsync({ id: request.id, req: payload })
+    } finally {
+      setReceiveOpen(false)
+      setReceivedQtys(new Map())
+    }
   }
 
   // Card renderer — extracted so both columns of the 2-col grid can call it
@@ -243,11 +294,26 @@ export default function ShopRequestDetail() {
                         <Box sx={{ fontWeight: 600, fontSize: 14 }}>
                           {item.productName}
                           {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Partial-weight return chip (02-Jul-2026, B2).
+                              Only on Returns where the shop claimed a
+                              fraction of a pack. */}
+                          {item.returnWeightG != null && (
+                            <Chip
+                              label={`Partial · ${item.returnWeightG}g`}
+                              size="small"
+                              sx={{
+                                ml: 1,
+                                bgcolor: '#FFE0B2', color: '#7C4A00',
+                                border: '1px solid #E8A758',
+                                height: 20, fontSize: 10, fontWeight: 700,
+                              }}
+                            />
+                          )}
                         </Box>
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
@@ -351,6 +417,33 @@ export default function ShopRequestDetail() {
           <strong>Rejected:</strong> {request.rejectionReason}
         </Alert>
       )}
+
+      {/* Post-receipt discrepancy recap (02-Jul-2026). Quiet reminder to
+          shop staff of what they submitted; admin + inv see the same
+          banner on their views. Skips render when everything matched. */}
+      {(() => {
+        const items = request.items ?? []
+        let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        for (const it of items) {
+          if (it.receivedQty == null) continue
+          const disp = it.dispatchedQty ?? 0
+          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
+          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+        }
+        if (shortLines === 0 && overLines === 0) return null
+        return (
+          <Alert severity={shortLines > 0 ? 'error' : 'warning'} sx={{ mb: 2 }}>
+            <strong>You reported a discrepancy at receipt.</strong>{' '}
+            {shortLines > 0 && (
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+            )}
+            {shortLines > 0 && overLines > 0 && ' · '}
+            {overLines > 0 && (
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+            )}
+          </Alert>
+        )
+      })()}
 
       {/* Back-order children banner (02-Jul-2026). Shown on the PARENT
           Order once godown has carved off Backorder siblings. */}
@@ -487,6 +580,117 @@ export default function ShopRequestDetail() {
         ))}
       </Box>
 
+      {/* Out-of-stock strip (02-Jul-2026). Compact list of every line the
+          godown dispatched at qty=0. Excluded from the main products grid
+          above so scanning the "what we actually got" list isn't cluttered
+          with empty lines. Only surfaces after dispatch. */}
+      {outOfStockItems.length > 0 && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2,
+            borderRadius: 2,
+            border: '1px solid #C62828',
+            overflow: 'hidden',
+          }}
+        >
+          <Box sx={{
+            px: 2, py: 1,
+            bgcolor: '#FFEBEE',
+            borderBottom: '1px solid #C62828',
+            fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#C62828',
+          }}>
+            Out of stock · {outOfStockItems.length} {outOfStockItems.length === 1 ? 'product' : 'products'} not dispatched
+          </Box>
+          <Table size="small">
+            <TableHead>
+              <TableRow sx={{ bgcolor: '#FFF5F5' }}>
+                <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7F1D1D' }}>Product</TableCell>
+                <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7F1D1D' }}>Req'd</TableCell>
+              </TableRow>
+            </TableHead>
+            <TableBody>
+              {outOfStockItems.map(it => (
+                <TableRow key={it.id}>
+                  <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600, color: '#1F1F1F' }}>
+                    {it.productName}
+                  </TableCell>
+                  <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: '#7F1D1D' }}>
+                    {it.requestedQty}
+                  </TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Paper>
+      )}
+
+      {/* Receipt-change log (02-Jul-2026). Compact table listing every line
+          where the shop's confirm-receipt count differed from the godown's
+          dispatched qty. Only surfaces when at least one item has
+          receivedQty set — otherwise the whole block is hidden. Sits
+          above the fixed footer so the shop can scroll to it as a quick
+          "what did I change?" reference. */}
+      {(() => {
+        const changed = (request.items ?? []).filter(it => it.receivedQty != null)
+        if (changed.length === 0) return null
+        return (
+          <Paper
+            elevation={0}
+            sx={{
+              mb: 2,
+              borderRadius: 2,
+              border: '1px solid rgba(31,31,31,0.2)',
+              overflow: 'hidden',
+            }}
+          >
+            <Box sx={{
+              px: 2, py: 1,
+              bgcolor: '#FFF8DC',
+              borderBottom: '1px solid rgba(31,31,31,0.2)',
+              fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#1F1F1F',
+            }}>
+              Receipt changes · {changed.length} {changed.length === 1 ? 'product' : 'products'}
+            </Box>
+            <Table size="small">
+              <TableHead>
+                <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+                  <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Product</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Dispatched</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Received</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Change</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {changed.map(it => {
+                  const disp  = it.dispatchedQty ?? 0
+                  const rec   = it.receivedQty!
+                  const delta = rec - disp
+                  const short = delta < 0
+                  const over  = delta > 0
+                  return (
+                    <TableRow key={it.id}>
+                      <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>
+                        {it.productName}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>
+                        {disp}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {rec}
+                      </TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {short ? delta : over ? `+${delta}` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Paper>
+        )
+      })()}
+
       {/* Fixed summary bar — same pattern as the New Stock Request cart
           bar (sidebar-aware left offset, full-bleed right, elevation 6 for
           shadow). 19-Jun-2026 (client #14): totals stay anchored at the
@@ -523,7 +727,17 @@ export default function ShopRequestDetail() {
               // theme's CSS shorthand, not just background-color longhand.
               color="success"
               startIcon={<PackageCheck className="w-4 h-4" />}
-              onClick={() => setReceiveOpen(true)}
+              onClick={() => {
+                // Seed the dialog with dispatchedQty for every line so a
+                // one-click confirm = "everything as-dispatched" (fast path).
+                // Shop only touches rows where the count differed.
+                const seed = new Map<string, number>()
+                for (const it of request.items ?? []) {
+                  seed.set(it.id, it.dispatchedQty ?? 0)
+                }
+                setReceivedQtys(seed)
+                setReceiveOpen(true)
+              }}
               disabled={receiveMutation.isPending}
               sx={{
                 textTransform: 'none',
@@ -599,15 +813,208 @@ export default function ShopRequestDetail() {
         onConfirm={handleCancel}
         onCancel={() => setCancelOpen(false)}
       />
-      <ConfirmDialog
+      {/* Confirm Receipt dialog (02-Jul-2026). Shop counts what actually
+          landed before confirming. Pre-filled with dispatched qty on every
+          line — one-click confirm = "all as-dispatched". Dial down for a
+          short line, dial up for over-count. Damaged items still use the
+          Return flow after receiving. */}
+      <Dialog
         open={receiveOpen}
-        title="Confirm goods received?"
-        message={`Mark ${request.code} as received. Only do this after you've physically received the dispatched items.`}
-        confirmLabel="Yes, mark Received"
-        cancelLabel="Not yet"
-        onConfirm={handleReceive}
-        onCancel={() => setReceiveOpen(false)}
-      />
+        onClose={(_e, reason) => {
+          // No backdrop / escape close (global rule); only Cancel/X.
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          if (receiveMutation.isPending) return
+          setReceiveOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Confirm receipt — {request.code}
+          <IconButton size="small" onClick={() => setReceiveOpen(false)} disabled={receiveMutation.isPending}>
+            <XIcon className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
+            Count the goods before confirming. If short or extra, adjust
+            the number below. Damaged units → submit a <strong>Return</strong> after
+            confirming receipt.
+          </Box>
+          {(() => {
+            // Compute totals for the summary strip. Shortlines / overlines
+            // recomputed on every render from the live receivedQtys map.
+            let shortLines = 0
+            let overLines  = 0
+            let shortUnits = 0
+            let overUnits  = 0
+            for (const it of orderedItems) {
+              const disp   = it.dispatchedQty ?? 0
+              const typed  = receivedQtys.get(it.id) ?? disp
+              if (typed < disp) { shortLines++; shortUnits += (disp - typed) }
+              if (typed > disp) { overLines++;  overUnits  += (typed - disp) }
+            }
+            return (
+              <>
+                <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+                  {orderedItems.map(it => {
+                    const disp    = it.dispatchedQty ?? 0
+                    const typed   = receivedQtys.get(it.id) ?? disp
+                    const short   = typed < disp
+                    const over    = typed > disp
+                    const rowBg   = short ? '#FFEBEE' : over ? '#FFE0B2' : 'transparent'
+                    return (
+                      <Box
+                        key={it.id}
+                        sx={{
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: 1,
+                          px: 1.5,
+                          py: 0.75,
+                          borderBottom: '1px solid rgba(31,31,31,0.08)',
+                          bgcolor: rowBg,
+                          '&:last-child': { borderBottom: 'none' },
+                        }}
+                      >
+                        <Box sx={{ flex: 1, minWidth: 0 }}>
+                          <Box sx={{ fontSize: 13, fontWeight: 600, color: '#1F1F1F' }}>
+                            {it.productName}
+                          </Box>
+                          <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                            {it.productCode} · dispatched {disp}
+                            {it.weightValue != null ? ` · ${it.weightValue} ${it.weightUnit ?? ''}` : ''}
+                          </Box>
+                        </Box>
+                        {short && (
+                          <Chip
+                            label={`short ${disp - typed}`}
+                            size="small"
+                            sx={{ height: 20, fontSize: 10, fontWeight: 700, bgcolor: '#C62828', color: '#FFF' }}
+                          />
+                        )}
+                        {over && (
+                          <Chip
+                            label={`+${typed - disp}`}
+                            size="small"
+                            sx={{ height: 20, fontSize: 10, fontWeight: 700, bgcolor: '#E65100', color: '#FFF' }}
+                          />
+                        )}
+                        <TextField
+                          type="text"
+                          size="small"
+                          // String-coerce so MUI doesn't switch from
+                          // controlled to uncontrolled when the number 0
+                          // (initial dispatched qty for a 0-OOS line, if
+                          // it slipped through the filter) reads as
+                          // falsy inside the input.
+                          value={String(typed)}
+                          onChange={e => {
+                            const v = e.target.value
+                            if (v === '') {
+                              // Blank = 0 (shop got nothing on that line).
+                              setReceivedQtys(prev => { const n = new Map(prev); n.set(it.id, 0); return n })
+                              return
+                            }
+                            if (!/^\d+$/.test(v)) return
+                            const parsed = parseInt(v, 10)
+                            if (!Number.isFinite(parsed)) return
+                            setReceivedQtys(prev => {
+                              const n = new Map(prev)
+                              n.set(it.id, parsed)
+                              return n
+                            })
+                          }}
+                          onKeyDown={e => {
+                            if (['e', 'E', '.', ','].includes(e.key)) { e.preventDefault(); return }
+                            // Keyboard stepper: + / - / ArrowUp / ArrowDown
+                            // adjust the qty by 1. Handy for quick nudges
+                            // when the shop's count is off by a few units.
+                            if (e.key === '+' || e.key === '=' || e.key === 'ArrowUp') {
+                              e.preventDefault()
+                              setReceivedQtys(prev => {
+                                const n = new Map(prev)
+                                n.set(it.id, (n.get(it.id) ?? disp) + 1)
+                                return n
+                              })
+                              return
+                            }
+                            if (e.key === '-' || e.key === 'ArrowDown') {
+                              e.preventDefault()
+                              setReceivedQtys(prev => {
+                                const n = new Map(prev)
+                                const cur = n.get(it.id) ?? disp
+                                if (cur > 0) n.set(it.id, cur - 1)
+                                return n
+                              })
+                            }
+                          }}
+                          onWheel={e => (e.target as HTMLInputElement).blur()}
+                          onFocus={e => (e.target as HTMLInputElement).select()}
+                          slotProps={{
+                            htmlInput: {
+                              inputMode: 'numeric',
+                              style: { textAlign: 'center', padding: '4px 8px', width: 56 },
+                            },
+                          }}
+                          sx={{
+                            width: 76,
+                            '& .MuiOutlinedInput-root': {
+                              bgcolor: short ? '#FFCDD2' : over ? '#FFCC80' : '#FFF8DC',
+                              '& fieldset': { borderColor: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' },
+                            },
+                          }}
+                        />
+                      </Box>
+                    )
+                  })}
+                </Box>
+
+                {/* Summary strip — only surfaces when there's actually a discrepancy. */}
+                {(shortLines > 0 || overLines > 0) && (
+                  <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12, fontWeight: 700 }}>
+                    {shortLines > 0 && (
+                      <Box sx={{ color: '#C62828' }}>
+                        ⚠ {shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing
+                      </Box>
+                    )}
+                    {overLines > 0 && (
+                      <Box sx={{ color: '#E65100' }}>
+                        ↑ {overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}
+                      </Box>
+                    )}
+                  </Box>
+                )}
+              </>
+            )
+          })()}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setReceiveOpen(false)}
+            variant="outlined"
+            disabled={receiveMutation.isPending}
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            startIcon={<PackageCheck className="w-4 h-4" />}
+            disabled={receiveMutation.isPending}
+            onClick={handleReceive}
+            sx={{
+              textTransform: 'none', fontWeight: 700,
+              background: '#16A34A', color: '#FFFFFF',
+              '&:hover': { background: '#15803D' },
+            }}
+          >
+            {receiveMutation.isPending ? 'Confirming…' : 'Confirm receipt'}
+          </Button>
+        </DialogActions>
+      </Dialog>
     </Box>
   )
 }
