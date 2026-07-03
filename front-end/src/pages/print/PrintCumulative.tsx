@@ -124,41 +124,30 @@ export default function PrintCumulative() {
 
   return (
     <div className="print-page">
-      {/* Wrap whole sheet in a 1-column <table> so the <thead> block (brand
-          header only) repeats at the top of every printed page when the
-          kitchen plan spans multiple sheets (30-Jun-2026 client req).
-          Screen view is unaffected — table renders as one continuous flow
-          on screen.
-          03-Jul-2026 (client req) — the "Generated / Sourced from" meta
-          strip moved OUT of <thead> into the body: it was repeating on
-          every page along with the brand header, which only needs to show
-          once at the top of the document, not on every sheet. */}
-      <table className="print-page-table">
-        <thead>
-          <tr>
-            <td>
-              <header className="print-brand-header">
-                <div className="print-brand-name">{BRAND_NAME}</div>
-                <div className="print-brand-subtitle">Cumulative Batch Plan</div>
-              </header>
-            </td>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td>
-              <div className="print-meta-strip">
-                <div>
-                  <span className="muted">Generated: </span>
-                  {formatIstDateTime(new Date())}
-                </div>
-                {totalRequests > 0 && (
-                  <div>
-                    <span className="muted">Sourced from: </span>
-                    up to <strong>{totalRequests}</strong> request{totalRequests === 1 ? '' : 's'}
-                  </div>
-                )}
-              </div>
+      {/* 03-Jul-2026 (client req, 3rd pass) — dropped the repeating-header
+          <table>/<thead> wrapper entirely. It existed to repeat the brand
+          header on every printed page (30-Jun-2026 client req: "header
+          missing on page 2+"), but the client has since asked for the
+          OPPOSITE — brand header + meta line should print once at the top
+          of page 1 only, not on every sheet. Plain divs now; nothing here
+          needs table-header-group repeat semantics any more. */}
+      <header className="print-brand-header">
+        <div className="print-brand-name">{BRAND_NAME}</div>
+        <div className="print-brand-subtitle">Cumulative Batch Plan</div>
+      </header>
+
+      <div className="print-meta-inline">
+        <span className="muted">Generated: </span>
+        {formatIstDateTime(new Date())}
+        {totalRequests > 0 && (
+          <>
+            {' '}·{' '}
+            <span className="muted">Sourced from: </span>
+            up to <strong>{totalRequests}</strong> request{totalRequests === 1 ? '' : 's'}
+          </>
+        )}
+      </div>
+
       {sections.length === 0 ? (
         <p style={{ marginTop: 32 }}>No in-progress requests right now — nothing to prepare.</p>
       ) : (
@@ -249,13 +238,8 @@ export default function PrintCumulative() {
           </div>
         </>
       )}
-            </td>
-          </tr>
-        </tbody>
-      </table>
 
-      {/* Footer with Print button — visible on-screen only. Sits OUTSIDE the
-          repeating-header table so the button doesn't print as page chrome. */}
+      {/* Footer with Print button — visible on-screen only. */}
       <footer className="print-footer print-only">
         <div className="print-only">
           <button onClick={() => window.print()} className="print-trigger">Print</button>

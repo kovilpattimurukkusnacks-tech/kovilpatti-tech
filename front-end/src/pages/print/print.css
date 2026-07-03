@@ -62,6 +62,18 @@
   white-space: nowrap;
 }
 
+/* Compact one-line variant (03-Jul-2026, cumulative report 2nd pass) —
+ * folds "Generated / Sourced from" directly under the brand header as a
+ * single centred line instead of its own boxed strip with a border. Lives
+ * in the document body (not <thead>), so it only ever prints once at the
+ * top of page 1. */
+.print-meta-inline {
+  text-align: center;
+  font-size: 11px;
+  color: #1F1F1F;
+  margin-bottom: 10px;
+}
+
 /* Repeating-header wrapper (30-Jun-2026 — client req: header missing on
  * page 2+). Wrapping the whole sheet in a 1-column <table> lets the
  * browser repeat the <thead> (brand block + meta grid) at the top of
