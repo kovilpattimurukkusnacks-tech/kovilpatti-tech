@@ -7,6 +7,7 @@ import type {
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
   MoveToBackorderRequest, OutstandingBackorderDto,
+  ReceiveRequest,
 } from './types'
 
 function toQuery(filters?: StockRequestListFilters): string {
@@ -72,7 +73,7 @@ export const stockRequestsApi = {
   reject:   (id: string, req: RejectRequest)               => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/reject`, req),
   revoke:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/revoke`),
   dispatch: (id: string, req: DispatchRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch`, req),
-  receive:  (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/receive`),
+  receive:  (id: string, req?: ReceiveRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/receive`, req ?? {}),
   cancel:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/cancel`),
 
   // Shop draft (ShopUser) — at most one live draft per shop, identified

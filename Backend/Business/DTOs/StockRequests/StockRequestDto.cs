@@ -108,6 +108,15 @@ public record StockRequestItemDto(
     string?  WeightUnit,
     int     RequestedQty,
     int?    DispatchedQty,
+    /// Shop's actual counted qty at confirm-receipt time. Null = "no
+    /// discrepancy" (received == dispatched); non-null = the shop
+    /// entered a different number. Read from stock_request_items.received_qty.
+    int?    ReceivedQty,
+    /// Return-only partial-weight claim (grams). Null on Orders and on
+    /// full-pack Returns; non-null on damage-claim Returns where the shop
+    /// requested credit for a fraction of a pack. Value calc:
+    /// (ReturnWeightG / pack weight in grams) × UnitPrice.
+    decimal? ReturnWeightG,
     /// Inventory user's saved-but-not-finalised dispatch quantity. Used by
     /// the dispatch screen to pre-fill qty inputs from a saved draft.
     /// NULL when no draft has been saved (or after the request is dispatched

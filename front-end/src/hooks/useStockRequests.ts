@@ -8,6 +8,7 @@ import type {
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
   MoveToBackorderRequest,
+  ReceiveRequest,
 } from '../api/stock-requests/types'
 
 export const stockRequestsKeys = {
@@ -393,10 +394,17 @@ export function useDispatchStockRequest() {
   })
 }
 
+/** Confirm receipt of a Dispatched request. `req` is OPTIONAL —
+ *  omit for one-click "as-dispatched" confirm; pass `{items: [...]}`
+ *  to record per-item discrepancy (shop short/over count). */
 export function useReceiveStockRequest() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: (id: string) => stockRequestsApi.receive(id),
+    mutationFn: (args: string | { id: string; req?: ReceiveRequest }) => {
+      // Overload for backward-compat: existing callers pass a bare id.
+      const [id, req] = typeof args === 'string' ? [args, undefined] : [args.id, args.req]
+      return stockRequestsApi.receive(id, req)
+    },
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)

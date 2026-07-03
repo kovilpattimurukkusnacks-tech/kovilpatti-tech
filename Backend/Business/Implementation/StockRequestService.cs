@@ -322,7 +322,7 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
-    public async Task<StockRequestDto> ReceiveAsync(Guid id, CancellationToken ct = default)
+    public async Task<StockRequestDto> ReceiveAsync(Guid id, ReceiveRequest? request = null, CancellationToken ct = default)
     {
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
@@ -333,7 +333,25 @@ public class StockRequestService(
         // Shop user can only mark their own request received.
         EnsureShopScope(existing);
 
-        var ok = await requests.ReceiveAsync(id, userId, ct);
+        // Optional items payload — shop reports a discrepancy (short / over)
+        // by listing per-item received qtys. Only rows different from the
+        // dispatched qty need to be in the payload. Absent list = one-click
+        // "as-dispatched" confirm (matches pre-02-Jul-2026 behaviour).
+        string? itemsJson = null;
+        if (request?.Items is { Count: > 0 })
+        {
+            if (request.Items.Any(i => i.ReceivedQty < 0))
+                throw new ValidationException(new[] {
+                    new ValidationFailure(nameof(request.Items),
+                        "Received qty must be zero or positive on every line.")
+                });
+
+            itemsJson = JsonSerializer.Serialize(
+                request.Items.Select(i => new { id = i.Id, received_qty = i.ReceivedQty }),
+                JsonOpts);
+        }
+
+        var ok = await requests.ReceiveAsync(id, userId, itemsJson, ct);
         if (!ok) throw new ValidationException(new[] {
             new ValidationFailure("status", $"Cannot mark received — request is in '{existing.Status}' state.")
         });
@@ -653,9 +671,32 @@ public class StockRequestService(
             inventoryIdForReturn = source.Inventory_Id;
         }
 
-        // Build items JSON (same shape as Orders: product_id, requested_qty,
-        // unit_price snapshot). Phase 3 reads unit_price to reverse the
-        // ledger entry at the exact price the goods were sold for.
+        // Partial-weight validation (02-Jul-2026, B2). Only g/kg SKUs may
+        // carry return_weight_g. SP re-checks defensively, but surfacing
+        // a clean 400 up front beats a generic RAISE from Postgres.
+        if (request.Items.Any(i => i.ReturnWeightG is > 0))
+        {
+            var productMap = await ResolveAndValidateProducts(
+                request.Items.Select(i => i.ProductId).ToHashSet(), ct);
+            foreach (var i in request.Items.Where(x => x.ReturnWeightG is > 0))
+            {
+                var p = productMap[i.ProductId];
+                if (p.WeightUnit is not ("g" or "kg") || p.WeightValue is null or <= 0)
+                    throw new ValidationException(new[] {
+                        new ValidationFailure("items",
+                            $"Partial-weight return only allowed on g/kg products. '{p.Name}' has unit '{p.WeightUnit ?? "<none>"}'.")
+                    });
+                var packG = (decimal)p.WeightValue * (p.WeightUnit == "kg" ? 1000m : 1m);
+                if (i.ReturnWeightG > packG * i.RequestedQty)
+                    throw new ValidationException(new[] {
+                        new ValidationFailure("items",
+                            $"Return weight ({i.ReturnWeightG}g) exceeds the available pack weight ({packG * i.RequestedQty}g across {i.RequestedQty} pack(s)) for '{p.Name}'.")
+                    });
+            }
+        }
+
+        // Build items JSON (product_id, requested_qty, unit_price snapshot,
+        // + optional return_weight_g for partial-weight damage claims).
         var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
         var code = await requests.NextCodeAsync(ct);
@@ -845,6 +886,10 @@ public class StockRequestService(
     // Build the items JSON payload consumed by fn_request_create / _update /
     // _save_shop_draft. Each call resolves product MRPs (snapshot at submit time)
     // and emits snake_case keys for the SPs' jsonb_extract_path lookups.
+    //
+    // return_weight_g is optional — carried only on Return payloads (Orders
+    // never populate it). Downstream SPs that don't recognise the key just
+    // ignore it, so it's safe to always emit when non-null.
     private async Task<string> BuildItemsJsonAsync(
         IReadOnlyList<CreateStockRequestItem> items, CancellationToken ct)
     {
@@ -853,9 +898,10 @@ public class StockRequestService(
 
         return JsonSerializer.Serialize(items.Select(i => new
         {
-            product_id    = i.ProductId,
-            requested_qty = i.RequestedQty,
-            unit_price    = productMap[i.ProductId].Mrp,
+            product_id       = i.ProductId,
+            requested_qty    = i.RequestedQty,
+            unit_price       = productMap[i.ProductId].Mrp,
+            return_weight_g  = i.ReturnWeightG,
         }), JsonOpts);
     }
 
@@ -954,7 +1000,7 @@ public class StockRequestService(
         return raws.Select(i => new StockRequestItemDto(
             i.id, i.product_id, i.product_code, i.product_name, i.category_name,
             i.weight_value, i.weight_unit,
-            i.requested_qty, i.dispatched_qty, i.draft_dispatched_qty,
+            i.requested_qty, i.dispatched_qty, i.received_qty, i.return_weight_g, i.draft_dispatched_qty,
             i.unit_price, i.subtotal,
             i.added_by ?? "Shop",
             i.is_vendor_procured ?? false)).ToList();
@@ -981,7 +1027,9 @@ public class StockRequestService(
         Guid id, Guid product_id, string product_code, string product_name,
         string category_name,
         decimal? weight_value, string? weight_unit,
-        int requested_qty, int? dispatched_qty, int? draft_dispatched_qty,
+        int requested_qty, int? dispatched_qty, int? received_qty,
+        decimal? return_weight_g,
+        int? draft_dispatched_qty,
         decimal unit_price, decimal subtotal,
         string? added_by,
         bool?   is_vendor_procured);

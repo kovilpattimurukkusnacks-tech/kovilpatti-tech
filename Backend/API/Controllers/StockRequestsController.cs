@@ -149,10 +149,16 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         => Ok(await requests.DispatchAsync(id, request, ct));
 
     // ─── Shop user: confirm receipt ──────────────────────────
+    // Body is optional — omit / empty for the one-click "as-dispatched"
+    // confirm. Pass ReceiveRequest.Items to record per-item discrepancy
+    // (shop counted less/more than what was dispatched).
     [HttpPatch("{id:guid}/receive")]
     [Authorize(Roles = "ShopUser,Admin")]
-    public async Task<ActionResult<StockRequestDto>> Receive(Guid id, CancellationToken ct)
-        => Ok(await requests.ReceiveAsync(id, ct));
+    public async Task<ActionResult<StockRequestDto>> Receive(
+        Guid id,
+        [FromBody] ReceiveRequest? request,
+        CancellationToken ct)
+        => Ok(await requests.ReceiveAsync(id, request, ct));
 
     // ─── Cancel (shop before lock, admin anytime) ────────────
     [HttpPatch("{id:guid}/cancel")]

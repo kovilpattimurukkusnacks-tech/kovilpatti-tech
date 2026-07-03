@@ -565,6 +565,20 @@ export default function InventoryRequestDetail() {
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, fontSize: 14 }}>
                           <span>{item.productName}</span>
                           {item.addedBy === 'Inventory' && <InvBadge />}
+                          {/* Partial-weight return chip — shop claimed a
+                              fraction of a pack (B2 damage claim). */}
+                          {item.returnWeightG != null && (
+                            <Chip
+                              label={`Partial · ${item.returnWeightG}g`}
+                              size="small"
+                              sx={{
+                                ml: 0.5,
+                                bgcolor: '#FFE0B2', color: '#7C4A00',
+                                border: '1px solid #E8A758',
+                                height: 20, fontSize: 10, fontWeight: 700,
+                              }}
+                            />
+                          )}
                           {/* Trash icon only for inv-added items while
                               request is still editable — removes just
                               this line via the inv-remove endpoint. */}
@@ -674,7 +688,7 @@ export default function InventoryRequestDetail() {
                             }}
                           />
                         ) : (
-                          <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} />
+                          <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
                         )}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
@@ -872,6 +886,33 @@ export default function InventoryRequestDetail() {
         </Box>
       )}
 
+      {/* Shop-reported receipt discrepancy (02-Jul-2026). Godown side
+          view of the same banner rendered on shop + admin detail pages.
+          Only renders on Received requests where the shop's count didn't
+          match dispatched. */}
+      {(() => {
+        let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        for (const it of items) {
+          if (it.receivedQty == null) continue
+          const disp = it.dispatchedQty ?? 0
+          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
+          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+        }
+        if (shortLines === 0 && overLines === 0) return null
+        return (
+          <Alert severity={shortLines > 0 ? 'error' : 'warning'} sx={{ mb: 2 }}>
+            <strong>Shop reported a receipt discrepancy.</strong>{' '}
+            {shortLines > 0 && (
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+            )}
+            {shortLines > 0 && overLines > 0 && ' · '}
+            {overLines > 0 && (
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+            )}
+          </Alert>
+        )
+      })()}
+
       {/* Back-order children banner (02-Jul-2026). Shown on the PARENT
           Order once the godown has carved off one or more Backorder
           siblings. Amber to match the vendor-procured badge; click the
@@ -998,6 +1039,58 @@ export default function InventoryRequestDetail() {
           </Box>
         ))}
       </Box>
+
+      {/* Receipt-change log (02-Jul-2026). Same table godown sees on the
+          shop side — surfaces the shop's per-line count vs what godown
+          dispatched. Only renders when at least one line has
+          receivedQty set. */}
+      {(() => {
+        const changed = items.filter(it => it.receivedQty != null)
+        if (changed.length === 0) return null
+        return (
+          <Paper
+            elevation={0}
+            sx={{ mb: 2, borderRadius: 2, border: '1px solid rgba(31,31,31,0.2)', overflow: 'hidden' }}
+          >
+            <Box sx={{
+              px: 2, py: 1, bgcolor: '#FFF8DC',
+              borderBottom: '1px solid rgba(31,31,31,0.2)',
+              fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, color: '#1F1F1F',
+            }}>
+              Shop-reported receipt changes · {changed.length} {changed.length === 1 ? 'product' : 'products'}
+            </Box>
+            <Table size="small">
+              <TableHead>
+                <TableRow sx={{ bgcolor: '#FFFBE6' }}>
+                  <TableCell sx={{ py: 0.75, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Product</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Dispatched</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Received</TableCell>
+                  <TableCell align="right" sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>Change</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {changed.map(it => {
+                  const disp  = it.dispatchedQty ?? 0
+                  const rec   = it.receivedQty!
+                  const delta = rec - disp
+                  const short = delta < 0
+                  const over  = delta > 0
+                  return (
+                    <TableRow key={it.id}>
+                      <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>{it.productName}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{disp}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{rec}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
+                        {short ? delta : over ? `+${delta}` : '—'}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
+              </TableBody>
+            </Table>
+          </Paper>
+        )
+      })()}
 
       {/* Fixed summary bar — same shape as the New Stock Request cart bar.
           19-Jun-2026 (client #14). Hidden when canEditQty is true because
