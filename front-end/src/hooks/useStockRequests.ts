@@ -7,7 +7,7 @@ import type {
   RequestType, CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
-  MoveToBackorderRequest,
+  SetSpecialRequest,
   ReceiveRequest,
 } from '../api/stock-requests/types'
 
@@ -156,6 +156,9 @@ export function useCreateStockRequest() {
     // to invalidate just the "mine" list since shop user lands back on it.
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
+      // A newly-created request may carry isSpecial=true — refresh the
+      // banner feed so it shows up immediately on shop / inv / admin.
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
       // Submit consumes the draft (BE-side, in fn_request_create). Clear the
       // cached draft so the Resume Draft strip disappears immediately.
       qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
@@ -408,6 +411,10 @@ export function useReceiveStockRequest() {
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      // Received = closure gate for a Special Request — the banner drops
+      // the row once it flips to Received. Invalidate so it disappears
+      // in the same tick.
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
     },
   })
 }
@@ -453,39 +460,35 @@ export function useCancelStockRequest() {
   })
 }
 
-/** Godown carves items off a parent Order into a linked Backorder sibling.
- *  Returns the REFRESHED PARENT DTO. Cache updates: parent detail patched
- *  directly; every list cache patched (parent has updated totals + a new
- *  backorderChildren array); the newly-created child appears when its list
- *  is refetched. Outstanding-backorder strip queries are invalidated. */
-export function useMoveToBackorder() {
+/** Shop toggles the "special / vendor procurement" flag on a Pending
+ *  request. Admin allowed too; Inventory forbidden. Returns the refreshed
+ *  DTO with isSpecial + specialLabel set. Cache updates: detail patched
+ *  directly, every list cache patched, active-specials banner invalidated. */
+export function useSetSpecial() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ id, req }: { id: string; req: MoveToBackorderRequest }) =>
-      stockRequestsApi.moveToBackorder(id, req),
+    mutationFn: ({ id, req }: { id: string; req: SetSpecialRequest }) =>
+      stockRequestsApi.setSpecial(id, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
-      // New Backorder child appears on lists — refetch scopes it correctly.
-      qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
-      // The Outstanding Back-orders strip on shop/inv/admin uses these
-      // keys — force a refetch so the new row shows up.
-      qc.invalidateQueries({ queryKey: ['stock-requests', 'outstanding-backorders'] })
+      // The sticky top banner reads from the active-specials list; force a
+      // refetch so a newly-toggled special surfaces (or drops off) live.
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
     },
   })
 }
 
-/** Pipeline snapshot of Pending Backorders. Drives:
- *   • Shop banner "N back-orders outstanding"
- *   • Inventory persistent banner + Procurement preset chip
- *   • Admin Accounts pipeline strip (cross-month; date filter not applied) */
-export function useOutstandingBackorders(inventoryId?: string, options?: { enabled?: boolean }) {
+/** Every un-received Special request in the caller's scope. Powers the
+ *  sticky top banner on shop / inv / admin. Never date-filtered — surfaces
+ *  cross-month specials until the shop confirms Received. */
+export function useActiveSpecials(options?: { enabled?: boolean }) {
   return useQuery({
-    queryKey: ['stock-requests', 'outstanding-backorders', inventoryId ?? 'scope'] as const,
-    queryFn: () => stockRequestsApi.outstandingBackorders(inventoryId),
+    queryKey: ['stock-requests', 'active-specials'] as const,
+    queryFn: () => stockRequestsApi.activeSpecials(),
     enabled: options?.enabled ?? true,
-    // 60s is fine — the strip doesn't need to reflect the very last second's
-    // change; explicit invalidations handle same-tab actions.
+    // 60s is fine — banner doesn't need to reflect the very last second's
+    // change; explicit invalidations from mutations handle same-tab actions.
     staleTime: 60_000,
   })
 }

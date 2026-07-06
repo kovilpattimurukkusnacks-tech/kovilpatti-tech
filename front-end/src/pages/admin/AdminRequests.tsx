@@ -7,7 +7,7 @@ import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { AdjustmentQtyCell } from '../../components/AdjustmentQtyCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop, useInventoryDispatchDrafts } from '../../hooks/useStockRequests'
-import { BackorderChip } from '../../components/BackorderChip'
+import { SpecialRequestChip } from '../../components/SpecialRequestChip'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import DateRangeFilter, { istToday, dateRangeLabel } from '../../components/DateRangeFilter'
@@ -165,7 +165,7 @@ export default function AdminRequests() {
               }}
             />
           )}
-          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
           {draftIdSet.has(row.id) && (
             <Chip
               label="Draft"

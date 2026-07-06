@@ -6,7 +6,7 @@ import type {
   CreateReturnRequest, AcceptReturnRequest, EditDispatchedQtyRequest,
   RenameDispatchDraftRequest, PinDispatchDraftRequest,
   InventoryAddItemsRequest,
-  MoveToBackorderRequest, OutstandingBackorderDto,
+  SetSpecialRequest, ActiveSpecialDto,
   ReceiveRequest,
 } from './types'
 
@@ -139,17 +139,16 @@ export const stockRequestsApi = {
       req,
     ),
 
-  // ── Back-order (02-Jul-2026) ─────────────────────────────────
-  // Godown carves items off a parent Order into a Backorder sibling.
-  // Returns the refreshed PARENT DTO (its items list drops the moved
-  // lines; backorderChildren gains the new child).
-  moveToBackorder: (id: string, req: MoveToBackorderRequest) =>
-    apiClient.post<StockRequestDto>(`/api/stock-requests/${id}/move-to-backorder`, req),
+  // ── Special Request (06-Jul-2026) ────────────────────────────
+  // Shop toggles the "special / vendor procurement" flag on a Pending
+  // request. Admin allowed too; Inventory forbidden. Returns the
+  // refreshed DTO with isSpecial + specialLabel set.
+  setSpecial: (id: string, req: SetSpecialRequest) =>
+    apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/special`, req),
 
-  // Pipeline snapshot of Pending Backorders. inventoryId only meaningful
-  // for admin — Inventory/ShopUser roles are scoped server-side.
-  outstandingBackorders: (inventoryId?: string) =>
-    apiClient.get<OutstandingBackorderDto[]>(
-      `/api/stock-requests/outstanding-backorders${inventoryId ? `?inventoryId=${inventoryId}` : ''}`,
-    ),
+  // Every un-received Special request in the caller's scope. Role scoping
+  // is server-side (own shop / own inv / tenant-wide). Powers the sticky
+  // top banner across all three role dashboards.
+  activeSpecials: () =>
+    apiClient.get<ActiveSpecialDto[]>('/api/stock-requests/active-specials'),
 }

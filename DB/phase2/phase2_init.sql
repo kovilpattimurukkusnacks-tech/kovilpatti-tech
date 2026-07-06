@@ -38,19 +38,19 @@ END $$;
 -- request_type distinguishes Orders (shop → godown) from Returns (shop → godown
 -- in reverse, items going back). Both share the stock_requests table; the type
 -- flips which lifecycle states are valid and which audit timestamps populate.
--- 'Backorder' (added 01-Jul-2026) = a sibling request carved off a parent
--- Order when some items require vendor procurement (2–4 day lead time). It
--- follows the same Pending → Dispatched → Received lifecycle but doesn't
--- block the shop's next Order and links to its parent via parent_request_id.
+--
+-- 06-Jul-2026 — the shop-initiated "Special Request" flow (is_special flag
+-- on stock_requests, set at review/submit) replaced the godown-initiated
+-- Backorder split. 'Backorder' remains a valid enum value only for
+-- historical rows migrated to is_special=true at rollout; new writes never
+-- use it. Postgres cannot cleanly drop enum values, so we leave it dormant.
 DO $$ BEGIN
   CREATE TYPE request_type AS ENUM ('Order', 'Return', 'Backorder');
 EXCEPTION
   WHEN duplicate_object THEN NULL;
 END $$;
 
--- If the enum already exists from an earlier build (before Backorder was
--- added), append the value idempotently. Postgres 12+ allows this without
--- a table rewrite. Guarded so re-runs on a fresh DB don't error.
+-- Backorder enum value stays for legacy compatibility only. See header above.
 DO $$ BEGIN
   ALTER TYPE request_type ADD VALUE IF NOT EXISTS 'Backorder';
 EXCEPTION
@@ -144,13 +144,6 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   -- NULL on Orders (enforced by chk_source_only_for_returns below).
   source_request_id uuid           REFERENCES stock_requests(id) ON DELETE SET NULL,
 
-  -- A Backorder references the Order it was carved off (01-Jul-2026).
-  -- When the godown moves out-of-stock lines to a back-order, the new
-  -- Backorder row's parent_request_id points to the original Order.
-  -- Accounts rolls the pair together for shop / category attribution.
-  -- Always NULL on Orders and Returns.
-  parent_request_id uuid           REFERENCES stock_requests(id) ON DELETE SET NULL,
-
   -- Godown-supplied label on a saved dispatch draft. Pure UX field so a
   -- dispatcher juggling 6-10 drafts can identify "morning batch" vs "the
   -- one waiting on pickle" at a glance. Set by fn_request_save_dispatch_draft;
@@ -166,11 +159,15 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   -- discard / dispatch alongside the rest of the draft state.
   pinned_at         timestamptz,
 
-  -- Optional ETA for a Backorder request (01-Jul-2026). Godown sets when
-  -- known ("vendor confirmed delivery on 3-Feb"); leave NULL when
-  -- estimation isn't possible yet. Surfaces on the shop's banner and on
-  -- back-order prints. Only meaningful when request_type = 'Backorder'.
-  expected_arrival_at  timestamptz,
+  -- Special-request flags (06-Jul-2026). Shop marks the whole request as
+  -- "special" at review/submit — this signals the godown that stock must
+  -- be procured from a vendor rather than packed from on-hand godown
+  -- stock. Persistent banner + row highlight across shop/inv/admin until
+  -- the request reaches Received. special_label is user-supplied (e.g.,
+  -- "Diwali stock 2026") and rendered on chips, banner, and cumulative
+  -- print. Both fields are NULL/false on normal orders.
+  is_special       boolean        NOT NULL DEFAULT false,
+  special_label    varchar(120),
 
   is_deleted        boolean        NOT NULL DEFAULT false,
   created_at        timestamptz    NOT NULL DEFAULT now(),
@@ -185,12 +182,11 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   CONSTRAINT chk_source_only_for_returns
     CHECK (source_request_id IS NULL OR request_type = 'Return'),
 
-  -- Only Backorders may set parent_request_id. Orders / Returns never do.
-  -- ::text on both sides avoids Postgres 55P04 ("unsafe use of new value")
-  -- when this file is applied on a DB that just ALTER-TYPE-added 'Backorder'
-  -- in the same transaction. Semantics unchanged.
-  CONSTRAINT chk_parent_only_for_backorders
-    CHECK (parent_request_id IS NULL OR request_type::text = 'Backorder')
+  -- special_label only lives on requests that are actually special —
+  -- prevents stray labels on normal orders that would confuse the banner
+  -- and cumulative-print pill.
+  CONSTRAINT chk_special_label_only_when_special
+    CHECK (special_label IS NULL OR is_special = true)
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_requests_shop_status
@@ -208,14 +204,13 @@ CREATE INDEX IF NOT EXISTS idx_stock_requests_source_request
   ON stock_requests(source_request_id)
   WHERE source_request_id IS NOT NULL;
 
--- Reverse-lookup: "the Backorder carved off this Order". Partial index —
--- only Backorder rows populate parent_request_id (see chk_parent_only_for_backorders).
--- Used by fn_request_get to fetch the linked child on parent detail
--- pages, and by accounts SPs to roll child amounts under the parent's
--- shop + category attribution.
-CREATE INDEX IF NOT EXISTS idx_stock_requests_parent_request
-  ON stock_requests(parent_request_id)
-  WHERE parent_request_id IS NOT NULL;
+-- Partial index over the small set of unreceived Special requests —
+-- powers the sticky top banner queries (cross-role) which fetch every
+-- special that hasn't hit Received yet. Small partial index keeps it
+-- cheap even as the requests table grows.
+CREATE INDEX IF NOT EXISTS idx_stock_requests_active_specials
+  ON stock_requests(status, shop_id)
+  WHERE is_special = true AND is_deleted = false AND status IN ('Pending','Approved','Dispatched');
 
 -- One live draft per shop. Partial unique index — only enforces uniqueness
 -- on the Draft status (Pending/Dispatched/etc. rows are unaffected). Lets

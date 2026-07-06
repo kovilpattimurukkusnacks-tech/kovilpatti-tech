@@ -1,4 +1,4 @@
-import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
+import { Box, Card, CardContent, Chip, Skeleton, Typography } from '@mui/material'
 import { Truck } from 'lucide-react'
 import type { AccountsInTransitDto } from '../../api/accounts/types'
 import { formatINR } from '../../utils/format'
@@ -49,6 +49,25 @@ export default function InTransitStrip({ data, loading }: Props) {
             <Typography sx={{ color: '#C62828', fontSize: 13, fontWeight: 700 }}>
               · oldest {ageDays} day{ageDays === 1 ? '' : 's'} ago
             </Typography>
+          )}
+          {/* Special-order slice inside the in-transit total (06-Jul-2026,
+              client req). Only renders when specialCount > 0 so a clean
+              in-transit set stays uncluttered. Amber chip echoes the
+              Special Request visual language across the app. */}
+          {data.specialCount > 0 && (
+            <Chip
+              label={`★ ${data.specialCount} Special · ${formatINR(data.specialAmount)}`}
+              size="small"
+              sx={{
+                bgcolor: '#FFB74D',
+                border: '1px solid #E65100',
+                color: '#3E2500',
+                fontWeight: 800,
+                fontSize: 12,
+                letterSpacing: 0.3,
+                height: 24,
+              }}
+            />
           )}
         </Box>
       </CardContent>

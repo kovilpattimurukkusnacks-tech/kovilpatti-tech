@@ -1,7 +1,15 @@
 # Special / Back-order Stock Requests
 
-> **Status:** Planned — not built. Refined 01-Jul-2026.
-> Re-open when the client wants to schedule the build (estimated ~3–3½ days end-to-end).
+> **Status:** RETIRED (06-Jul-2026). Approach replaced by the shop-declared
+> Special Request flow (stock_requests.is_special / .special_label). Client
+> pivoted from "godown carves out a Backorder sibling when short" to "shop
+> flags the whole request as special upfront on the review-submit step".
+>
+> Kept for historical reference only. See:
+>   • DB/One shot scripts/phase2_special_request_rework.sql
+>   • DB/phase2/phase2_procedures.sql (fn_request_set_special,
+>     fn_request_list_active_specials)
+>   • front-end/src/components/ActiveSpecialsBanner.tsx
 
 ## Problem
 

@@ -99,7 +99,7 @@ LANGUAGE sql STABLE AS $$
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -144,14 +144,14 @@ LANGUAGE sql STABLE AS $$
   -- applies per item, matching those breakdowns.
   item_sums AS (
     SELECT
-      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
                         THEN it.requested_qty * it.unit_price END), 0)                            AS requested_amount,
       -- Order-side money uses received_qty first (shop's reported count
        -- at receive time), falling back to dispatched_qty, then requested_qty.
        -- 03-Jul-2026: keeps accounts + shop's declared receipt in sync so a
        -- reported short-receipt reduces the ledger by exactly the missing
        -- amount without an admin qty-edit round-trip.
-      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
                         THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
                         THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount
@@ -166,7 +166,7 @@ LANGUAGE sql STABLE AS $$
   SELECT
     (SELECT s.requested_amount  FROM item_sums s)::numeric(14,2)                                             AS requested_amount,
     (SELECT s.dispatched_amount FROM item_sums s)::numeric(14,2)                                             AS dispatched_amount,
-    COALESCE(COUNT(*) FILTER (WHERE f.request_type IN ('Order', 'Backorder')), 0)::bigint                                    AS dispatched_request_count,
+    COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Order'), 0)::bigint                                    AS dispatched_request_count,
     (SELECT s.returns_amount    FROM item_sums s)::numeric(14,2)                                             AS returns_amount,
     COALESCE(COUNT(*) FILTER (WHERE f.request_type = 'Return'), 0)::bigint                                   AS returns_request_count,
     -- Net = live Dispatched − live Returns. Adjustments are NOT added: the
@@ -237,7 +237,7 @@ LANGUAGE sql STABLE AS $$
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -265,10 +265,10 @@ LANGUAGE sql STABLE AS $$
   )
   SELECT
     s.bucket_start,
-    COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')  THEN f.total_amount END), 0)::numeric(14,2) AS dispatched_amount,
+    COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)::numeric(14,2) AS dispatched_amount,
     COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)::numeric(14,2) AS returns_amount,
     (
-      COALESCE(SUM(CASE WHEN f.request_type IN ('Order', 'Backorder')  THEN f.total_amount END), 0)
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
     - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
     )::numeric(14,2) AS net_amount
   FROM series s
@@ -351,7 +351,7 @@ LANGUAGE sql STABLE AS $$
     SELECT r.id, r.shop_id, r.total_amount
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
-      AND r.request_type IN ('Order', 'Backorder')
+      AND r.request_type = 'Order'
       AND r.status       = 'Received'
       AND r.received_at >= g.lo AND r.received_at < g.hi
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -592,24 +592,24 @@ LANGUAGE sql STABLE AS $$
       -- 03-Jul-2026: Order-side uses received_qty first (shop's reported
       -- count) so a declared receipt discrepancy flows through category
       -- rollups. Return path unchanged — Returns have no received_qty.
-      CASE WHEN r.request_type IN ('Order', 'Backorder')
+      CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END                                                                                     AS signed_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')
+      CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END                                                                                     AS signed_amount,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')
+      CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
       END                                                                                     AS signed_cost,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
@@ -617,7 +617,7 @@ LANGUAGE sql STABLE AS $$
     , range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -719,20 +719,20 @@ LANGUAGE sql STABLE AS $$
       -- Signed (existing — for the Net columns in 'All' view).
       -- 03-Jul-2026: Order-side uses received_qty first when the shop has
       -- reported a receipt discrepancy. Return path unchanged.
-      CASE WHEN r.request_type IN ('Order', 'Backorder')
+      CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
       END AS signed_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')
+      CASE WHEN r.request_type = 'Order'
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END AS signed_amount,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type IN ('Order', 'Backorder')  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
+      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
       CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
@@ -740,7 +740,7 @@ LANGUAGE sql STABLE AS $$
     , range g
     WHERE r.is_deleted = false
       AND (
-            (r.request_type IN ('Order', 'Backorder')  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
+            (r.request_type = 'Order'  AND r.status = 'Received' AND r.received_at >= g.lo AND r.received_at < g.hi)
          OR (r.request_type = 'Return' AND r.status = 'Accepted' AND r.accepted_at >= g.lo AND r.accepted_at < g.hi)
       )
       AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
@@ -777,6 +777,11 @@ $$;
 -- ============================================================
 -- 19-Jun-2026 (client #13): adds request_type column so the FE Accounts
 -- view-mode lens can filter audits by Order / Return slice.
+-- 06-Jul-2026: also projects is_special + special_label from the parent
+-- request so the FE can flag audit rows tied to Special Requests (amber
+-- chip next to the request code, matches the visual language used across
+-- shop / inv / admin list + detail pages). RETURNS shape change → the
+-- prior DROP guards below stay + a new one drops the pre-special shape.
 DROP FUNCTION IF EXISTS fn_accounts_adjustments(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_adjustments(
@@ -793,6 +798,10 @@ RETURNS TABLE (
   request_code    varchar,
   -- Request shape — 'Order' or 'Return'. Lets the FE filter audits by view.
   request_type    varchar,
+  -- Shop-declared Special Request flag + user-supplied label. Both projected
+  -- from stock_requests (join already present). NULL/false on normal orders.
+  is_special      boolean,
+  special_label   varchar,
   shop_id         uuid,
   shop_name       varchar,
   product_id      uuid,
@@ -840,6 +849,8 @@ LANGUAGE sql STABLE AS $$
     a.request_id,
     r.code                                                         AS request_code,
     r.request_type                                                 AS request_type,
+    r.is_special,
+    r.special_label,
     r.shop_id,
     s.name                                                         AS shop_name,
     p.id                                                           AS product_id,
@@ -880,6 +891,9 @@ $$;
 --    now" — but honours the shop / inventory filters so an admin viewing a
 --    single shop sees only that shop's stuck dispatches.
 -- ============================================================
+-- 06-Jul-2026: RETURNS gained special_count + special_amount so the
+-- InTransit strip can surface "of the N in transit, K are Special
+-- Requests (₹X)". Shape change → drop before re-create.
 DROP FUNCTION IF EXISTS fn_accounts_in_transit(uuid[], uuid[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_in_transit(
@@ -889,16 +903,22 @@ CREATE OR REPLACE FUNCTION fn_accounts_in_transit(
 RETURNS TABLE (
   request_count        bigint,
   total_amount         numeric,
-  oldest_dispatched_at timestamptz
+  oldest_dispatched_at timestamptz,
+  -- Subset of the above that are shop-declared Special Requests. Never
+  -- exceeds request_count; equals 0 when the tenant has none in transit.
+  special_count        bigint,
+  special_amount       numeric
 )
 LANGUAGE sql STABLE AS $$
   SELECT
-    COUNT(*)::bigint                              AS request_count,
-    COALESCE(SUM(r.total_amount), 0)::numeric(14,2) AS total_amount,
-    MIN(r.dispatched_at)                          AS oldest_dispatched_at
+    COUNT(*)::bigint                                                       AS request_count,
+    COALESCE(SUM(r.total_amount), 0)::numeric(14,2)                        AS total_amount,
+    MIN(r.dispatched_at)                                                   AS oldest_dispatched_at,
+    COUNT(*) FILTER (WHERE r.is_special)::bigint                           AS special_count,
+    COALESCE(SUM(r.total_amount) FILTER (WHERE r.is_special), 0)::numeric(14,2) AS special_amount
   FROM stock_requests r
   WHERE r.is_deleted   = false
-    AND r.request_type IN ('Order', 'Backorder')
+    AND r.request_type = 'Order'
     AND r.status       = 'Dispatched'
     AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id      = ANY(p_shop_ids))
     AND (p_inv_ids  IS NULL OR cardinality(p_inv_ids)  = 0 OR r.inventory_id = ANY(p_inv_ids));

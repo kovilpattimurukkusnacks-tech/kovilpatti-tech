@@ -8,8 +8,6 @@ import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import AccountsFilterBar from '../../components/accounts/AccountsFilterBar'
 import KpiStrip from '../../components/accounts/KpiStrip'
 import InTransitStrip from '../../components/accounts/InTransitStrip'
-import OutstandingBackordersStrip from '../../components/accounts/OutstandingBackordersStrip'
-import { useOutstandingBackorders } from '../../hooks/useStockRequests'
 import ShopBreakdownTable from '../../components/accounts/ShopBreakdownTable'
 import CategoryAndProductsTable from '../../components/accounts/CategoryAndProductsTable'
 import AdjustmentsLogTable from '../../components/accounts/AdjustmentsLogTable'
@@ -171,10 +169,6 @@ export default function AdminAccounts() {
   // doesn't block the rest of the page from rendering.
   const summary     = useAccountsSummary(nonCategoryFilters)
   const inTransit   = useAccountsInTransit(nonCategoryFilters)
-  // Outstanding back-orders — pipeline snapshot, deliberately NOT filtered
-  // by the accounts date range. A back-order raised on 29-Jan is still
-  // relevant on the Feb accounts screen. Admin sees tenant-wide list.
-  const backorders  = useOutstandingBackorders()
   const byShop      = useAccountsByShop(nonCategoryFilters)
   const byCategory  = useAccountsByCategory(filters)
   const topProducts = useAccountsTopProducts(filters)
@@ -215,12 +209,6 @@ export default function AdminAccounts() {
             Doesn't apply when the user is focused on Returns view — hide. */}
         {filters.view !== 'returns' && (
           <InTransitStrip data={inTransit.data} loading={inTransit.isLoading} />
-        )}
-
-        {/* Outstanding back-orders — pipeline strip, always visible on
-            non-Returns views. Independent of date range (see comment above). */}
-        {filters.view !== 'returns' && (
-          <OutstandingBackordersStrip data={backorders.data} loading={backorders.isLoading} />
         )}
 
         <ShopBreakdownTable

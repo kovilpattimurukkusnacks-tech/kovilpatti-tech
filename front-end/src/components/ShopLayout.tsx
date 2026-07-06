@@ -4,6 +4,7 @@ import { Menu } from 'lucide-react'
 import { Drawer, IconButton } from '@mui/material'
 import ShopSidebar from './ShopSidebar'
 import { useApp } from '../context/AppContext'
+import { ActiveSpecialsBanner } from './ActiveSpecialsBanner'
 import './Layout.css'
 
 export default function ShopLayout() {
@@ -37,6 +38,7 @@ export default function ShopLayout() {
           <Menu className="w-5 h-5" />
         </IconButton>
 
+        <ActiveSpecialsBanner />
         <main className="flex-1 p-4 sm:p-6">
           <Outlet />
         </main>

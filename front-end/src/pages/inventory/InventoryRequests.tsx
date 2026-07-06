@@ -1,7 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff, Hourglass } from 'lucide-react'
-import { BackorderChip } from '../../components/BackorderChip'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
+import { SpecialRequestChip } from '../../components/SpecialRequestChip'
 import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
@@ -11,7 +11,6 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
   useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
-  useOutstandingBackorders,
 } from '../../hooks/useStockRequests'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
@@ -52,9 +51,6 @@ const PRESETS: Preset[] = [
   { key: 'received',   label: 'Delivered',     status: 'Received' },
   { key: 'all',        label: 'All',           status: undefined  },
   { key: 'return',     label: 'Return',        requestType: 'Return' },
-  // Procurement preset (02-Jul-2026) — filters to Backorder requests
-  // regardless of status so the godown can see the whole vendor queue.
-  { key: 'procurement', label: 'Procurement',  requestType: 'Backorder' },
 ]
 
 export default function InventoryRequests() {
@@ -94,11 +90,6 @@ export default function InventoryRequests() {
   // should be enabled (empty queue → nothing to print).
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
-
-  // Outstanding back-orders — persistent banner even when the godown is on
-  // Needs Action / In-Progress, so a Procurement queue can't be forgotten.
-  const backordersQuery = useOutstandingBackorders()
-  const outstandingBackorders = backordersQuery.data ?? []
 
   // Per-shop chips for the active preset. BE forces the inventory scope to
   // this user's godown — so we only see shops served by it. When the Return
@@ -255,7 +246,7 @@ export default function InventoryRequests() {
               }}
             />
           )}
-          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
           {draftIdSet.has(row.id) && (
             <Chip
               label="Draft"
@@ -523,53 +514,6 @@ export default function InventoryRequests() {
         </Box>
       )}
 
-      {/* Outstanding back-orders — persistent banner (02-Jul-2026). Even
-          when the godown is on Needs Action or In-Progress tabs, the
-          Procurement queue can't slip out of sight. Clicking View switches
-          to the Procurement preset. */}
-      {outstandingBackorders.length > 0 && activePreset !== 'procurement' && (
-        <Paper
-          elevation={0}
-          sx={{
-            mb: 2, borderRadius: 2,
-            border: '1px solid #E8A758', bgcolor: '#FFE0B2',
-            px: 2, py: 1.5,
-            display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
-          }}
-        >
-          <Hourglass className="w-5 h-5" style={{ color: '#7C4A00' }} />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ fontWeight: 700, fontSize: 14, color: '#7C4A00' }}>
-              {outstandingBackorders.length} back-order{outstandingBackorders.length === 1 ? '' : 's'} awaiting vendor stock
-            </Box>
-            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
-              {outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length > 0 && (
-                <>
-                  <strong>{outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length}</strong> waiting {'>'}3 days ·{' '}
-                </>
-              )}
-              oldest: {outstandingBackorders[0]?.code} ({outstandingBackorders[0]?.daysSinceSubmitted} day{outstandingBackorders[0]?.daysSinceSubmitted === 1 ? '' : 's'})
-            </Box>
-          </Box>
-          <Button
-            variant="contained"
-            color="success"
-            size="small"
-            onClick={() => { setActivePreset('procurement'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) }}
-            sx={{
-              textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
-              // color="success" escapes the theme's gold-gradient override on
-              // contained+primary; use `background:` (not `bgcolor:`) so sx
-              // wins over any gradient shorthand set on the class.
-              background: '#7C4A00', color: '#FFFFFF',
-              '&:hover': { background: '#5A3600' },
-            }}
-          >
-            View procurement queue
-          </Button>
-        </Paper>
-      )}
-
       {/* Status chips + search — inline single row. Inventory filters per
           client (demo, 26 May 2026): no date filter, no collapse panel,
           chips collapsed to Needs Action / In-Progress / Delivered / All.
@@ -819,18 +763,53 @@ export default function InventoryRequests() {
                 })}
               </TextField>
 
-              <Box sx={{ mb: 1, fontSize: 12, color: '#1F1F1F99' }}>
-                {(() => {
-                  // With a shop filter active, count only the visible+checked
-                  // intersection (that's what actually prints). "12 of 12"
-                  // across all shops was confusing when only 3 are shown.
-                  if (printShopFilter) {
-                    const scoped = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
-                    return `${scoped} of ${visibleApprovedRows.length} selected in this shop`
-                  }
-                  return `${selectedRequestIds.size} of ${approvedRows.length} selected`
-                })()}
-              </Box>
+              {(() => {
+                // Selection counts + bulk-toggle affordances (06-Jul-2026,
+                // client req). "Select all" and "Deselect all" operate on
+                // the CURRENTLY VISIBLE rows only — so with a shop filter
+                // active, bulk actions scope to that shop, matching the
+                // scoped counter above. Union / diff patterns preserve
+                // selections in other shops when the user switches back.
+                const visibleIds = visibleApprovedRows.map(r => r.id)
+                const visibleChecked = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
+                const allVisibleChecked = visibleIds.length > 0 && visibleChecked === visibleIds.length
+                const noneVisibleChecked = visibleChecked === 0
+                const selectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.add(id)
+                  return n
+                })
+                const deselectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.delete(id)
+                  return n
+                })
+                return (
+                  <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{ fontSize: 12, color: '#1F1F1F99', flex: 1, minWidth: 0 }}>
+                      {printShopFilter
+                        ? `${visibleChecked} of ${visibleIds.length} selected in this shop`
+                        : `${selectedRequestIds.size} of ${approvedRows.length} selected`}
+                    </Box>
+                    <Button
+                      size="small"
+                      onClick={selectAll}
+                      disabled={allVisibleChecked || visibleIds.length === 0}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1 }}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={deselectAll}
+                      disabled={noneVisibleChecked}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1, color: '#C62828' }}
+                    >
+                      Deselect all
+                    </Button>
+                  </Box>
+                )
+              })()}
 
               <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
                 {visibleApprovedRows.map(r => {
@@ -863,10 +842,36 @@ export default function InventoryRequests() {
                         sx={{ pointerEvents: 'none' }}
                       />
                       <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ fontSize: 13, fontWeight: 700 }}>
+                        <Box sx={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
                           {r.code}
                           {!printShopFilter && (
-                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}> · {r.shopName}</Box>
+                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}>· {r.shopName}</Box>
+                          )}
+                          {/* Special-Request marker (06-Jul-2026, client req):
+                              picker needs to know at selection time which
+                              rows carry vendor-procurement so they can group
+                              or route them differently on the batch plan. */}
+                          {r.isSpecial && (
+                            <Box
+                              component="span"
+                              title={r.specialLabel?.trim() || 'Special Request'}
+                              sx={{
+                                display: 'inline-flex', alignItems: 'center', gap: 0.4,
+                                px: 0.75, py: 0.15, borderRadius: 0.75,
+                                bgcolor: '#FFB74D', border: '1px solid #E65100',
+                                color: '#3E2500', fontSize: 10, fontWeight: 800,
+                                letterSpacing: 0.4, textTransform: 'uppercase',
+                                lineHeight: 1.2,
+                                maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ★ Special
+                              {r.specialLabel?.trim() && (
+                                <Box component="span" sx={{ fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
+                                  · {r.specialLabel.trim()}
+                                </Box>
+                              )}
+                            </Box>
                           )}
                         </Box>
                         <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>

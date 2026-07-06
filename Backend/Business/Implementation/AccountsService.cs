@@ -91,6 +91,7 @@ public class AccountsService(
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return rows.Select(r => new AccountsAdjustmentRowDto(
             r.Audit_Id, r.Edited_At, r.Request_Id, r.Request_Code, r.Request_Type,
+            r.Is_Special, r.Special_Label,
             r.Shop_Id, r.Shop_Name,
             r.Product_Id, r.Product_Name, r.Weight_Value, r.Weight_Unit,
             r.Old_Qty, r.New_Qty, r.Delta_Qty, r.Unit_Price, r.Delta_Amount,
@@ -105,7 +106,9 @@ public class AccountsService(
         // (Limit / Grouping values are irrelevant here and ignored).
         EnsureAdmin();
         var e = await accounts.GetInTransitAsync(filters.ShopIds, filters.InventoryIds, ct);
-        return new AccountsInTransitDto(e.Request_Count, e.Total_Amount, e.Oldest_Dispatched_At);
+        return new AccountsInTransitDto(
+            e.Request_Count, e.Total_Amount, e.Oldest_Dispatched_At,
+            e.Special_Count, e.Special_Amount);
     }
 
     // ──────── helpers ────────

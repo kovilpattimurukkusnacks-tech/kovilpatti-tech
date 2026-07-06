@@ -253,6 +253,13 @@ export default function ShopRequestNew() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
   const [seeded, setSeeded] = useState(false)
+  // Shop-declared "Special Request" flag (06-Jul-2026, client req). Toggled
+  // on the review-submit step; when true the shop enters a free-text label
+  // ("Diwali stock 2026") that rides on the request through inv approval →
+  // vendor procurement → dispatch → shop receipt. Seeded from a resumed
+  // draft or an edit-mode request; cleared on discard / submit-success.
+  const [isSpecial, setIsSpecial] = useState(false)
+  const [specialLabel, setSpecialLabel] = useState('')
   // True when the cart / notes have changed since the last successful save
   // (or since the cart was seeded from a saved draft). Drives the Save as
   // Draft button's disabled state so a user can't spam-save the same data.
@@ -297,15 +304,21 @@ export default function ShopRequestNew() {
         purchasePrice: null,
         gst: null,
         active: true,
-        // Shop cart doesn't surface the flag anywhere; stub with false so
-        // the ProductDto shape stays satisfied.
-        isVendorProcured: false,
       }
       map.set(it.productId, { product: stub, qty: it.requestedQty })
     }
     setCart(map)
     setNotes(source.notes ?? '')
+    // Hydrate Special-Request flag from the seeded source. Drafts and
+    // edit-mode requests both carry isSpecial + specialLabel; unset flag
+    // is treated as normal request.
+    setIsSpecial(source.isSpecial ?? false)
+    setSpecialLabel(source.specialLabel ?? '')
     setSeeded(true)
+    // Flag genuine hydration so the auto-jump-to-first-unvisited effect
+    // knows this cart is a resume, not fresh typing. Only set when the
+    // source actually had items — an empty seed shouldn't trigger a jump.
+    if (map.size > 0) hydratedFromSourceRef.current = true
   }, [isEditMode, existing, draftQuery.data, seeded])
 
   // 29-Jun-2026 bug fix: when a saved draft (or edit-mode request) seeds
@@ -367,10 +380,23 @@ export default function ShopRequestNew() {
   // category so they don't have to click Prev/Next through work they've
   // already done. Fires exactly ONCE per mount — a useRef guard prevents
   // re-triggering as the user then legitimately walks through the rest.
+  //
+  // 06-Jul-2026: gated on `hydratedFromSourceRef` — the `seeded` flag can't
+  // be used here because setQty flips it too (to lock out re-seeds during
+  // live editing). Without a distinct flag, the first qty a fresh user
+  // types was setting seeded=true → the derive-from-cart effect populated
+  // visitedCategoryIds → this effect fired and jumped them to cat 2. Only
+  // the actual draft-seed and sessionStorage-hydration paths flip the ref,
+  // so typing can never trigger the jump.
+  // True only when the cart was populated by an external source (edit-mode
+  // request, saved server draft, or sessionStorage snapshot). Never flipped
+  // by fresh user typing — distinct from `seeded` for exactly that reason.
+  const hydratedFromSourceRef = useRef(false)
   const hasAutoNavigatedRef = useRef(false)
   useEffect(() => {
     if (hasAutoNavigatedRef.current) return
     if (isEditMode) return
+    if (!hydratedFromSourceRef.current) return   // fresh session — never auto-jump
     if (sortedRootCats.length === 0) return
     // Only jump when the cart is HYDRATED — an empty cart means the user
     // is starting fresh; leaving them on cat 1 is correct.
@@ -620,10 +646,14 @@ export default function ShopRequestNew() {
       // counter stays honest. Without this the user re-lands at 1/11
       // even though their cart already spans multiple categories.
       visitedCategoryIds: Array.from(visitedCategoryIds),
+      // Persist the Special-Request declaration too, so an accidental F5
+      // during / after the review dialog doesn't wipe the flag.
+      isSpecial,
+      specialLabel,
       savedAt: new Date().toISOString(),
     }
     try { sessionStorage.setItem(draftLocalKey, JSON.stringify(snapshot)) } catch { /* noop */ }
-  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds])
+  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds, isSpecial, specialLabel])
 
   // sessionStorage hydration (03-Jul-2026). Runs ONCE per mount if the
   // server-side draft hasn't landed yet. Prevents the "F5 lost my typing"
@@ -652,6 +682,11 @@ export default function ShopRequestNew() {
         }>
         notes: string
         visitedCategoryIds?: number[]
+        // Special-Request declaration — added 06-Jul-2026. Optional so
+        // snapshots written by earlier builds still parse cleanly (both
+        // fall through to their setState defaults).
+        isSpecial?: boolean
+        specialLabel?: string | null
       }
       if (!parsed?.items?.length) return
       const map = new Map<string, CartLine>()
@@ -664,12 +699,14 @@ export default function ShopRequestNew() {
           // falls back to categoryName lookup in that case).
           categoryId: it.categoryId ?? 0,
           categoryName: it.categoryName, type: '',
-          purchasePrice: null, gst: null, active: true, isVendorProcured: false,
+          purchasePrice: null, gst: null, active: true,
         }
         map.set(it.productId, { product: stub, qty: it.qty })
       }
       setCart(map)
       setNotes(parsed.notes ?? '')
+      setIsSpecial(parsed.isSpecial ?? false)
+      setSpecialLabel(parsed.specialLabel ?? '')
       // Restore the visit-history so the "N/11 categories done" counter
       // reflects what the user had already ticked off before the reload.
       // Falls back to derive-from-cart below if the snapshot is old-format
@@ -678,6 +715,8 @@ export default function ShopRequestNew() {
         setVisitedCategoryIds(new Set(parsed.visitedCategoryIds))
       }
       setSeeded(true)
+      // Real hydration → auto-jump is legit on this session.
+      hydratedFromSourceRef.current = true
       setIsDraftDirty(true)  // still needs to sync to server
     } catch { /* corrupted JSON — bail */ }
     // Depends on draftQuery.data so that when the server responds with
@@ -814,6 +853,8 @@ export default function ShopRequestNew() {
   const clearCart = () => {
     setCart(new Map())
     setNotes('')
+    setIsSpecial(false)
+    setSpecialLabel('')
     setLocalErr(null)
   }
 
@@ -827,12 +868,22 @@ export default function ShopRequestNew() {
       productId: l.product.id,
       requestedQty: l.qty,
     }))
+    // Special-Request payload — only forward the label when the flag is
+    // actually true (BE also guards this via chk_special_label_only_when_special).
+    // Trim + null-empty so a whitespace-only label doesn't pollute the DB.
+    const trimmedLabel = specialLabel.trim()
+    const specialFields = isSpecial
+      ? { isSpecial: true, specialLabel: trimmedLabel || null }
+      : { isSpecial: false }
     try {
       if (isEditMode && editId) {
         await updateMutation.mutateAsync({
           id: editId,
           req: { notes: notes.trim() || undefined, items },
         })
+        // Edit path doesn't touch the Special flag — the shop uses PATCH
+        // /requests/{id}/special separately (SetSpecial hook) if they need
+        // to change it. Keeps the update contract tight.
         // Submission is itself a "save" — flag the guard so the upcoming
         // navigate() doesn't trip the unsaved-changes modal.
         submittingRef.current = true
@@ -842,6 +893,7 @@ export default function ShopRequestNew() {
         const res = await createMutation.mutateAsync({
           notes: notes.trim() || undefined,
           items,
+          ...specialFields,
         })
         submittingRef.current = true
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
@@ -1485,6 +1537,110 @@ export default function ShopRequestNew() {
                 </Box>
               </Box>
 
+              {/* Special Request toggle (06-Jul-2026, client req). Always
+                  amber-highlighted whether on or off so the shop sees the
+                  option every time they open Review — the client explicitly
+                  asked for a persistent visual, not a subtle checkbox.
+                  Only surfaces on the CREATE path — edit-mode changes to
+                  the flag go through PATCH /special via useSetSpecial().
+                  Hidden entirely in edit-mode so the shop can't half-toggle
+                  the field and expect the update to carry it. */}
+              {!isEditMode && (
+                <Box sx={{ mt: 2 }}>
+                  <Box
+                    onClick={() => setIsSpecial(v => {
+                      const next = !v
+                      // Clear the label when turning the flag off — matches
+                      // the DB constraint chk_special_label_only_when_special.
+                      if (!next) setSpecialLabel('')
+                      setIsDraftDirty(true)
+                      return next
+                    })}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.25,
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                      // Brighter palette (client feedback 06-Jul-2026): the
+                      // earlier soft amber blended into the cream page. Bumped
+                      // both states two shades up the Material orange scale so
+                      // the toggle POPS in the review dialog whether on or off.
+                      //   Off → #FFB74D (Material orange 300) w/ dark rim
+                      //   On  → #FB8C00 (Material orange 600) w/ burnt-brown rim
+                      // Text stays #7C4A00 for legibility on both states.
+                      bgcolor: isSpecial ? '#FB8C00' : '#FFB74D',
+                      border: `2px solid ${isSpecial ? '#7C4A00' : '#E65100'}`,
+                      boxShadow: isSpecial
+                        ? '0 2px 8px rgba(230, 81, 0, 0.35)'
+                        : '0 1px 3px rgba(230, 81, 0, 0.25)',
+                      transition: 'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
+                      '&:hover': { bgcolor: isSpecial ? '#F57C00' : '#FFA726' },
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        // Off → hollow white circle w/ brown rim (visible on
+                        // the mid-amber bg). On → solid white circle w/ dark
+                        // check, matching the white label text — reads as
+                        // one high-contrast group against the deep orange.
+                        bgcolor: '#FFFFFF',
+                        border: `2px solid ${isSpecial ? '#3E2500' : '#7C4A00'}`,
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#3E2500', fontWeight: 800, fontSize: 13,
+                      }}
+                    >
+                      {isSpecial ? '✓' : ''}
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      {/* Text contrast (06-Jul-2026 follow-up): on the deeper
+                          "on" orange, brown-on-amber loses too much contrast.
+                          Switch to white on-state; keep dark brown on-off so
+                          the label stays legible whichever state the button
+                          is in. Sublabel drops to 85% opacity so it reads as
+                          secondary without disappearing. */}
+                      <Box sx={{
+                        fontWeight: 800,
+                        color: isSpecial ? '#FFFFFF' : '#3E2500',
+                        fontSize: 14,
+                        textShadow: isSpecial ? '0 1px 1px rgba(0,0,0,0.25)' : 'none',
+                      }}>
+                        Mark as Special Request
+                      </Box>
+                      <Box sx={{
+                        fontSize: 11.5,
+                        color: isSpecial ? 'rgba(255,255,255,0.92)' : '#3E2500',
+                      }}>
+                        Godown will procure from a vendor rather than pack from stock.
+                      </Box>
+                    </Box>
+                  </Box>
+
+                  {isSpecial && (
+                    <TextField
+                      label="Special Request name"
+                      value={specialLabel}
+                      onChange={e => {
+                        setSpecialLabel(e.target.value.slice(0, 120))
+                        setIsDraftDirty(true)
+                      }}
+                      size="small"
+                      fullWidth
+                      placeholder="e.g. Diwali stock 2026"
+                      helperText="Optional — leave blank to use the default 'Special Request' label."
+                      slotProps={{ htmlInput: { maxLength: 120 } }}
+                      sx={{ mt: 1 }}
+                    />
+                  )}
+                </Box>
+              )}
+
               <TextField
                 label="Notes (optional)"
                 value={notes}
@@ -2016,16 +2172,26 @@ const ProductRow = memo(function ProductRow({
           }}
           onKeyDown={e => {
             if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
-            // Enter → jump to the next qty input, same visual traversal as
-            // Tab. Every qty <input> carries .qty-input; document-order
-            // query gives us the list in tab order. 02-Jul-2026.
-            if (e.key === 'Enter') {
+            // Enter AND Tab both traverse the qty inputs in document order.
+            // Native Tab would jump to whatever DOM element follows the
+            // input (the next category chip in the top strip on this page)
+            // — client bug 06-Jul-2026: "Tab pressing goes to 2nd category
+            // instead of the next product qty". Hijacking Tab keeps focus
+            // inside the qty column so muscle-memory matches Enter.
+            // Shift+Tab still steps backwards through the qty inputs; when
+            // no next / previous qty exists, only Enter's onEnterAtEnd
+            // fires (Tab off the last qty stays put so the user can Shift-
+            // Tab back without losing their spot).
+            if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
               e.preventDefault()
               const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
               const idx = inputs.indexOf(e.currentTarget)
               const next = inputs[idx + 1]
               if (next) { next.focus(); return }
-              if (onEnterAtEnd) {
+              // No more qty inputs — Enter jumps to the next category (via
+              // onEnterAtEnd), Tab stays put to avoid an accidental
+              // navigation the user didn't ask for.
+              if (e.key === 'Enter' && onEnterAtEnd) {
                 // Blur to release focus + defer the state change one tick
                 // so the current keydown event finishes cleanly before
                 // React starts re-rendering. In-tick unmount of the
@@ -2034,6 +2200,14 @@ const ProductRow = memo(function ProductRow({
                 ;(e.currentTarget as HTMLInputElement).blur()
                 setTimeout(() => onEnterAtEnd(), 0)
               }
+            } else if (e.key === 'Tab' && e.shiftKey) {
+              // Shift+Tab → previous qty. Falls through to native Tab when
+              // we're already on the first input (user can leave the qty
+              // column upwards to the category picker).
+              const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
+              const idx = inputs.indexOf(e.currentTarget)
+              const prev = inputs[idx - 1]
+              if (prev) { e.preventDefault(); prev.focus() }
             }
           }}
           // Block mouse-wheel from adjusting the qty (default browser

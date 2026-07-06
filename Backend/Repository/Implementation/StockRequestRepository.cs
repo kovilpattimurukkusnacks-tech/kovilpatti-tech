@@ -95,6 +95,7 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         string code, Guid shopId, Guid inventoryId,
         DateTimeOffset editableUntil, string? notes,
         string itemsJson, Guid userId,
+        bool isSpecial, string? specialLabel,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
@@ -102,7 +103,8 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             SELECT fn_request_create(
                 @p_code, @p_shop_id, @p_inventory_id,
                 @p_editable_until, @p_notes,
-                @p_items::jsonb, @p_user_id)";
+                @p_items::jsonb, @p_user_id,
+                @p_is_special, @p_special_label)";
 
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
@@ -112,7 +114,9 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             p_editable_until  = editableUntil,
             p_notes           = notes,
             p_items           = itemsJson,
-            p_user_id         = userId
+            p_user_id         = userId,
+            p_is_special      = isSpecial,
+            p_special_label   = specialLabel
         }, cancellationToken: ct));
     }
 
@@ -340,35 +344,35 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         return rows.ToList();
     }
 
-    // ── Back-order (02-Jul-2026) ──────────────────────────────────
+    // ── Special Request (06-Jul-2026) ─────────────────────────────
 
-    public async Task<Guid> MoveToBackorderAsync(
-        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
+    public async Task<bool> SetSpecialAsync(
+        Guid id, bool isSpecial, string? specialLabel,
         Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql = @"
-            SELECT fn_request_move_to_backorder(
-                @p_id, @p_items::jsonb, @p_user_id, @p_eta)";
-        return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
+            SELECT fn_request_set_special(
+                @p_id, @p_is_special, @p_special_label, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(sql, new
         {
-            p_id       = id,
-            p_items    = itemsJson,
-            p_user_id  = userId,
-            p_eta      = expectedArrivalAt,
+            p_id            = id,
+            p_is_special    = isSpecial,
+            p_special_label = specialLabel,
+            p_user_id       = userId,
         }, cancellationToken: ct));
     }
 
-    public async Task<IReadOnlyList<OutstandingBackorderRow>> ListOutstandingBackordersAsync(
-        Guid? inventoryId, IReadOnlyList<Guid>? shopIds,
+    public async Task<IReadOnlyList<ActiveSpecialRow>> ListActiveSpecialsAsync(
+        Guid? shopId, Guid? inventoryId,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT * FROM fn_request_list_outstanding_backorders(@p_inventory_id, @p_shop_ids)";
-        var rows = await conn.QueryAsync<OutstandingBackorderRow>(new CommandDefinition(sql, new
+        const string sql = "SELECT * FROM fn_request_list_active_specials(@p_shop_id, @p_inventory_id)";
+        var rows = await conn.QueryAsync<ActiveSpecialRow>(new CommandDefinition(sql, new
         {
+            p_shop_id      = shopId,
             p_inventory_id = inventoryId,
-            p_shop_ids     = shopIds?.ToArray(),
         }, cancellationToken: ct));
         return rows.ToList();
     }
