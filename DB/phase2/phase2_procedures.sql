@@ -176,6 +176,13 @@ RETURNS TABLE (
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
+  -- Signed adjustment total: Σ(received_qty − dispatched_qty) across
+  -- items where the shop reported a value. NULL when no items have
+  -- received_qty set (no discrepancies at all — request confirmed as
+  -- dispatched). 0 when reported but the +/− across lines nets to zero.
+  -- Powers the "Adjustment Qty" column on the request list tables.
+  -- 03-Jul-2026.
+  total_adjustment_qty    int,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -223,6 +230,13 @@ LANGUAGE sql STABLE AS $$
          (SELECT SUM(it.dispatched_qty)::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
+         -- Signed adjustment total. Σ(received − dispatched) across items
+         -- with received_qty set. NULL when no items reported discrepancy;
+         -- 0 when reported but net-zero; ±N when short (−) or over (+).
+         -- 03-Jul-2026.
+         (SELECT SUM(it.received_qty - COALESCE(it.dispatched_qty, 0))::int
+          FROM stock_request_items it
+          WHERE it.request_id = r.id AND it.received_qty IS NOT NULL) AS total_adjustment_qty,
          r.total_amount,
          (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
           FROM stock_request_items it
@@ -566,6 +580,10 @@ RETURNS TABLE (
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
+  -- Signed adjustment total: Σ(received − dispatched) across items where
+  -- the shop reported a value. NULL when no receipt discrepancies at all,
+  -- 0 when net-zero, ±N otherwise. 03-Jul-2026.
+  total_adjustment_qty    int,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -619,6 +637,11 @@ LANGUAGE sql STABLE AS $$
          (SELECT SUM(it.dispatched_qty)::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
+         -- Signed adjustment aggregate (03-Jul-2026). Matches
+         -- fn_request_list_paged so both list + detail expose it.
+         (SELECT SUM(it.received_qty - COALESCE(it.dispatched_qty, 0))::int
+          FROM stock_request_items it
+          WHERE it.request_id = r.id AND it.received_qty IS NOT NULL) AS total_adjustment_qty,
          r.total_amount,
          (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
           FROM stock_request_items it
