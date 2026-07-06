@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, ChevronUp, ChevronDown } from 'lucide-react'
+import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, ChevronUp, ChevronDown, Star } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell, TableContainer,
@@ -814,6 +814,45 @@ export default function InventoryRequestDetail() {
           </>
         )}
       </Box>
+
+      {/* Special Request strip (06-Jul-2026, client req). Godown side is
+          READ-ONLY: only the shop can toggle / rename (SP-side gate on
+          fn_request_set_special enforces this — no pencil affordance
+          here). Amber to match the sticky banner + list chip so the
+          godown user sees the same signal all the way through: at the
+          list, on the banner, on this detail, on the picklist print. */}
+      {request.isSpecial && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.5, mb: 2, borderRadius: 2,
+            bgcolor: '#FFB74D',
+            border: '2px solid #E65100',
+            boxShadow: '0 1px 3px rgba(230, 81, 0, 0.25)',
+            display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
+          }}
+        >
+          <Star className="w-5 h-5" style={{ color: '#3E2500' }} />
+          <Box sx={{ fontWeight: 800, color: '#3E2500', fontSize: 13, letterSpacing: 0.3 }}>
+            Special Request
+          </Box>
+          <Box sx={{
+            px: 1, py: 0.25, borderRadius: 1,
+            bgcolor: '#FFF8DC', border: '1px solid #3E2500',
+            fontWeight: 700, color: '#3E2500', fontSize: 13,
+            maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+          }}>
+            {request.specialLabel?.trim() || 'Unnamed special'}
+          </Box>
+          <Box sx={{
+            fontSize: 11.5, fontWeight: 700, color: '#3E2500',
+            textTransform: 'uppercase', letterSpacing: 0.5,
+            ml: 'auto',
+          }}>
+            Procure from vendor · do not pack from stock
+          </Box>
+        </Paper>
+      )}
 
       {/* Add Products — appears only when the request is still editable
           (Pending / Approved, Order-only). Special-request declaration is

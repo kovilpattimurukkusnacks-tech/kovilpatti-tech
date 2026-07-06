@@ -82,12 +82,14 @@ export function ActiveSpecialsBanner() {
                 px: 1,
                 py: 0.25,
                 borderRadius: 1,
-                bgcolor: '#FFFFFF',
+                // Warm cream (client pick 06-Jul-2026) — softer against the
+                // amber strip than pure white. Hover deepens toward saffron.
+                bgcolor: '#FFF8DC',
                 border: '1px solid #E8A758',
                 fontSize: 12,
                 color: '#1F1F1F',
                 cursor: 'pointer',
-                '&:hover': { bgcolor: '#FFF3E0' },
+                '&:hover': { bgcolor: '#FFE9A6' },
               }}
             >
               <Box component="span" sx={{ fontWeight: 700, color: '#7C4A00' }}>

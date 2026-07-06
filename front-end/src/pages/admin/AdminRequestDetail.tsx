@@ -1,10 +1,10 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, Pencil, Printer, Undo2 } from 'lucide-react'
+import { ArrowLeft, Ban, Pencil, Printer, Undo2, Star, Edit2, Check, X as XIcon } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
-  TextField,
+  TextField, Tooltip,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -15,7 +15,7 @@ import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
-  useRevokeStockRequest,
+  useRevokeStockRequest, useSetSpecial,
 } from '../../hooks/useStockRequests'
 import type { RequestStatus, StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
@@ -51,6 +51,35 @@ export default function AdminRequestDetail() {
   const cancelMutation  = useCancelStockRequest()
   const editQtyMutation = useEditDispatchedQty()
   const revokeMutation  = useRevokeStockRequest()
+  const setSpecialMutation = useSetSpecial()
+  // Inline edit state for the special_label — mirrors ShopRequestDetail's
+  // affordance. Admin gets the same rename capability the shop has
+  // (fn_request_set_special allows Shop + Admin, blocks Inventory).
+  const [labelEditing, setLabelEditing] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
+  const [labelErr, setLabelErr] = useState<string | null>(null)
+
+  const cancelLabelEdit = () => {
+    setLabelEditing(false)
+    setLabelDraft('')
+    setLabelErr(null)
+  }
+  const saveLabel = async () => {
+    if (!request) return
+    const trimmed = labelDraft.trim()
+    setLabelErr(null)
+    try {
+      await setSpecialMutation.mutateAsync({
+        id: request.id,
+        req: { isSpecial: true, specialLabel: trimmed || null },
+      })
+      setLabelEditing(false)
+    } catch (e) {
+      setLabelErr(
+        e instanceof Error ? e.message : 'Could not save the label. Try again.',
+      )
+    }
+  }
   const [cancelConfirm, setCancelConfirm]   = useState(false)
   const [revokeConfirm, setRevokeConfirm]   = useState(false)
   // Post-completion qty edit dialog state. `editingItem` is the row being
@@ -403,6 +432,112 @@ export default function AdminRequestDetail() {
           </Alert>
         )
       })()}
+
+      {/* Special Request strip (06-Jul-2026, client req). Admin can rename
+          the label just like the shop can — SP-side (fn_request_set_special)
+          allows Shop + Admin, blocks Inventory. Pencil only appears while
+          status = 'Pending' since the flag freezes once approved (same
+          gate the shop side observes). */}
+      {request.isSpecial && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.5, mb: 2, borderRadius: 2,
+            bgcolor: '#FFB74D',
+            border: '2px solid #E65100',
+            boxShadow: '0 1px 3px rgba(230, 81, 0, 0.25)',
+            display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
+          }}
+        >
+          <Star className="w-5 h-5" style={{ color: '#3E2500' }} />
+          <Box sx={{ fontWeight: 800, color: '#3E2500', fontSize: 13, letterSpacing: 0.3 }}>
+            Special Request
+          </Box>
+          {labelEditing ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: 1, minWidth: 240 }}>
+              <TextField
+                value={labelDraft}
+                onChange={e => setLabelDraft(e.target.value.slice(0, 120))}
+                size="small"
+                autoFocus
+                placeholder="e.g. Diwali stock 2026"
+                slotProps={{ htmlInput: { maxLength: 120 } }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); void saveLabel() }
+                  if (e.key === 'Escape') { cancelLabelEdit() }
+                }}
+                disabled={setSpecialMutation.isPending}
+                sx={{
+                  flex: 1,
+                  bgcolor: '#FFF8DC',
+                  borderRadius: 1,
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#3E2500' },
+                }}
+              />
+              <Tooltip title="Save">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={() => void saveLabel()}
+                    disabled={setSpecialMutation.isPending}
+                    sx={{ bgcolor: '#3E2500', color: '#FFFFFF', '&:hover': { bgcolor: '#5D3600' } }}
+                  >
+                    <Check className="w-4 h-4" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Cancel">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={cancelLabelEdit}
+                    disabled={setSpecialMutation.isPending}
+                    sx={{ color: '#3E2500' }}
+                  >
+                    <XIcon className="w-4 h-4" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
+          ) : (
+            <>
+              <Box sx={{
+                px: 1, py: 0.25, borderRadius: 1,
+                bgcolor: '#FFF8DC', border: '1px solid #3E2500',
+                fontWeight: 700, color: '#3E2500', fontSize: 13,
+                maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {request.specialLabel?.trim() || 'Unnamed special'}
+              </Box>
+              {request.status === 'Pending' && (
+                <Tooltip title="Edit label">
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      setLabelDraft(request.specialLabel ?? '')
+                      setLabelErr(null)
+                      setLabelEditing(true)
+                    }}
+                    sx={{ color: '#3E2500', p: 0.5 }}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </IconButton>
+                </Tooltip>
+              )}
+              <Box sx={{
+                fontSize: 11.5, fontWeight: 700, color: '#3E2500',
+                textTransform: 'uppercase', letterSpacing: 0.5,
+                ml: 'auto',
+              }}>
+                Procure from vendor · do not pack from stock
+              </Box>
+            </>
+          )}
+          {labelErr && (
+            <Box sx={{ fontSize: 12, color: '#B00020', width: '100%' }}>{labelErr}</Box>
+          )}
+        </Paper>
+      )}
 
       {/* Rejected banner — surfaces the rejection reason (when present) and
           exposes the Undo Rejection action right here at the top so admin

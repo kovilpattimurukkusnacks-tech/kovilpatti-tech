@@ -117,7 +117,9 @@ export default function PrintRequestPicklist() {
           <tr>
             <td>
               {/* Centred brand header — mirrors the thermal receipt style.
-                  Subtitle flips to "RETURN BILL" on Return-type requests. */}
+                  Subtitle flips to "RETURN BILL" on Return-type requests, or
+                  "SPECIAL REQUEST — <label>" when the shop declared this a
+                  special (06-Jul-2026, client req). */}
               <header className="print-brand-header">
                 <div className="print-brand-name">{BRAND_NAME}</div>
                 <div className="print-brand-contact">
@@ -129,6 +131,25 @@ export default function PrintRequestPicklist() {
                     : 'Stock Request'}
                 </div>
               </header>
+
+              {/* Big amber SPECIAL REQUEST banner (06-Jul-2026, client req):
+                  the picker at the godown needs to know at first glance that
+                  this batch is a vendor-procured special, not stock they can
+                  pack from on-hand. Solid fill + print-color-adjust:exact so
+                  it survives grayscale printing legibly. */}
+              {request.isSpecial && (
+                <div className="print-special-banner">
+                  <span className="print-special-banner-badge">SPECIAL REQUEST</span>
+                  {request.specialLabel?.trim() && (
+                    <span className="print-special-banner-label">
+                      {request.specialLabel.trim()}
+                    </span>
+                  )}
+                  <span className="print-special-banner-sub">
+                    Procure from vendor · do not pack from stock
+                  </span>
+                </div>
+              )}
 
               {/* Two-row meta grid:
                     Row 1: Code (left) · Shop + by name (center) · Godown (right)
@@ -166,18 +187,6 @@ export default function PrintRequestPicklist() {
                     )}
                   </div>
                 </div>
-                {/* Special Request lineage (06-Jul-2026). Prints the shop's
-                    chosen label so the godown picker knows this batch is a
-                    vendor-procurement — same signal as the amber SP pill
-                    on the cumulative plan. */}
-                {request.isSpecial && (
-                  <div className="print-meta-grid-row" style={{ marginTop: 4, fontSize: 11 }}>
-                    <div>
-                      <span className="muted">Special Request: </span>
-                      <strong>{request.specialLabel?.trim() || 'Yes'}</strong>
-                    </div>
-                  </div>
-                )}
               </div>
             </td>
           </tr>

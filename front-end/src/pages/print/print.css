@@ -616,6 +616,61 @@
   print-color-adjust: exact;
 }
 
+/* Big amber banner on the per-request picklist (06-Jul-2026). Sits below
+ * the brand header when the shop declared this a Special Request. Solid
+ * fill + print-color-adjust:exact so the picker sees the amber block even
+ * on grayscale printers. */
+.print-special-banner {
+  margin: 6px 0 4px;
+  padding: 8px 12px;
+  background: #FFB74D;
+  border: 2px solid #E65100;
+  border-radius: 4px;
+  text-align: center;
+  color: #3E2500;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+  break-inside: avoid;
+  page-break-inside: avoid;
+}
+.print-special-banner-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  background: #E65100;
+  color: #FFFFFF;
+  font-weight: 800;
+  font-size: 12px;
+  letter-spacing: 1.2px;
+  border-radius: 3px;
+  vertical-align: middle;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+.print-special-banner-label {
+  margin-left: 8px;
+  font-weight: 800;
+  font-size: 13px;
+  vertical-align: middle;
+}
+.print-special-banner-sub {
+  display: block;
+  margin-top: 3px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  text-transform: uppercase;
+  color: #3E2500;
+}
+
+/* Cumulative-print row highlight when the SKU carries a Special Request
+ * contribution. Subtle amber wash across the whole row so the picker's
+ * eye is drawn to it even before reading the "+N SP" pill. 06-Jul-2026. */
+.print-dense-table tr.special-row td {
+  background: #FFF3E0;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
 /* Grand totals strip — same compact font as the cumulative tables. */
 .print-dense-summary {
   margin-top: 8px;

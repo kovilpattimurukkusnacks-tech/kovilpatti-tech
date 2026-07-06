@@ -315,6 +315,10 @@ export default function ShopRequestNew() {
     setIsSpecial(source.isSpecial ?? false)
     setSpecialLabel(source.specialLabel ?? '')
     setSeeded(true)
+    // Flag genuine hydration so the auto-jump-to-first-unvisited effect
+    // knows this cart is a resume, not fresh typing. Only set when the
+    // source actually had items — an empty seed shouldn't trigger a jump.
+    if (map.size > 0) hydratedFromSourceRef.current = true
   }, [isEditMode, existing, draftQuery.data, seeded])
 
   // 29-Jun-2026 bug fix: when a saved draft (or edit-mode request) seeds
@@ -376,10 +380,23 @@ export default function ShopRequestNew() {
   // category so they don't have to click Prev/Next through work they've
   // already done. Fires exactly ONCE per mount — a useRef guard prevents
   // re-triggering as the user then legitimately walks through the rest.
+  //
+  // 06-Jul-2026: gated on `hydratedFromSourceRef` — the `seeded` flag can't
+  // be used here because setQty flips it too (to lock out re-seeds during
+  // live editing). Without a distinct flag, the first qty a fresh user
+  // types was setting seeded=true → the derive-from-cart effect populated
+  // visitedCategoryIds → this effect fired and jumped them to cat 2. Only
+  // the actual draft-seed and sessionStorage-hydration paths flip the ref,
+  // so typing can never trigger the jump.
+  // True only when the cart was populated by an external source (edit-mode
+  // request, saved server draft, or sessionStorage snapshot). Never flipped
+  // by fresh user typing — distinct from `seeded` for exactly that reason.
+  const hydratedFromSourceRef = useRef(false)
   const hasAutoNavigatedRef = useRef(false)
   useEffect(() => {
     if (hasAutoNavigatedRef.current) return
     if (isEditMode) return
+    if (!hydratedFromSourceRef.current) return   // fresh session — never auto-jump
     if (sortedRootCats.length === 0) return
     // Only jump when the cart is HYDRATED — an empty cart means the user
     // is starting fresh; leaving them on cat 1 is correct.
@@ -698,6 +715,8 @@ export default function ShopRequestNew() {
         setVisitedCategoryIds(new Set(parsed.visitedCategoryIds))
       }
       setSeeded(true)
+      // Real hydration → auto-jump is legit on this session.
+      hydratedFromSourceRef.current = true
       setIsDraftDirty(true)  // still needs to sync to server
     } catch { /* corrupted JSON — bail */ }
     // Depends on draftQuery.data so that when the server responds with
@@ -1548,28 +1567,56 @@ export default function ShopRequestNew() {
                       py: 1,
                       borderRadius: 2,
                       cursor: 'pointer',
-                      bgcolor: isSpecial ? '#FFCC80' : '#FFE0B2',
-                      border: `2px solid ${isSpecial ? '#7C4A00' : '#E8A758'}`,
-                      transition: 'background-color 120ms ease, border-color 120ms ease',
-                      '&:hover': { bgcolor: isSpecial ? '#FFB74D' : '#FFCC80' },
+                      // Brighter palette (client feedback 06-Jul-2026): the
+                      // earlier soft amber blended into the cream page. Bumped
+                      // both states two shades up the Material orange scale so
+                      // the toggle POPS in the review dialog whether on or off.
+                      //   Off → #FFB74D (Material orange 300) w/ dark rim
+                      //   On  → #FB8C00 (Material orange 600) w/ burnt-brown rim
+                      // Text stays #7C4A00 for legibility on both states.
+                      bgcolor: isSpecial ? '#FB8C00' : '#FFB74D',
+                      border: `2px solid ${isSpecial ? '#7C4A00' : '#E65100'}`,
+                      boxShadow: isSpecial
+                        ? '0 2px 8px rgba(230, 81, 0, 0.35)'
+                        : '0 1px 3px rgba(230, 81, 0, 0.25)',
+                      transition: 'background-color 120ms ease, border-color 120ms ease, box-shadow 120ms ease',
+                      '&:hover': { bgcolor: isSpecial ? '#F57C00' : '#FFA726' },
                     }}
                   >
                     <Box
                       sx={{
                         width: 22, height: 22, borderRadius: '50%',
-                        bgcolor: isSpecial ? '#7C4A00' : '#FFFFFF',
-                        border: '2px solid #7C4A00',
+                        // Off → hollow white circle w/ brown rim (visible on
+                        // the mid-amber bg). On → solid white circle w/ dark
+                        // check, matching the white label text — reads as
+                        // one high-contrast group against the deep orange.
+                        bgcolor: '#FFFFFF',
+                        border: `2px solid ${isSpecial ? '#3E2500' : '#7C4A00'}`,
                         display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        color: '#FFFFFF', fontWeight: 800, fontSize: 12,
+                        color: '#3E2500', fontWeight: 800, fontSize: 13,
                       }}
                     >
                       {isSpecial ? '✓' : ''}
                     </Box>
                     <Box sx={{ flex: 1, minWidth: 0 }}>
-                      <Box sx={{ fontWeight: 700, color: '#7C4A00', fontSize: 14 }}>
+                      {/* Text contrast (06-Jul-2026 follow-up): on the deeper
+                          "on" orange, brown-on-amber loses too much contrast.
+                          Switch to white on-state; keep dark brown on-off so
+                          the label stays legible whichever state the button
+                          is in. Sublabel drops to 85% opacity so it reads as
+                          secondary without disappearing. */}
+                      <Box sx={{
+                        fontWeight: 800,
+                        color: isSpecial ? '#FFFFFF' : '#3E2500',
+                        fontSize: 14,
+                        textShadow: isSpecial ? '0 1px 1px rgba(0,0,0,0.25)' : 'none',
+                      }}>
                         Mark as Special Request
                       </Box>
-                      <Box sx={{ fontSize: 11.5, color: '#7C4A00CC' }}>
+                      <Box sx={{
+                        fontSize: 11.5,
+                        color: isSpecial ? 'rgba(255,255,255,0.92)' : '#3E2500',
+                      }}>
                         Godown will procure from a vendor rather than pack from stock.
                       </Box>
                     </Box>
@@ -2125,16 +2172,26 @@ const ProductRow = memo(function ProductRow({
           }}
           onKeyDown={e => {
             if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
-            // Enter → jump to the next qty input, same visual traversal as
-            // Tab. Every qty <input> carries .qty-input; document-order
-            // query gives us the list in tab order. 02-Jul-2026.
-            if (e.key === 'Enter') {
+            // Enter AND Tab both traverse the qty inputs in document order.
+            // Native Tab would jump to whatever DOM element follows the
+            // input (the next category chip in the top strip on this page)
+            // — client bug 06-Jul-2026: "Tab pressing goes to 2nd category
+            // instead of the next product qty". Hijacking Tab keeps focus
+            // inside the qty column so muscle-memory matches Enter.
+            // Shift+Tab still steps backwards through the qty inputs; when
+            // no next / previous qty exists, only Enter's onEnterAtEnd
+            // fires (Tab off the last qty stays put so the user can Shift-
+            // Tab back without losing their spot).
+            if (e.key === 'Enter' || (e.key === 'Tab' && !e.shiftKey)) {
               e.preventDefault()
               const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
               const idx = inputs.indexOf(e.currentTarget)
               const next = inputs[idx + 1]
               if (next) { next.focus(); return }
-              if (onEnterAtEnd) {
+              // No more qty inputs — Enter jumps to the next category (via
+              // onEnterAtEnd), Tab stays put to avoid an accidental
+              // navigation the user didn't ask for.
+              if (e.key === 'Enter' && onEnterAtEnd) {
                 // Blur to release focus + defer the state change one tick
                 // so the current keydown event finishes cleanly before
                 // React starts re-rendering. In-tick unmount of the
@@ -2143,6 +2200,14 @@ const ProductRow = memo(function ProductRow({
                 ;(e.currentTarget as HTMLInputElement).blur()
                 setTimeout(() => onEnterAtEnd(), 0)
               }
+            } else if (e.key === 'Tab' && e.shiftKey) {
+              // Shift+Tab → previous qty. Falls through to native Tab when
+              // we're already on the first input (user can leave the qty
+              // column upwards to the category picker).
+              const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.qty-input'))
+              const idx = inputs.indexOf(e.currentTarget)
+              const prev = inputs[idx - 1]
+              if (prev) { e.preventDefault(); prev.focus() }
             }
           }}
           // Block mouse-wheel from adjusting the qty (default browser

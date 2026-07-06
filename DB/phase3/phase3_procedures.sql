@@ -777,6 +777,11 @@ $$;
 -- ============================================================
 -- 19-Jun-2026 (client #13): adds request_type column so the FE Accounts
 -- view-mode lens can filter audits by Order / Return slice.
+-- 06-Jul-2026: also projects is_special + special_label from the parent
+-- request so the FE can flag audit rows tied to Special Requests (amber
+-- chip next to the request code, matches the visual language used across
+-- shop / inv / admin list + detail pages). RETURNS shape change → the
+-- prior DROP guards below stay + a new one drops the pre-special shape.
 DROP FUNCTION IF EXISTS fn_accounts_adjustments(date, date, uuid[], uuid[], int[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_adjustments(
@@ -793,6 +798,10 @@ RETURNS TABLE (
   request_code    varchar,
   -- Request shape — 'Order' or 'Return'. Lets the FE filter audits by view.
   request_type    varchar,
+  -- Shop-declared Special Request flag + user-supplied label. Both projected
+  -- from stock_requests (join already present). NULL/false on normal orders.
+  is_special      boolean,
+  special_label   varchar,
   shop_id         uuid,
   shop_name       varchar,
   product_id      uuid,
@@ -840,6 +849,8 @@ LANGUAGE sql STABLE AS $$
     a.request_id,
     r.code                                                         AS request_code,
     r.request_type                                                 AS request_type,
+    r.is_special,
+    r.special_label,
     r.shop_id,
     s.name                                                         AS shop_name,
     p.id                                                           AS product_id,
@@ -880,6 +891,9 @@ $$;
 --    now" — but honours the shop / inventory filters so an admin viewing a
 --    single shop sees only that shop's stuck dispatches.
 -- ============================================================
+-- 06-Jul-2026: RETURNS gained special_count + special_amount so the
+-- InTransit strip can surface "of the N in transit, K are Special
+-- Requests (₹X)". Shape change → drop before re-create.
 DROP FUNCTION IF EXISTS fn_accounts_in_transit(uuid[], uuid[]);
 
 CREATE OR REPLACE FUNCTION fn_accounts_in_transit(
@@ -889,13 +903,19 @@ CREATE OR REPLACE FUNCTION fn_accounts_in_transit(
 RETURNS TABLE (
   request_count        bigint,
   total_amount         numeric,
-  oldest_dispatched_at timestamptz
+  oldest_dispatched_at timestamptz,
+  -- Subset of the above that are shop-declared Special Requests. Never
+  -- exceeds request_count; equals 0 when the tenant has none in transit.
+  special_count        bigint,
+  special_amount       numeric
 )
 LANGUAGE sql STABLE AS $$
   SELECT
-    COUNT(*)::bigint                              AS request_count,
-    COALESCE(SUM(r.total_amount), 0)::numeric(14,2) AS total_amount,
-    MIN(r.dispatched_at)                          AS oldest_dispatched_at
+    COUNT(*)::bigint                                                       AS request_count,
+    COALESCE(SUM(r.total_amount), 0)::numeric(14,2)                        AS total_amount,
+    MIN(r.dispatched_at)                                                   AS oldest_dispatched_at,
+    COUNT(*) FILTER (WHERE r.is_special)::bigint                           AS special_count,
+    COALESCE(SUM(r.total_amount) FILTER (WHERE r.is_special), 0)::numeric(14,2) AS special_amount
   FROM stock_requests r
   WHERE r.is_deleted   = false
     AND r.request_type = 'Order'

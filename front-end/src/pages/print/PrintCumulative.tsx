@@ -220,7 +220,10 @@ export default function PrintCumulative() {
                     </colgroup>
                     <tbody>
                       {flatItems.map((r, i) => (
-                        <tr key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}>
+                        <tr
+                          key={`${r.productId}-${r.weightValue ?? 'x'}-${r.weightUnit ?? ''}`}
+                          className={r.specialQty > 0 ? 'special-row' : undefined}
+                        >
                           <td>{i + 1}</td>
                           <td>
                             <strong>{r.productName}</strong>

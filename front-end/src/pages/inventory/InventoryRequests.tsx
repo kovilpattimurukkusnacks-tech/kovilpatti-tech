@@ -763,18 +763,53 @@ export default function InventoryRequests() {
                 })}
               </TextField>
 
-              <Box sx={{ mb: 1, fontSize: 12, color: '#1F1F1F99' }}>
-                {(() => {
-                  // With a shop filter active, count only the visible+checked
-                  // intersection (that's what actually prints). "12 of 12"
-                  // across all shops was confusing when only 3 are shown.
-                  if (printShopFilter) {
-                    const scoped = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
-                    return `${scoped} of ${visibleApprovedRows.length} selected in this shop`
-                  }
-                  return `${selectedRequestIds.size} of ${approvedRows.length} selected`
-                })()}
-              </Box>
+              {(() => {
+                // Selection counts + bulk-toggle affordances (06-Jul-2026,
+                // client req). "Select all" and "Deselect all" operate on
+                // the CURRENTLY VISIBLE rows only — so with a shop filter
+                // active, bulk actions scope to that shop, matching the
+                // scoped counter above. Union / diff patterns preserve
+                // selections in other shops when the user switches back.
+                const visibleIds = visibleApprovedRows.map(r => r.id)
+                const visibleChecked = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
+                const allVisibleChecked = visibleIds.length > 0 && visibleChecked === visibleIds.length
+                const noneVisibleChecked = visibleChecked === 0
+                const selectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.add(id)
+                  return n
+                })
+                const deselectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.delete(id)
+                  return n
+                })
+                return (
+                  <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{ fontSize: 12, color: '#1F1F1F99', flex: 1, minWidth: 0 }}>
+                      {printShopFilter
+                        ? `${visibleChecked} of ${visibleIds.length} selected in this shop`
+                        : `${selectedRequestIds.size} of ${approvedRows.length} selected`}
+                    </Box>
+                    <Button
+                      size="small"
+                      onClick={selectAll}
+                      disabled={allVisibleChecked || visibleIds.length === 0}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1 }}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={deselectAll}
+                      disabled={noneVisibleChecked}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1, color: '#C62828' }}
+                    >
+                      Deselect all
+                    </Button>
+                  </Box>
+                )
+              })()}
 
               <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
                 {visibleApprovedRows.map(r => {
@@ -807,10 +842,36 @@ export default function InventoryRequests() {
                         sx={{ pointerEvents: 'none' }}
                       />
                       <Box sx={{ flex: 1, minWidth: 0 }}>
-                        <Box sx={{ fontSize: 13, fontWeight: 700 }}>
+                        <Box sx={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
                           {r.code}
                           {!printShopFilter && (
-                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}> · {r.shopName}</Box>
+                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}>· {r.shopName}</Box>
+                          )}
+                          {/* Special-Request marker (06-Jul-2026, client req):
+                              picker needs to know at selection time which
+                              rows carry vendor-procurement so they can group
+                              or route them differently on the batch plan. */}
+                          {r.isSpecial && (
+                            <Box
+                              component="span"
+                              title={r.specialLabel?.trim() || 'Special Request'}
+                              sx={{
+                                display: 'inline-flex', alignItems: 'center', gap: 0.4,
+                                px: 0.75, py: 0.15, borderRadius: 0.75,
+                                bgcolor: '#FFB74D', border: '1px solid #E65100',
+                                color: '#3E2500', fontSize: 10, fontWeight: 800,
+                                letterSpacing: 0.4, textTransform: 'uppercase',
+                                lineHeight: 1.2,
+                                maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ★ Special
+                              {r.specialLabel?.trim() && (
+                                <Box component="span" sx={{ fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
+                                  · {r.specialLabel.trim()}
+                                </Box>
+                              )}
+                            </Box>
                           )}
                         </Box>
                         <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>

@@ -99,6 +99,31 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
               }}
             />
           )}
+          {/* Special Request chip (06-Jul-2026, client req). Renders on every
+              audit row whose parent request carries is_special = true so admin
+              can trace the adjustment back to a vendor-procured special. Same
+              amber palette as the SpecialRequestChip / sticky banner. Label
+              shows up to 24 chars inline; full label on hover. */}
+          {params.row.isSpecial && (
+            <Chip
+              label={params.row.specialLabel?.trim()
+                ? `★ ${params.row.specialLabel.trim()}`
+                : '★ Special'}
+              size="small"
+              title={params.row.specialLabel?.trim() || 'Special Request'}
+              sx={{
+                bgcolor: '#FFB74D',
+                border: '1px solid #E65100',
+                color: '#3E2500',
+                fontWeight: 800,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.4,
+                maxWidth: 180,
+                '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' },
+              }}
+            />
+          )}
         </Box>
       ),
     },
