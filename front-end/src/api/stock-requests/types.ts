@@ -46,32 +46,12 @@ export type StockRequestItemDto = {
    *  pages / prints render an (inv) chip alongside these products so
    *  the shop / picker can see which items came in later. */
   addedBy: 'Shop' | 'Inventory'
-  /** True when the product is procured from a vendor (not made in-house).
-   *  Pre-checks this line in the godown's Move-to-back-order dialog.
-   *  Read LIVE from products.is_vendor_procured at detail-fetch time —
-   *  reflects the product's current setting, not a snapshot. */
-  isVendorProcured: boolean
 }
 
-// 'Order' = shop → godown; 'Return' = goods back to godown; 'Backorder' =
-// vendor-procured sibling carved off an Order by the godown (02-Jul-2026).
-// Same DTO shape carries all three — flip behaviour by the requestType field.
+// 'Order' = shop → godown; 'Return' = goods back to godown. 'Backorder'
+// remains in the BE enum for legacy rows migrated on 06-Jul-2026 but
+// nothing new writes it — the shop-declared is_special flag replaced it.
 export type RequestType = 'Order' | 'Return' | 'Backorder'
-
-/** Backorder-child summary embedded on a parent Order's detail payload.
- *  One entry per carved-off Backorder sibling. Drives the parent-page
- *  "N items on back-order · tracking as REQ0042-B (ETA 3-Feb)" banner. */
-export type BackorderChildDto = {
-  id: string
-  code: string
-  status: RequestStatus
-  totalItems: number
-  totalQty: number
-  totalAmount: number
-  /** Godown-supplied ETA; null when not set yet. */
-  expectedArrivalAt: string | null
-  submittedAt: string
-}
 
 export type StockRequestDto = {
   id: string
@@ -139,15 +119,14 @@ export type StockRequestDto = {
   /** ISO timestamp set when the dispatch draft was pinned (null = not pinned).
    *  Pinned drafts sort to the top of the resume strip. */
   pinnedAt: string | null
-  /** Backorder-only: parent Order this Backorder was carved off of. Null on
-   *  Orders / Returns. Populated by detail + list endpoints. */
-  parentRequestId: string | null
-  parentRequestCode: string | null
-  /** Backorder-only ETA. Populated by detail + list. */
-  expectedArrivalAt: string | null
-  /** Only populated by GET /{id} on ORDER rows that have been carved.
-   *  Zero-entry vs null distinguish "no children" from "children not fetched". */
-  backorderChildren: BackorderChildDto[] | null
+  /** Shop-declared "special / vendor procurement" flag (06-Jul-2026). Set
+   *  on the review/submit step; frozen once the request is Approved.
+   *  Drives the sticky top banner + list-row highlight until Received. */
+  isSpecial: boolean
+  /** User-supplied name for the special request ("Diwali stock 2026").
+   *  Null when isSpecial is false, or when the shop left it blank — UI
+   *  defaults to "Special Request". */
+  specialLabel: string | null
   items: StockRequestItemDto[] | null  // only on GET /{id}
 }
 
@@ -162,6 +141,13 @@ export type CreateStockRequestItem = {
 export type CreateStockRequestRequest = {
   notes?: string
   items: CreateStockRequestItem[]
+  /** 06-Jul-2026 (client req): shop marks the whole request as a
+   *  vendor-procured special order on the review/submit step. Omit /
+   *  false for a normal request. */
+  isSpecial?: boolean
+  /** User-supplied name for a special request. Ignored unless
+   *  isSpecial=true. Trimmed + null-emptied server-side. */
+  specialLabel?: string | null
 }
 
 export type UpdateStockRequestRequest = CreateStockRequestRequest
@@ -215,34 +201,32 @@ export type CreateReturnRequest = {
 export type AcceptReturnItem = { id: string; acceptedQty: number }
 export type AcceptReturnRequest = { items: AcceptReturnItem[] }
 
-// Godown carves items off a parent Order into a linked Backorder sibling.
-// Each item's id must belong to the parent; qty is positive and ≤ the
-// parent line's requestedQty. When qty < requestedQty the SP splits the
-// row (parent keeps the remainder, new row on the child for qty).
-// expectedArrivalAt is optional ETA (ISO); null / omitted = "no ETA yet".
-export type MoveToBackorderRequest = {
-  items: { id: string; qty: number }[]
-  expectedArrivalAt?: string | null
+// Shop toggles the "special / vendor procurement" flag on a Pending
+// request (PATCH /requests/{id}/special). Once approved the flag freezes.
+// specialLabel is optional — trimmed + null-emptied server-side; when
+// isSpecial is false, any label is discarded.
+export type SetSpecialRequest = {
+  isSpecial: boolean
+  specialLabel?: string | null
 }
 
-/** Pipeline-scoped snapshot row for the Outstanding Back-orders strips.
- *  Never date-filtered — the strip stays visible across month boundaries
- *  until the child is dispatched. */
-export type OutstandingBackorderDto = {
+/** One row on the "active specials" feed powering the sticky top banner
+ *  across shop / inv / admin. Never date-filtered — surfaces cross-month
+ *  specials until the shop confirms Received. */
+export type ActiveSpecialDto = {
   id: string
   code: string
-  parentId: string | null
-  parentCode: string | null
+  specialLabel: string | null
   shopId: string
   shopCode: string
   shopName: string
   inventoryId: string
   inventoryName: string
+  status: RequestStatus
   totalItems: number
   totalQty: number
   totalAmount: number
   submittedAt: string
-  expectedArrivalAt: string | null
   daysSinceSubmitted: number
 }
 
@@ -265,6 +249,8 @@ export type CumulativePendingLine = {
   weightValue: number | null
   weightUnit: string | null
   totalQty: number
+  orderQty: number
+  specialQty: number
   requestCount: number
 }
 

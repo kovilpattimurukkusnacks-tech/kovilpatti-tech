@@ -7,10 +7,9 @@ import {
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
-import { useMyStockRequests, useShopDraft, useOutstandingBackorders } from '../../hooks/useStockRequests'
+import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { useApp } from '../../context/AppContext'
-import { BackorderChip } from '../../components/BackorderChip'
-import { Hourglass } from 'lucide-react'
+import { SpecialRequestChip } from '../../components/SpecialRequestChip'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import type { StockRequestDto, RequestStatus, RequestType, StockRequestListFilters } from '../../api/stock-requests/types'
@@ -168,11 +167,6 @@ export default function ShopRequests() {
   // user isn't already on the Dispatched tab (would be redundant).
   const showDispatchedBanner = dispatchedCount > 0 && activePreset !== 'dispatched'
 
-  // Outstanding back-orders (02-Jul-2026). Pipeline snapshot — never date-
-  // filtered so month-end back-orders stay visible until they close.
-  const backordersQuery = useOutstandingBackorders()
-  const outstandingBackorders = backordersQuery.data ?? []
-
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
 
@@ -204,38 +198,6 @@ export default function ShopRequests() {
           shop staff can't miss the "you have work" signal even when their
           default Pending tab is empty. Clicking View jumps them straight
           to the Dispatched tab so the list is exactly what they need. */}
-      {/* Outstanding back-orders banner (02-Jul-2026). Shows any Pending
-          Backorder requests belonging to this shop — the godown is waiting
-          on vendor stock. Pipeline-scoped, cross-month. */}
-      {outstandingBackorders.length > 0 && (
-        <Paper
-          elevation={0}
-          sx={{
-            mb: 2, borderRadius: 2,
-            border: '1px solid #E8A758',
-            bgcolor: '#FFE0B2',
-            px: 2, py: 1.5,
-            display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
-          }}
-        >
-          <Hourglass className="w-5 h-5" style={{ color: '#7C4A00' }} />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ fontWeight: 700, fontSize: 14, color: '#7C4A00' }}>
-              {outstandingBackorders.length} back-order{outstandingBackorders.length === 1 ? '' : 's'} outstanding
-            </Box>
-            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
-              Items the godown is waiting to receive from vendors. You'll be notified when they're dispatched.
-              {outstandingBackorders.some(b => b.expectedArrivalAt) && (
-                <> ETAs: {outstandingBackorders.filter(b => b.expectedArrivalAt).slice(0, 3).map(b => (
-                  <span key={b.id} style={{ marginRight: 8, fontWeight: 600 }}>
-                    {b.code} → {new Date(b.expectedArrivalAt!).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                  </span>
-                ))}</>
-              )}
-            </Box>
-          </Box>
-        </Paper>
-      )}
 
       {showDispatchedBanner && (
         <Paper
@@ -456,8 +418,7 @@ export default function ShopRequests() {
                               }}
                             />
                           )}
-                          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
-                          {row.parentRequestCode && row.requestType !== 'Backorder' && null}
+                          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
                         </Box>
                       </TableCell>
                       <TableCell>{formatIstDateTime(row.submittedAt)}</TableCell>

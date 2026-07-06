@@ -1,10 +1,10 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer, X as XIcon } from 'lucide-react'
+import { ArrowLeft, Ban, PackageCheck, Clock, ShieldX, Edit2, Printer, Star, X as XIcon, Check } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer,
-  TableHead, TableRow, TextField,
+  TableHead, TableRow, TextField, Tooltip,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
@@ -14,7 +14,7 @@ import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
-  useStockRequest, useCancelStockRequest, useReceiveStockRequest,
+  useStockRequest, useCancelStockRequest, useReceiveStockRequest, useSetSpecial,
 } from '../../hooks/useStockRequests'
 import { useSettings } from '../../hooks/useSettings'
 import type { RequestStatus } from '../../api/stock-requests/types'
@@ -43,6 +43,42 @@ export default function ShopRequestDetail() {
   const { data: request, isLoading, error } = useStockRequest(id)
   const cancelMutation  = useCancelStockRequest()
   const receiveMutation = useReceiveStockRequest()
+  const setSpecialMutation = useSetSpecial()
+  // Inline edit state for the special_label. Enters edit mode when the
+  // shop clicks the pencil next to the amber Special chip. SP-side gate
+  // (fn_request_set_special) already restricts to status = 'Pending', but
+  // we hide the pencil under the same rule for a clean UX.
+  const [labelEditing, setLabelEditing] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
+  const [labelErr, setLabelErr] = useState<string | null>(null)
+
+  const cancelLabelEdit = () => {
+    setLabelEditing(false)
+    setLabelDraft('')
+    setLabelErr(null)
+  }
+
+  const saveLabel = async () => {
+    if (!request) return
+    const trimmed = labelDraft.trim()
+    setLabelErr(null)
+    try {
+      await setSpecialMutation.mutateAsync({
+        id: request.id,
+        // isSpecial stays true — only editing the name here. The toggle-
+        // off path lives in ShopRequestNew.tsx's review dialog to keep
+        // this strip purely about labelling.
+        req: { isSpecial: true, specialLabel: trimmed || null },
+      })
+      setLabelEditing(false)
+    } catch (e) {
+      setLabelErr(
+        e instanceof ValidationError ? e.flatten()
+        : e instanceof Error          ? e.message
+        : 'Could not save the label. Try again.',
+      )
+    }
+  }
   // App settings — used to gate the editable-window chip below. When admin
   // has toggled request_lock_enabled = false, neither the countdown nor the
   // "Locked — admin only" chip is meaningful, so we drop the whole block.
@@ -418,6 +454,106 @@ export default function ShopRequestDetail() {
         </Alert>
       )}
 
+      {/* Special Request strip (06-Jul-2026). Renders only when the shop
+          flagged this request. Label shows as-is; a pencil affordance
+          appears while status = 'Pending' so the shop can edit the name
+          in place (BE's fn_request_set_special enforces the same gate).
+          Once Approved, the label freezes — the strip stays but the pencil
+          disappears, matching the client's contract-freezing rule. */}
+      {request.isSpecial && (
+        <Paper
+          elevation={0}
+          sx={{
+            p: 1.5, mb: 2, borderRadius: 2,
+            bgcolor: '#FFB74D',
+            border: '2px solid #E65100',
+            boxShadow: '0 1px 3px rgba(230, 81, 0, 0.25)',
+            display: 'flex', alignItems: 'center', gap: 1.25, flexWrap: 'wrap',
+          }}
+        >
+          <Star className="w-5 h-5" style={{ color: '#3E2500' }} />
+          <Box sx={{ fontWeight: 800, color: '#3E2500', fontSize: 13, letterSpacing: 0.3 }}>
+            Special Request
+          </Box>
+          {labelEditing ? (
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flex: 1, minWidth: 240 }}>
+              <TextField
+                value={labelDraft}
+                onChange={e => setLabelDraft(e.target.value.slice(0, 120))}
+                size="small"
+                autoFocus
+                placeholder="e.g. Diwali stock 2026"
+                slotProps={{ htmlInput: { maxLength: 120 } }}
+                onKeyDown={e => {
+                  if (e.key === 'Enter') { e.preventDefault(); void saveLabel() }
+                  if (e.key === 'Escape') { cancelLabelEdit() }
+                }}
+                disabled={setSpecialMutation.isPending}
+                sx={{
+                  flex: 1,
+                  bgcolor: '#FFF8DC',
+                  borderRadius: 1,
+                  '& .MuiOutlinedInput-notchedOutline': { borderColor: '#3E2500' },
+                }}
+              />
+              <Tooltip title="Save">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={() => void saveLabel()}
+                    disabled={setSpecialMutation.isPending}
+                    sx={{ bgcolor: '#3E2500', color: '#FFFFFF', '&:hover': { bgcolor: '#5D3600' } }}
+                  >
+                    <Check className="w-4 h-4" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+              <Tooltip title="Cancel">
+                <span>
+                  <IconButton
+                    size="small"
+                    onClick={cancelLabelEdit}
+                    disabled={setSpecialMutation.isPending}
+                    sx={{ color: '#3E2500' }}
+                  >
+                    <XIcon className="w-4 h-4" />
+                  </IconButton>
+                </span>
+              </Tooltip>
+            </Box>
+          ) : (
+            <>
+              <Box sx={{
+                px: 1, py: 0.25, borderRadius: 1,
+                bgcolor: '#FFF8DC', border: '1px solid #3E2500',
+                fontWeight: 700, color: '#3E2500', fontSize: 13,
+                maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+              }}>
+                {request.specialLabel?.trim() || 'Unnamed special'}
+              </Box>
+              {request.status === 'Pending' && (
+                <Tooltip title="Edit label">
+                  <IconButton
+                    size="small"
+                    onClick={() => {
+                      setLabelDraft(request.specialLabel ?? '')
+                      setLabelErr(null)
+                      setLabelEditing(true)
+                    }}
+                    sx={{ color: '#3E2500', p: 0.5 }}
+                  >
+                    <Edit2 className="w-4 h-4" />
+                  </IconButton>
+                </Tooltip>
+              )}
+            </>
+          )}
+          {labelErr && (
+            <Box sx={{ fontSize: 12, color: '#B00020', width: '100%' }}>{labelErr}</Box>
+          )}
+        </Paper>
+      )}
+
       {/* Post-receipt discrepancy recap (02-Jul-2026). Quiet reminder to
           shop staff of what they submitted; admin + inv see the same
           banner on their views. Skips render when everything matched. */}
@@ -444,71 +580,6 @@ export default function ShopRequestDetail() {
           </Alert>
         )
       })()}
-
-      {/* Back-order children banner (02-Jul-2026). Shown on the PARENT
-          Order once godown has carved off Backorder siblings. */}
-      {request.backorderChildren && request.backorderChildren.length > 0 && (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 1.5, mb: 2, borderRadius: 2,
-            bgcolor: '#FFE0B2', border: '1px solid #E8A758',
-            display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
-          }}
-        >
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ fontSize: 13, fontWeight: 700, color: '#7C4A00' }}>
-              {request.backorderChildren.reduce((s, c) => s + c.totalItems, 0)} item{request.backorderChildren.reduce((s, c) => s + c.totalItems, 0) === 1 ? '' : 's'} on back-order
-            </Box>
-            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
-              Godown is procuring these from vendors and will dispatch as{' '}
-              {request.backorderChildren.map((c, i) => (
-                <Fragment key={c.id}>
-                  <Box
-                    component="span"
-                    onClick={() => navigate(`/shop/requests/${c.id}`)}
-                    sx={{ fontWeight: 700, textDecoration: 'underline', cursor: 'pointer' }}
-                  >
-                    {c.code}
-                  </Box>
-                  {c.expectedArrivalAt && (
-                    <> (ETA {new Date(c.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})</>
-                  )}
-                  {i < request.backorderChildren!.length - 1 && ', '}
-                </Fragment>
-              ))}
-              .
-            </Box>
-          </Box>
-        </Paper>
-      )}
-
-      {/* If THIS request IS a Backorder — link back to parent. */}
-      {request.parentRequestId && (
-        <Paper
-          elevation={0}
-          sx={{
-            p: 1.5, mb: 2, borderRadius: 2,
-            bgcolor: '#FFE0B2', border: '1px solid #E8A758',
-          }}
-        >
-          <Box sx={{ fontSize: 13, fontWeight: 700, color: '#7C4A00' }}>
-            Back-order from your order{' '}
-            <Box
-              component="span"
-              onClick={() => navigate(`/shop/requests/${request.parentRequestId}`)}
-              sx={{ textDecoration: 'underline', cursor: 'pointer' }}
-            >
-              {request.parentRequestCode}
-            </Box>
-          </Box>
-          {request.expectedArrivalAt && (
-            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
-              ETA {new Date(request.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
-            </Box>
-          )}
-        </Paper>
-      )}
 
       {/* Timeline */}
       <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF' }}>

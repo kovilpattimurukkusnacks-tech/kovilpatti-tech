@@ -12,6 +12,12 @@ public class AccountsAdjustmentRow
     /// 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so FE can filter
     /// audits by view-mode lens.
     public string         Request_Type    { get; set; } = default!;
+    /// Shop-declared Special Request flag on the parent request. Powers
+    /// the amber "Special" chip beside the request code on the audit log.
+    public bool           Is_Special      { get; set; }
+    /// User-supplied label ("Diwali stock 2026"). NULL when Is_Special
+    /// is false or the shop left it blank. Chip renders "Special" then.
+    public string?        Special_Label   { get; set; }
     public Guid           Shop_Id         { get; set; }
     public string         Shop_Name       { get; set; } = default!;
     public Guid           Product_Id      { get; set; }

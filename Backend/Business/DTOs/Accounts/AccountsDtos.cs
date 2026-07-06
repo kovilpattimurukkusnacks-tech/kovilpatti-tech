@@ -100,6 +100,12 @@ public record AccountsAdjustmentRowDto(
     /// 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so FE filters
     /// audits by view-mode lens.
     string          RequestType,
+    /// Shop-declared Special Request flag on the parent request. Renders
+    /// the amber "Special" chip on the audit row (06-Jul-2026).
+    bool            IsSpecial,
+    /// User-supplied Special Request label. Null when IsSpecial is false
+    /// or the shop left it blank — chip falls back to plain "Special".
+    string?         SpecialLabel,
     Guid            ShopId,
     string          ShopName,
     Guid            ProductId,
@@ -120,5 +126,10 @@ public record AccountsInTransitDto(
     long            RequestCount,
     decimal         TotalAmount,
     /// Null when RequestCount is 0.
-    DateTimeOffset? OldestDispatchedAt
+    DateTimeOffset? OldestDispatchedAt,
+    /// Subset of RequestCount that are Special Requests (06-Jul-2026).
+    /// Never exceeds RequestCount; 0 when none in transit are special.
+    long            SpecialCount,
+    /// Sum of total_amount over the Special-only subset.
+    decimal         SpecialAmount
 );

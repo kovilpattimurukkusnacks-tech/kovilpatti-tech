@@ -13,10 +13,6 @@ public interface IProductPayload
     decimal PurchasePrice { get; }
     decimal? Gst { get; }
     bool Active { get; }
-    /// True when this SKU is procured from a vendor (not made in-house).
-    /// Nullable on the request so an omitted field keeps the existing value
-    /// on updates; Create defaults to false when omitted.
-    bool? IsVendorProcured { get; }
 }
 
 public record CreateProductRequest(
@@ -30,7 +26,5 @@ public record CreateProductRequest(
     decimal PurchasePrice,
     // Optional. Hidden in the FE form for now — defaults to null.
     decimal? Gst = null,
-    bool Active = true,
-    /// True → this SKU is procured from a vendor. Omitted → false (in-house).
-    bool? IsVendorProcured = null
+    bool Active = true
 ) : IProductPayload;

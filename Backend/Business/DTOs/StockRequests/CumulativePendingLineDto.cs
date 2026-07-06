@@ -9,5 +9,7 @@ public record CumulativePendingLineDto(
     decimal? WeightValue,
     string?  WeightUnit,
     long    TotalQty,
+    long    OrderQty,
+    long    SpecialQty,
     long    RequestCount
 );

@@ -44,8 +44,8 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
   const visibleRows = useMemo(() => {
     if (!rows) return [] as AccountsAdjustmentRowDto[]
     if (view === 'returns')    return rows.filter(r => r.requestType === 'Return')
-    // Dispatched view folds Backorders in with Orders — same treatment the
-    // accounts SPs use after phase3_accounts_backorder_rollup.
+    // Dispatched view = every non-Return audit. Legacy Backorder rows kept
+    // in the filter for historical audits — new writes are Order-typed.
     if (view === 'dispatched') return rows.filter(r => r.requestType === 'Order' || r.requestType === 'Backorder')
     // 'all' (and 'requested' — but the parent doesn't render the table in
     // that view anyway) show every audit.
@@ -96,6 +96,31 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
                 fontSize: 10,
                 height: 20,
                 letterSpacing: 0.5,
+              }}
+            />
+          )}
+          {/* Special Request chip (06-Jul-2026, client req). Renders on every
+              audit row whose parent request carries is_special = true so admin
+              can trace the adjustment back to a vendor-procured special. Same
+              amber palette as the SpecialRequestChip / sticky banner. Label
+              shows up to 24 chars inline; full label on hover. */}
+          {params.row.isSpecial && (
+            <Chip
+              label={params.row.specialLabel?.trim()
+                ? `★ ${params.row.specialLabel.trim()}`
+                : '★ Special'}
+              size="small"
+              title={params.row.specialLabel?.trim() || 'Special Request'}
+              sx={{
+                bgcolor: '#FFB74D',
+                border: '1px solid #E65100',
+                color: '#3E2500',
+                fontWeight: 800,
+                fontSize: 10,
+                height: 20,
+                letterSpacing: 0.4,
+                maxWidth: 180,
+                '& .MuiChip-label': { overflow: 'hidden', textOverflow: 'ellipsis' },
               }}
             />
           )}

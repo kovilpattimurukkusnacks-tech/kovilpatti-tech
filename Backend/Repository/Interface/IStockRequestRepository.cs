@@ -30,6 +30,7 @@ public interface IStockRequestRepository
         string code, Guid shopId, Guid inventoryId,
         DateTimeOffset editableUntil, string? notes,
         string itemsJson, Guid userId,
+        bool isSpecial, string? specialLabel,
         CancellationToken ct = default);
 
     Task<bool> UpdateAsync(Guid id, string? notes, string itemsJson, Guid userId, CancellationToken ct = default);
@@ -98,43 +99,42 @@ public interface IStockRequestRepository
     Task<IReadOnlyList<StockRequest>> ListInventoryDispatchDraftsAsync(
         Guid? inventoryId, CancellationToken ct = default);
 
-    // ── Back-order (02-Jul-2026) ──────────────────────────────────
-    /// Carve items off a parent Order into a linked Backorder sibling.
-    /// `itemsJson` is [{id, qty}, ...]. When qty < parent line's requested_qty
-    /// the SP splits the row (partial move); when qty >= requested_qty the
-    /// whole row is reparented. SP guards: parent must be Order + Pending/
-    /// Approved, every id must belong to parent. Returns the new Backorder's id.
-    Task<Guid> MoveToBackorderAsync(
-        Guid id, string itemsJson, DateTimeOffset? expectedArrivalAt,
+    // ── Special Request (06-Jul-2026) ─────────────────────────────
+    /// Toggle the shop-declared "special / vendor procurement" flag on a
+    /// Pending request. SP gates status = 'Pending' — once approved the
+    /// flag freezes. Label is stored only when isSpecial is true.
+    /// Returns false when the id doesn't match a Pending row.
+    Task<bool> SetSpecialAsync(
+        Guid id, bool isSpecial, string? specialLabel,
         Guid userId, CancellationToken ct = default);
 
-    /// Pipeline snapshot of Pending Backorders. inventoryId scopes to a
-    /// godown (Inventory role forced server-side by the service layer);
-    /// shopIds scopes to a shop set (used by shop banner). Never date-filtered
-    /// — the strip must show cross-month back-orders until they close.
-    Task<IReadOnlyList<OutstandingBackorderRow>> ListOutstandingBackordersAsync(
-        Guid? inventoryId, IReadOnlyList<Guid>? shopIds,
+    /// Every un-received Special request in scope. shopId → shop user's
+    /// own shop; inventoryId → inventory user's own godown; both NULL →
+    /// admin tenant-wide. Powers the sticky top banner across all three
+    /// roles. Never date-filtered — banner surfaces cross-month specials
+    /// until the shop confirms Received.
+    Task<IReadOnlyList<ActiveSpecialRow>> ListActiveSpecialsAsync(
+        Guid? shopId, Guid? inventoryId,
         CancellationToken ct = default);
 }
 
-/// Read-only row shape for fn_request_list_outstanding_backorders. Kept
-/// separate from the StockRequest entity because this SP projects a
-/// pipeline summary (parent link + days-waiting) — not a full request.
-public class OutstandingBackorderRow
+/// Row shape for fn_request_list_active_specials (sticky-banner data).
+/// Kept separate from the StockRequest entity because the SP projects a
+/// pipeline summary (label + days-waiting) — not a full request.
+public class ActiveSpecialRow
 {
     public Guid Id { get; set; }
     public string Code { get; set; } = default!;
-    public Guid? Parent_Id { get; set; }
-    public string? Parent_Code { get; set; }
+    public string? Special_Label { get; set; }
     public Guid Shop_Id { get; set; }
     public string Shop_Code { get; set; } = default!;
     public string Shop_Name { get; set; } = default!;
     public Guid Inventory_Id { get; set; }
     public string Inventory_Name { get; set; } = default!;
+    public string Status { get; set; } = default!;
     public int Total_Items { get; set; }
     public int Total_Qty { get; set; }
     public decimal Total_Amount { get; set; }
     public DateTimeOffset Submitted_At { get; set; }
-    public DateTimeOffset? Expected_Arrival_At { get; set; }
     public int Days_Since_Submitted { get; set; }
 }

@@ -141,6 +141,10 @@ DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varcha
 -- Second drop — a follow-up (28-May-2026) added p_request_type for the
 -- "Return" chip filter, bumping the signature to 9 args.
 DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type);
+-- 06-Jul-2026 — RETURNS TABLE shape swapped parent_request_*/expected_arrival_at
+-- for is_special/special_label as part of the Special Request rework. Signature
+-- (arg list) unchanged, but return-shape drift → drop the pre-rework shape.
+-- Idempotent on a fresh DB (nothing to drop).
 
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
@@ -201,11 +205,11 @@ RETURNS TABLE (
   cancelled_by            uuid,
   source_request_id       uuid,
   source_request_code     varchar,
-  -- Back-order linkage (01-Jul-2026). Both NULL for Orders + Returns;
-  -- populated only on Backorder rows carved via fn_request_move_to_backorder.
-  parent_request_id       uuid,
-  parent_request_code     varchar,
-  expected_arrival_at     timestamptz
+  -- Special Request flags (06-Jul-2026). is_special is set by the shop on
+  -- the review/submit step; special_label is the user-supplied name (e.g.
+  -- "Diwali stock 2026"). Both NULL/false on normal orders.
+  is_special              boolean,
+  special_label           varchar
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -250,10 +254,10 @@ LANGUAGE sql STABLE AS $$
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
          src.code AS source_request_code,
-         -- Back-order → parent Order linkage. NULL on Orders + Returns.
-         r.parent_request_id,
-         par.code AS parent_request_code,
-         r.expected_arrival_at
+         -- Special Request flags. is_special = shop declared this a special
+         -- (vendor procurement). special_label = shop-supplied name.
+         r.is_special,
+         r.special_label
   FROM stock_requests r
   INNER JOIN shops       s    ON s.id    = r.shop_id
   INNER JOIN inventories i    ON i.id    = r.inventory_id
@@ -265,8 +269,6 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
-  -- Self-join for the parent Order's code (Backorder rows only).
-  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.is_deleted = false
     AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
@@ -339,6 +341,18 @@ $$;
 --                gated to Approved + inventory scope so the caller can't
 --                sneak in a request outside their inventory). Powers the
 --                Cumulative-print selection dialog (02-Jul-2026).
+-- 06-Jul-2026 (client req): split total_qty into order_qty + special_qty so
+-- the cumulative print can flag any SKU whose qty carries a Special Request
+-- contribution (amber "SP" pill on the line). total_qty is kept as the sum
+-- of both — the kitchen still packs one number per SKU. The Special-flag
+-- lives on stock_requests.is_special (formerly the retired Backorder enum);
+-- semantics unchanged from the kitchen's POV: "some of this batch is a
+-- special-order vendor procurement, not stock we already had".
+--
+-- Return-signature drift → drop every prior shape (both the pre-split shape
+-- and the interim backorder_qty-named shape) before CREATE OR REPLACE.
+DROP FUNCTION IF EXISTS fn_request_pending_cumulative(uuid, uuid[]);
+
 CREATE OR REPLACE FUNCTION fn_request_pending_cumulative(
   p_inventory_id uuid   DEFAULT NULL,
   p_request_ids  uuid[] DEFAULT NULL
@@ -352,6 +366,8 @@ RETURNS TABLE (
   weight_value    numeric,
   weight_unit     varchar,
   total_qty       bigint,
+  order_qty       bigint,
+  special_qty     bigint,
   request_count   bigint
 )
 LANGUAGE sql STABLE AS $$
@@ -363,8 +379,10 @@ LANGUAGE sql STABLE AS $$
     p.type              AS type,
     it.weight_value     AS weight_value,
     it.weight_unit      AS weight_unit,
-    SUM(it.requested_qty)::bigint        AS total_qty,
-    COUNT(DISTINCT r.id)::bigint         AS request_count
+    SUM(it.requested_qty)::bigint                                                        AS total_qty,
+    SUM(CASE WHEN r.is_special THEN 0 ELSE it.requested_qty END)::bigint                 AS order_qty,
+    SUM(CASE WHEN r.is_special THEN it.requested_qty ELSE 0 END)::bigint                 AS special_qty,
+    COUNT(DISTINCT r.id)::bigint                                                         AS request_count
   FROM stock_requests r
   INNER JOIN stock_request_items it ON it.request_id = r.id
   INNER JOIN products            p  ON p.id  = it.product_id
@@ -553,8 +571,9 @@ $$;
 DROP FUNCTION IF EXISTS fn_request_get(uuid);
 
 -- Signature changed 01-Jul-2026 — added parent_request_id, parent_request_code,
--- expected_arrival_at, backorder_children (jsonb aggregate). Must DROP the
--- old version first because CREATE OR REPLACE can't change RETURNS TABLE.
+-- expected_arrival_at, backorder_children. 06-Jul-2026 — swapped those for
+-- is_special / special_label as part of the Special Request rework. Extra
+-- DROP left in place so re-runs on any historical DB shape land cleanly.
 DROP FUNCTION IF EXISTS fn_request_get(uuid);
 
 CREATE OR REPLACE FUNCTION fn_request_get(p_id uuid)
@@ -602,19 +621,11 @@ RETURNS TABLE (
   cancelled_by            uuid,
   source_request_id       uuid,
   source_request_code     varchar,
-  -- Back-order linkage (01-Jul-2026):
-  --   parent_request_id / parent_request_code — populated on Backorder rows,
-  --     point at the Order they were carved from.
-  --   expected_arrival_at — vendor ETA on the Backorder. Nullable.
-  --   backorder_children  — populated on ORDER rows that HAVE been carved,
-  --     lists their Backorder siblings. JSON array of {id, code, status,
-  --     total_items, total_qty, total_amount, expected_arrival_at}. Empty
-  --     array when the order has no back-order carve-outs.
-  parent_request_id     uuid,
-  parent_request_code   varchar,
-  expected_arrival_at   timestamptz,
-  backorder_children    jsonb,
-  items                 jsonb
+  -- Special Request flags (06-Jul-2026). See fn_request_list_paged for
+  -- semantics. Both NULL/false on normal orders.
+  is_special              boolean,
+  special_label           varchar,
+  items                   jsonb
 )
 LANGUAGE sql STABLE AS $$
   SELECT r.id, r.code,
@@ -655,26 +666,9 @@ LANGUAGE sql STABLE AS $$
          -- Return → linked Order traceability. NULL for Orders and free-form Returns.
          r.source_request_id,
          src.code AS source_request_code,
-         -- Back-order linkage (01-Jul-2026).
-         r.parent_request_id,
-         par.code AS parent_request_code,
-         r.expected_arrival_at,
-         COALESCE((
-           SELECT jsonb_agg(
-             jsonb_build_object(
-               'id',                  br.id,
-               'code',                br.code,
-               'status',              br.status::varchar,
-               'total_items',         br.total_items,
-               'total_qty',           br.total_qty,
-               'total_amount',        br.total_amount,
-               'expected_arrival_at', br.expected_arrival_at,
-               'submitted_at',        br.submitted_at
-             ) ORDER BY br.submitted_at
-           )
-           FROM stock_requests br
-           WHERE br.parent_request_id = r.id AND br.is_deleted = false
-         ), '[]'::jsonb) AS backorder_children,
+         -- Special Request flags (06-Jul-2026).
+         r.is_special,
+         r.special_label,
          COALESCE((
            SELECT jsonb_agg(
              jsonb_build_object(
@@ -709,13 +703,7 @@ LANGUAGE sql STABLE AS $$
                -- 'Shop' | 'Inventory' — flags items the godown appended
                -- post-approval so shop / admin / picklist can render the
                -- (inv) tag alongside the product name.
-               'added_by',       it.added_by,
-               -- Product-master flag: true when the SKU is normally
-               -- vendor-procured (2-4 day lead time). Inventory dispatch
-               -- UI uses this to pre-check the "Move to back-order"
-               -- toggle for these lines. Read LIVE from products so a
-               -- late-added flag applies to historical items too.
-               'is_vendor_procured', p.is_vendor_procured
+               'added_by',       it.added_by
              ) ORDER BY c.name, p.code
            )
            FROM stock_request_items it
@@ -734,9 +722,6 @@ LANGUAGE sql STABLE AS $$
   -- Self-join for the linked Order's code (Returns only). Partial index
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
-  -- Self-join for the parent Order's code on Backorder rows (01-Jul-2026).
-  -- Partial index idx_stock_requests_parent_request keeps it cheap.
-  LEFT  JOIN stock_requests par ON par.id = r.parent_request_id
   WHERE r.id = p_id AND r.is_deleted = false;
 $$;
 
@@ -752,6 +737,11 @@ $$;
 -- Because Submit's intent is "this is the finalised version of what I was
 -- drafting", the draft is hard-deleted in the same transaction — atomic so
 -- we can never end up with a submitted Pending plus a stale Draft.
+-- 06-Jul-2026: signature gained p_is_special + p_special_label for the
+-- Special Request rework. Prior 7-arg shape dropped so re-runs on any DB
+-- state install the new signature cleanly.
+DROP FUNCTION IF EXISTS fn_request_create(varchar, uuid, uuid, timestamptz, varchar, jsonb, uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_create(
   p_code           varchar,
   p_shop_id        uuid,
@@ -759,7 +749,12 @@ CREATE OR REPLACE FUNCTION fn_request_create(
   p_editable_until timestamptz,
   p_notes          varchar,
   p_items          jsonb,
-  p_user_id        uuid
+  p_user_id        uuid,
+  -- Special Request flags. p_is_special defaults to false so pre-rework
+  -- callers still work; the FE explicitly passes both values when the shop
+  -- toggles "Mark as Special Request" on the review/submit step.
+  p_is_special     boolean  DEFAULT false,
+  p_special_label  varchar  DEFAULT NULL
 )
 RETURNS uuid
 LANGUAGE plpgsql AS $$
@@ -779,10 +774,14 @@ BEGIN
   INSERT INTO stock_requests (
     code, shop_id, inventory_id, status,
     editable_until, notes,
+    is_special, special_label,
     created_by, updated_by
   ) VALUES (
     p_code, p_shop_id, p_inventory_id, 'Pending',
     p_editable_until, p_notes,
+    COALESCE(p_is_special, false),
+    -- Label only stored when actually special (chk_special_label_only_when_special).
+    CASE WHEN COALESCE(p_is_special, false) THEN NULLIF(TRIM(p_special_label), '') ELSE NULL END,
     p_user_id, p_user_id
   ) RETURNING id INTO v_id;
 
@@ -1898,239 +1897,106 @@ $$;
 COMMIT;
 
 -- ============================================================
--- BACK-ORDER (01-Jul-2026) — carve out items that require vendor procurement
--- into a linked sibling request. Doesn't touch existing SPs.
+-- SPECIAL REQUEST (06-Jul-2026) — replaces the godown-initiated Backorder
+-- carve-off. Shop marks the whole request as Special on review/submit;
+-- the flag rides on stock_requests.is_special. Persistent sticky banner
+-- across shop/inv/admin lists every active-unreceived special.
 -- ============================================================
 
--- Move selected line items from a parent Order into a NEW Backorder
--- sibling request. Returns the new Backorder's uuid. Called by the
--- inventory user's "Move to back-order" action.
---
--- Parent must be an Order still in Pending or Approved state (once it
--- reaches Dispatched, no more carving — the qty has been committed).
--- p_item_ids must ALL belong to the parent (SP validates); mixing shop-
--- added and inv-added items is allowed.
---
--- Post-condition:
---   • New stock_requests row exists with request_type='Backorder',
---     status='Pending', parent_request_id = parent.id,
---     code = parent.code + '-B' (or '-B2', '-B3' if parent already has
---     a back-order).
---   • Named items are re-parented via UPDATE stock_request_items.
---   • Parent + child header aggregates (total_items / total_qty /
---     total_amount) refreshed from their new item sets.
---
--- Failures raise via RAISE EXCEPTION; caller catches at the service
--- layer to surface as a 400.
--- p_items JSON: [{ id: uuid, qty: int }, ...]
---   • qty > 0 AND qty <  parent line's requested_qty → SPLIT the line
---       (parent keeps requested_qty - qty; new row created on the child
---        with the specified qty + same unit_price snapshot).
---   • qty >= parent line's requested_qty            → FULL MOVE
---       (existing behaviour — row is reparented to the child).
---   • qty == 0 or missing                            → REJECTED
---       (RAISE EXCEPTION — the FE won't send these, but defence in depth).
---
--- Signature changed 02-Jul-2026 from `uuid[]` → `jsonb`; the drop below is
--- required (CREATE OR REPLACE can't change the arg list).
+-- Drop the retired Backorder carve-off SP if a prior build installed it.
+-- Function is dead in the new model — shop declares specialness up-front
+-- so there's nothing for the godown to carve.
 DROP FUNCTION IF EXISTS fn_request_move_to_backorder(uuid, uuid[], uuid, timestamptz);
+DROP FUNCTION IF EXISTS fn_request_move_to_backorder(uuid, jsonb, uuid, timestamptz);
 
-CREATE OR REPLACE FUNCTION fn_request_move_to_backorder(
-  p_id       uuid,        -- parent request id
-  p_items    jsonb,       -- [{id, qty}, …]  — items + per-line move qty
-  p_user_id  uuid,
-  p_eta      timestamptz DEFAULT NULL   -- optional; surfaces on prints + banner
+-- Drop the retired outstanding-backorders SP. Replaced by
+-- fn_request_list_active_specials below (different filter — is_special
+-- flag instead of request_type='Backorder', wider status window since
+-- a Special stays visible through Approved + Dispatched too, not just
+-- Pending).
+DROP FUNCTION IF EXISTS fn_request_list_outstanding_backorders(uuid, uuid[]);
+
+-- Set the flag / label on an existing request. Shop-only, and only while
+-- the request is still Pending — once the inventory approves, the flag
+-- freezes so the downstream (dispatch / receipt / accounts) sees a
+-- stable value. p_special_label NULL when the toggle is turned off.
+--
+-- BE calls this from PATCH /requests/{id}/special. Returns true when the
+-- row was updated, false when the id doesn't match a Pending shop request
+-- (BE surfaces 404 / 409 accordingly).
+CREATE OR REPLACE FUNCTION fn_request_set_special(
+  p_id            uuid,
+  p_is_special    boolean,
+  p_special_label varchar,
+  p_user_id       uuid
 )
-RETURNS uuid
+RETURNS boolean
 LANGUAGE plpgsql AS $$
-DECLARE
-  v_parent          stock_requests%ROWTYPE;
-  v_existing_count  int;
-  v_new_code        varchar(20);
-  v_new_id          uuid;
-  v_moved_any       boolean := false;
-  v_row             record;
-  v_item            record;
 BEGIN
-  -- Guard 1: parent exists, is an Order, still editable.
-  SELECT * INTO v_parent
-  FROM   stock_requests
-  WHERE  id = p_id AND is_deleted = false
-  FOR UPDATE;
+  UPDATE stock_requests
+  SET is_special    = COALESCE(p_is_special, false),
+      -- Label only survives when the row is actually special — keeps the
+      -- check constraint happy (chk_special_label_only_when_special) and
+      -- clears any leftover label when the shop toggles Special off.
+      special_label = CASE WHEN COALESCE(p_is_special, false)
+                           THEN NULLIF(TRIM(p_special_label), '')
+                           ELSE NULL END,
+      updated_by    = p_user_id,
+      updated_at    = now()
+  WHERE id = p_id
+    AND is_deleted = false
+    AND status     = 'Pending';   -- freeze the flag once approved
 
-  IF NOT FOUND THEN
-    RAISE EXCEPTION 'Parent request % not found', p_id;
-  END IF;
-
-  IF v_parent.request_type <> 'Order' THEN
-    RAISE EXCEPTION 'Only Orders can be carved into back-orders (got %)', v_parent.request_type;
-  END IF;
-
-  IF v_parent.status NOT IN ('Pending', 'Approved') THEN
-    RAISE EXCEPTION 'Cannot move items to back-order — parent status is % (must be Pending or Approved)', v_parent.status;
-  END IF;
-
-  -- Guard 2: at least one item spec.
-  IF p_items IS NULL OR jsonb_typeof(p_items) <> 'array' OR jsonb_array_length(p_items) = 0 THEN
-    RAISE EXCEPTION 'No items provided';
-  END IF;
-
-  -- Guard 3: every provided id must belong to the parent.
-  IF EXISTS (
-    SELECT 1
-    FROM   jsonb_array_elements(p_items) e
-    WHERE  (e->>'id')::uuid NOT IN (
-      SELECT id FROM stock_request_items WHERE request_id = p_id
-    )
-  ) THEN
-    RAISE EXCEPTION 'One or more item ids do not belong to parent request %', p_id;
-  END IF;
-
-  -- Determine new back-order code (existing convention).
-  SELECT COUNT(*)::int INTO v_existing_count
-  FROM   stock_requests
-  WHERE  parent_request_id = p_id;
-
-  v_new_code := v_parent.code || '-B' || CASE WHEN v_existing_count = 0 THEN '' ELSE (v_existing_count + 1)::text END;
-
-  -- Insert the new Backorder header first so we have an id for the row inserts.
-  INSERT INTO stock_requests (
-    code, shop_id, inventory_id, status, request_type,
-    editable_until, notes,
-    parent_request_id, expected_arrival_at,
-    created_by, updated_by
-  ) VALUES (
-    v_new_code,
-    v_parent.shop_id, v_parent.inventory_id,
-    'Pending', 'Backorder',
-    now() + interval '100 years',
-    v_parent.notes,
-    p_id, p_eta,
-    p_user_id, p_user_id
-  ) RETURNING id INTO v_new_id;
-
-  -- Walk each requested item + qty, deciding full-move vs split-move.
-  FOR v_item IN
-    SELECT (e->>'id')::uuid    AS item_id,
-           (e->>'qty')::int    AS move_qty
-    FROM   jsonb_array_elements(p_items) e
-  LOOP
-    IF v_item.move_qty IS NULL OR v_item.move_qty <= 0 THEN
-      RAISE EXCEPTION 'Move qty must be positive (item %, got %)', v_item.item_id, v_item.move_qty;
-    END IF;
-
-    -- Lock the parent line so a concurrent update can't race.
-    SELECT * INTO v_row
-    FROM   stock_request_items
-    WHERE  id = v_item.item_id AND request_id = p_id
-    FOR UPDATE;
-
-    IF NOT FOUND THEN
-      -- Race lost / item already reparented — skip silently rather than
-      -- fail the whole batch. The outer v_moved_any check catches the
-      -- degenerate "nothing moved" case.
-      CONTINUE;
-    END IF;
-
-    IF v_item.move_qty >= v_row.requested_qty THEN
-      -- Full move — reparent the row. Dispatched_qty / draft carry over
-      -- as-is (godown may have already tried and failed on this line).
-      UPDATE stock_request_items
-      SET    request_id = v_new_id
-      WHERE  id = v_row.id;
-    ELSE
-      -- Split move — parent keeps (requested_qty - move_qty); child gets
-      -- a fresh row for move_qty. subtotal is a GENERATED column
-      -- (requested_qty × unit_price) so we don't set it — it recomputes
-      -- automatically on both writes.
-      UPDATE stock_request_items
-      SET    requested_qty = v_row.requested_qty - v_item.move_qty
-      WHERE  id = v_row.id;
-
-      INSERT INTO stock_request_items (
-        request_id, product_id, requested_qty, unit_price,
-        weight_value, weight_unit, added_by
-      ) VALUES (
-        v_new_id, v_row.product_id, v_item.move_qty, v_row.unit_price,
-        v_row.weight_value, v_row.weight_unit, v_row.added_by
-      );
-    END IF;
-
-    v_moved_any := true;
-  END LOOP;
-
-  IF NOT v_moved_any THEN
-    -- Every requested row was already reparented by a concurrent call —
-    -- roll back the empty back-order so we don't litter with 0-item rows.
-    DELETE FROM stock_requests WHERE id = v_new_id;
-    RAISE EXCEPTION 'No items moved (possibly a concurrent update reassigned them)';
-  END IF;
-
-  -- Refresh both parents' header aggregates from their new item sets.
-  UPDATE stock_requests r
-  SET    total_items  = (SELECT COUNT(*)::int         FROM stock_request_items WHERE request_id = r.id),
-         total_qty    = (SELECT COALESCE(SUM(requested_qty),0)::int FROM stock_request_items WHERE request_id = r.id),
-         total_amount = (SELECT COALESCE(SUM(subtotal),0)::numeric(12,2) FROM stock_request_items WHERE request_id = r.id),
-         updated_by   = p_user_id
-  WHERE  r.id IN (p_id, v_new_id);
-
-  RETURN v_new_id;
-END
+  RETURN FOUND;
+END;
 $$;
 
-
--- Pipeline snapshot: every Backorder row still awaiting dispatch. Powers
--- the shop / inventory / admin "outstanding back-orders" banners. Not
--- scoped by date — the whole point is that a back-order placed in Jan
--- should stay visible through Feb until it dispatches.
+-- Every un-received Special request in scope — powers the sticky top
+-- banner across shop / inventory / admin. Wider status window than the
+-- retired outstanding-backorders SP: a Special stays visible through
+-- Pending + Approved + Dispatched, disappearing only when the shop
+-- confirms Received (client's chosen closure gate).
 --
--- Filters:
---   • p_inventory_id — inventory-user scope (forced by BE to the caller's
---     inventory; NULL for admin tenant-wide).
---   • p_shop_ids     — optional multi-select for admin accounts drilldown.
---
--- Returns one row per pending Backorder with the fields the banner needs:
--- parent code (for the link), shop name (for the drilldown table), amount,
--- created_at (age), ETA.
-CREATE OR REPLACE FUNCTION fn_request_list_outstanding_backorders(
-  p_inventory_id uuid   DEFAULT NULL,
-  p_shop_ids     uuid[] DEFAULT NULL
+-- Scope:
+--   • p_shop_id      → shop user's own shop (forced by BE).
+--   • p_inventory_id → inventory user's own inventory (forced by BE).
+--   • Both NULL      → admin tenant-wide.
+CREATE OR REPLACE FUNCTION fn_request_list_active_specials(
+  p_shop_id      uuid  DEFAULT NULL,
+  p_inventory_id uuid  DEFAULT NULL
 )
 RETURNS TABLE (
   id                    uuid,
   code                  varchar,
-  parent_id             uuid,
-  parent_code           varchar,
+  special_label         varchar,
   shop_id               uuid,
   shop_code             varchar,
   shop_name             varchar,
   inventory_id          uuid,
   inventory_name        varchar,
+  status                varchar,
   total_items           int,
   total_qty             int,
   total_amount          numeric,
   submitted_at          timestamptz,
-  expected_arrival_at   timestamptz,
   days_since_submitted  int
 )
 LANGUAGE sql STABLE AS $$
-  SELECT r.id, r.code,
-         r.parent_request_id, pr.code AS parent_code,
+  SELECT r.id, r.code, r.special_label,
          r.shop_id, s.code, s.name,
          r.inventory_id, i.name,
+         r.status::varchar,
          r.total_items, r.total_qty, r.total_amount,
          r.submitted_at,
-         r.expected_arrival_at,
          GREATEST(0, (CURRENT_DATE - r.submitted_at::date))::int AS days_since_submitted
   FROM   stock_requests r
-  INNER JOIN shops               s   ON s.id  = r.shop_id
-  INNER JOIN inventories         i   ON i.id  = r.inventory_id
-  LEFT  JOIN stock_requests      pr  ON pr.id = r.parent_request_id
-  WHERE  r.is_deleted   = false
-    AND  r.request_type = 'Backorder'
-    AND  r.status       = 'Pending'
+  INNER JOIN shops       s ON s.id = r.shop_id
+  INNER JOIN inventories i ON i.id = r.inventory_id
+  WHERE  r.is_deleted = false
+    AND  r.is_special = true
+    AND  r.status IN ('Pending', 'Approved', 'Dispatched')
+    AND  (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND  (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
-    AND  (p_shop_ids     IS NULL OR cardinality(p_shop_ids) = 0 OR r.shop_id = ANY(p_shop_ids))
   ORDER BY r.submitted_at ASC;   -- oldest first — those need attention most
 $$;
 

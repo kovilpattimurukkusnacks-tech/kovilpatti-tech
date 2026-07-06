@@ -85,8 +85,6 @@ public class ProductService(
             PurchasePrice    = request.PurchasePrice,
             Gst              = request.Gst,
             Active           = request.Active,
-            // Explicit null on Create → default to in-house (false).
-            IsVendorProcured = request.IsVendorProcured ?? false,
         };
 
         var newId = await products.CreateAsync(product, userId, ct);
@@ -145,8 +143,6 @@ public class ProductService(
             // whatever was persisted so the update doesn't wipe the value.
             Gst              = request.Gst ?? existing.Gst,
             Active           = request.Active,
-            // Null → keep existing; explicit bool overrides.
-            IsVendorProcured = request.IsVendorProcured ?? existing.IsVendorProcured,
         };
 
         var ok = await products.UpdateAsync(updated, userId, ct);
@@ -459,8 +455,7 @@ public class ProductService(
             Mrp:              p.Mrp,
             PurchasePrice:    hidePurchase ? null : p.PurchasePrice,
             Gst:              p.Gst,
-            Active:           p.Active,
-            IsVendorProcured: p.IsVendorProcured
+            Active:           p.Active
         );
     }
 }

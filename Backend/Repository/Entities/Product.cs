@@ -15,8 +15,4 @@ public class Product
     // Hidden in the UI for now; persisted as percent (0..100), nullable.
     public decimal? Gst { get; set; }
     public bool Active { get; set; }
-    /// True when this SKU is procured from a vendor (not made in-house).
-    /// Godown pre-checks vendor-procured lines in the Move-to-back-order
-    /// dialog so shop can be told what's on order from suppliers.
-    public bool IsVendorProcured { get; set; }
 }

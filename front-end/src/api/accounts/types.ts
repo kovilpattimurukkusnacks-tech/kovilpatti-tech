@@ -148,7 +148,14 @@ export type AccountsAdjustmentRowDto = {
   requestCode:    string
   /** 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so the FE filters
    *  audits by view-mode lens. */
+  // 'Backorder' left in for legacy audit rows migrated to Order + is_special
+  // — the BE emits the current request_type, so historical audits still land.
   requestType:    'Order' | 'Return' | 'Backorder'
+  /** Shop-declared Special Request flag on the parent request (06-Jul-2026).
+   *  Powers the amber "Special" chip next to the request code. */
+  isSpecial:      boolean
+  /** User-supplied Special Request label. Null when isSpecial is false. */
+  specialLabel:   string | null
   shopId:         string
   shopName:       string
   productId:      string
@@ -170,4 +177,9 @@ export type AccountsInTransitDto = {
   totalAmount:         number
   /** Null when requestCount is 0. */
   oldestDispatchedAt:  IsoDateTime | null
+  /** Subset of requestCount that are Special Requests (06-Jul-2026).
+   *  0 when none of the in-transit orders are special. */
+  specialCount:        number
+  /** Sum of total_amount over the Special-only subset. */
+  specialAmount:       number
 }

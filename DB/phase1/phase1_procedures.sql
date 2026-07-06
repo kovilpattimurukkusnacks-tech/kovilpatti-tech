@@ -305,10 +305,16 @@ DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeri
 -- lists so we drop every prior shape. IF EXISTS keeps each safe.
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, boolean, uuid);
--- 02-Jul-2026 — is_vendor_procured added. Drop the pre-flag Create/Update
--- shapes so the new CREATE OR REPLACE below can install the extended signature.
+-- 02-Jul-2026 — is_vendor_procured added (later removed 06-Jul-2026 with
+-- the Special Request rework — the flag existed only to serve the retired
+-- back-order flow). Drop every Create/Update shape that has been in the
+-- wild so the new signatures below install cleanly.
 DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
+DROP FUNCTION IF EXISTS fn_product_get(uuid);
 
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search      varchar DEFAULT NULL,
@@ -326,13 +332,12 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean,
-  is_vendor_procured boolean
+  active             boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
@@ -356,13 +361,12 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean,
-  is_vendor_procured boolean
+  active             boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.id = p_id AND p.is_deleted = false
@@ -408,7 +412,6 @@ CREATE OR REPLACE FUNCTION fn_product_create(
   p_purchase_price     numeric,
   p_gst                numeric,
   p_active             boolean,
-  p_is_vendor_procured boolean,
   p_user_id            uuid
 )
 RETURNS uuid
@@ -418,10 +421,10 @@ DECLARE
 BEGIN
   INSERT INTO products (code, name, category_id, type,
                         weight_value, weight_unit, mrp, purchase_price,
-                        gst, active, is_vendor_procured, created_by, updated_by)
+                        gst, active, created_by, updated_by)
   VALUES (p_code, p_name, p_category_id, p_type,
           p_weight_value, p_weight_unit, p_mrp, p_purchase_price,
-          p_gst, p_active, COALESCE(p_is_vendor_procured, false), p_user_id, p_user_id)
+          p_gst, p_active, p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
@@ -439,7 +442,6 @@ CREATE OR REPLACE FUNCTION fn_product_update(
   p_purchase_price     numeric,
   p_gst                numeric,
   p_active             boolean,
-  p_is_vendor_procured boolean,
   p_user_id            uuid
 )
 RETURNS boolean
@@ -449,8 +451,6 @@ BEGIN
   -- by the UNIQUE constraint on products.code — service does a pre-check
   -- against OTHER rows for a clean error; this insert/update still trips
   -- the constraint if a concurrent writer collides.
-  --
-  -- p_is_vendor_procured NULL → keep existing (COALESCE fallback).
   UPDATE products
   SET code               = p_code,
       name               = p_name,
@@ -462,7 +462,6 @@ BEGIN
       purchase_price     = p_purchase_price,
       gst                = p_gst,
       active             = p_active,
-      is_vendor_procured = COALESCE(p_is_vendor_procured, is_vendor_procured),
       updated_by         = p_user_id,
       updated_at         = now()
   WHERE id = p_id;
