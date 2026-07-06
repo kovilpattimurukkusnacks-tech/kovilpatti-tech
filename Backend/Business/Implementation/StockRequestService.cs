@@ -969,7 +969,7 @@ public class StockRequestService(
             r.Submitted_By_Name, r.Approved_By_Name, r.Dispatched_By_Name, r.Received_By_Name,
             r.Accepted_By_Name,
             r.Status, r.Request_Type,
-            r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
+            r.Total_Items, r.Total_Qty, r.Total_Dispatched_Qty, r.Total_Adjustment_Qty, r.Total_Amount, r.Total_Dispatched_Amount,
             r.Notes, r.Rejection_Reason,
             r.Editable_Until, r.Submitted_At, r.Updated_At,
             r.Approved_At, r.Approved_By,

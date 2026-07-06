@@ -5,6 +5,7 @@ import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { AdjustmentQtyCell } from '../../components/AdjustmentQtyCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop, useInventoryDispatchDrafts } from '../../hooks/useStockRequests'
 import { BackorderChip } from '../../components/BackorderChip'
 import { formatINR } from '../../utils/format'
@@ -228,6 +229,13 @@ export default function AdminRequests() {
       field: 'totalDispatchedQty', headerName: 'Dispatched Qty', width: 160, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => <DispatchedCell qty={row.totalDispatchedQty} requested={row.totalQty} />,
+    },
+    {
+      // Shop-reported receipt discrepancy (03-Jul-2026). Signed +N over,
+      // -N short, 0 net-zero, — no discrepancy / not yet Received.
+      field: 'totalAdjustmentQty', headerName: 'Adjustment Qty', width: 150, sortable: false, filterable: false,
+      align: 'right', headerAlign: 'right',
+      renderCell: ({ row }) => <AdjustmentQtyCell value={row.totalAdjustmentQty} />,
     },
   )
 

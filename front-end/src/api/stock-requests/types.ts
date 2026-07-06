@@ -103,6 +103,11 @@ export type StockRequestDto = {
   // Sum of dispatched_qty across items. Null until inventory dispatches.
   // On a Return this is the godown-accepted qty.
   totalDispatchedQty: number | null
+  /** Signed sum of (received_qty − dispatched_qty) across items with
+   *  received_qty set. Null = no discrepancy at all; 0 = reported but
+   *  net-zero; ±N = short (−) or over (+). Populates the "Adjustment Qty"
+   *  column on the request-list tables. 03-Jul-2026. */
+  totalAdjustmentQty: number | null
   totalAmount: number
   // Sum of (dispatched_qty × unit_price). Null until dispatch / accept.
   totalDispatchedAmount: number | null

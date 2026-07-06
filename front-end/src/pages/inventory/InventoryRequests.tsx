@@ -6,6 +6,7 @@ import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogConten
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { AdjustmentQtyCell } from '../../components/AdjustmentQtyCell'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
@@ -333,6 +334,12 @@ export default function InventoryRequests() {
       field: 'totalDispatchedQty', headerName: 'Dispatched Qty', width: 160, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => <DispatchedCell qty={row.totalDispatchedQty} requested={row.totalQty} />,
+    },
+    {
+      // Shop-reported receipt discrepancy (03-Jul-2026). Signed.
+      field: 'totalAdjustmentQty', headerName: 'Adjustment Qty', width: 150, sortable: false, filterable: false,
+      align: 'right', headerAlign: 'right',
+      renderCell: ({ row }) => <AdjustmentQtyCell value={row.totalAdjustmentQty} />,
     },
     {
       // Pre-dispatch: single requested total.

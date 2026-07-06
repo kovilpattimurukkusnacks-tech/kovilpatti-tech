@@ -30,6 +30,11 @@ public record StockRequestDto(
     // Sum of dispatched_qty across items — null until inventory dispatches.
     // On a Return this is the godown-accepted qty.
     int?   TotalDispatchedQty,
+    /// Signed aggregate of (received_qty − dispatched_qty) across items
+    /// with received_qty set. Null = no discrepancies reported; 0 = net-
+    /// zero; ±N = short (−) or over (+). Powers the "Adjustment Qty"
+    /// column on the shop / inventory / admin request-list tables.
+    int?   TotalAdjustmentQty,
     decimal TotalAmount,
     // Sum of (dispatched_qty × unit_price) — null until dispatch / accept.
     decimal? TotalDispatchedAmount,
