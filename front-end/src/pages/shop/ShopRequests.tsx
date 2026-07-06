@@ -576,6 +576,15 @@ function ExpansionPanel({ row, onViewDetail }: { row: StockRequestDto; onViewDet
           />
           <Row label="Dispatched by"   value={row.dispatchedByName ?? '—'} />
           <Row label="Received time"   value={row.receivedAt ? formatIstDateTime(row.receivedAt) : '—'} />
+          {/* Shop-reported receipt discrepancy (03-Jul-2026). Only surfaces
+              when there's an actual delta — no clutter on clean receipts. */}
+          {row.totalAdjustmentQty != null && row.totalAdjustmentQty !== 0 && (
+            <Row
+              label="Adjustment qty"
+              value={row.totalAdjustmentQty > 0 ? `+${row.totalAdjustmentQty}` : `${row.totalAdjustmentQty}`}
+              danger={row.totalAdjustmentQty < 0}
+            />
+          )}
         </Box>
 
         {/* Right — amounts */}
