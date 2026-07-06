@@ -1552,6 +1552,38 @@ BEGIN
     WHERE  it.id = (e.value->>'id')::uuid
       AND  it.request_id = p_id
       AND  (e.value->>'received_qty') IS NOT NULL;
+
+    -- Audit trail (03-Jul-2026): mirror admin's post-completion qty edits
+    -- by writing a row to stock_request_qty_audits whenever a shop-
+    -- reported receipt qty differs from what the godown dispatched. The
+    -- Adjustments Log on the accounts screen then surfaces receipt
+    -- discrepancies alongside admin corrections in one place. old_qty =
+    -- dispatched (what godown sent), new_qty = received (what shop
+    -- counted). reason distinguishes shop vs admin edits.
+    INSERT INTO stock_request_qty_audits (
+      request_item_id, request_id, old_qty, new_qty, reason, edited_by
+    )
+    SELECT it.id,
+           p_id,
+           it.dispatched_qty,
+           it.received_qty,
+           CASE
+             WHEN it.received_qty < COALESCE(it.dispatched_qty, 0) THEN
+               'Shop confirm-receipt short: dispatched '
+               || COALESCE(it.dispatched_qty, 0) || ', received ' || it.received_qty
+             WHEN it.received_qty > COALESCE(it.dispatched_qty, 0) THEN
+               'Shop confirm-receipt over: dispatched '
+               || COALESCE(it.dispatched_qty, 0) || ', received ' || it.received_qty
+             ELSE
+               'Shop confirm-receipt'
+           END,
+           p_user_id
+    FROM   stock_request_items it
+    JOIN   jsonb_array_elements(p_items) AS e(value)
+           ON it.id = (e.value->>'id')::uuid
+    WHERE  it.request_id = p_id
+      AND  (e.value->>'received_qty') IS NOT NULL
+      AND  it.received_qty IS DISTINCT FROM it.dispatched_qty;
   END IF;
 
   RETURN v_flipped;
