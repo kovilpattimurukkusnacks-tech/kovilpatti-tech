@@ -46,10 +46,15 @@ type Preset = {
   requestType?: RequestType
 }
 const PRESETS: Preset[] = [
-  { key: 'pending',    label: 'Needs Action',  status: 'Pending'  },
-  { key: 'approved',   label: 'In-Progress',   status: 'Approved' },
-  { key: 'received',   label: 'Delivered',     status: 'Received' },
-  { key: 'all',        label: 'All',           status: undefined  },
+  { key: 'pending',    label: 'Needs Action',  status: 'Pending'    },
+  { key: 'approved',   label: 'In-Progress',   status: 'Approved'   },
+  // 06-Jul-2026: Dispatched tab (client req) — godown needs a quick way
+  // to see everything that's been shipped and is waiting on the shop's
+  // receipt confirmation. Sits between In-Progress and Delivered to
+  // mirror the request lifecycle: Pending → Approved → Dispatched → Received.
+  { key: 'dispatched', label: 'Dispatched',    status: 'Dispatched' },
+  { key: 'received',   label: 'Delivered',     status: 'Received'   },
+  { key: 'all',        label: 'All',           status: undefined    },
   { key: 'return',     label: 'Return',        requestType: 'Return' },
 ]
 
