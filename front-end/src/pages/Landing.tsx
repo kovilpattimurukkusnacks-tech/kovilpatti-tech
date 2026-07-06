@@ -24,7 +24,7 @@ export default function Landing() {
     setError(null)
     setSubmitting(true)
     try {
-      const user = await login(username, password)
+      const user = await login(username.trim(), password)
       navigate(roleHomePath(user.role))
     } catch (err) {
       // Distinguish the failure modes so the user gets an honest message:

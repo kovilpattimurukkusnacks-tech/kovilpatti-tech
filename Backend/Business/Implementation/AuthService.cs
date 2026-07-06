@@ -41,6 +41,11 @@ public class AuthService(
         var validation = await validator.ValidateAsync(request, ct);
         if (!validation.IsValid) throw new ValidationException(validation.Errors);
 
+        // Trim the username — Android keyboards and password managers often
+        // append an invisible trailing space, and users can't see it. Don't
+        // trim the password; whitespace inside a password is user-chosen.
+        var username = request.Username?.Trim() ?? string.Empty;
+
         var ipKey = FailKeyPrefix + (httpAccessor.HttpContext?.Connection.RemoteIpAddress?.ToString() ?? "unknown");
 
         // Block first, before any BCrypt work — an attacker over the budget
@@ -53,7 +58,7 @@ public class AuthService(
                 "Too many failed login attempts. Please wait a few minutes and try again.");
         }
 
-        var user = await users.FindByUsernameAsync(request.Username, ct);
+        var user = await users.FindByUsernameAsync(username, ct);
 
         // Always run BCrypt — when the username doesn't exist, run it against a
         // dummy hash so the response time doesn't reveal which usernames exist.
@@ -71,7 +76,7 @@ public class AuthService(
             // Same warning for all failure modes — never log which one it was,
             // that would leak username existence.
             logger.LogWarning("Login failed for username '{Username}' ({FailCount}/{Max} from this IP)",
-                request.Username, next, MaxFailedAttempts);
+                username, next, MaxFailedAttempts);
             throw new UnauthorizedException("Invalid username or password.");
         }
 
