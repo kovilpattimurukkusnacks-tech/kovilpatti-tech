@@ -112,11 +112,18 @@ DROP FUNCTION IF EXISTS fn_product_variant_exists(varchar, int, varchar, numeric
 -- SP. If any row violates a constraint (e.g., code uniqueness), the entire
 -- batch rolls back.
 -- ------------------------------------------------------------
+-- 06-Jul-2026: `code` RETURNS type aligned to `text` — the products.code
+-- column was widened from varchar(20) → text on 07-Jun-2026 (client #10:
+-- long descriptive codes) but this SP's RETURNS TABLE still said varchar.
+-- Latent until today's re-run flagged it with PG 42804 (RETURNING type vs
+-- RETURNS type mismatch). Signature change → DROP first.
+DROP FUNCTION IF EXISTS fn_product_create_bulk(jsonb, uuid);
+
 CREATE OR REPLACE FUNCTION fn_product_create_bulk(
   p_products jsonb,
   p_user_id  uuid
 )
-RETURNS TABLE(id uuid, code varchar)
+RETURNS TABLE(id uuid, code text)
 LANGUAGE plpgsql AS $$
 BEGIN
   RETURN QUERY
