@@ -12,5 +12,7 @@ public class CumulativePendingLine
     public decimal? Weight_Value  { get; set; }
     public string?  Weight_Unit   { get; set; }
     public long    Total_Qty      { get; set; }
+    public long    Order_Qty      { get; set; }
+    public long    Special_Qty    { get; set; }
     public long    Request_Count  { get; set; }
 }

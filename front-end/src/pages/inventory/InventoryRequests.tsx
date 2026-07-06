@@ -1,7 +1,7 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff, Hourglass } from 'lucide-react'
-import { BackorderChip } from '../../components/BackorderChip'
+import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
+import { SpecialRequestChip } from '../../components/SpecialRequestChip'
 import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
@@ -11,7 +11,6 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import {
   useIncomingStockRequests, useCumulativePending, useRequestCountByShop,
   useInventoryDispatchDrafts, useRenameDispatchDraft, usePinDispatchDraft,
-  useOutstandingBackorders,
 } from '../../hooks/useStockRequests'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { formatINR } from '../../utils/format'
@@ -52,9 +51,6 @@ const PRESETS: Preset[] = [
   { key: 'received',   label: 'Delivered',     status: 'Received' },
   { key: 'all',        label: 'All',           status: undefined  },
   { key: 'return',     label: 'Return',        requestType: 'Return' },
-  // Procurement preset (02-Jul-2026) — filters to Backorder requests
-  // regardless of status so the godown can see the whole vendor queue.
-  { key: 'procurement', label: 'Procurement',  requestType: 'Backorder' },
 ]
 
 export default function InventoryRequests() {
@@ -94,11 +90,6 @@ export default function InventoryRequests() {
   // should be enabled (empty queue → nothing to print).
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
-
-  // Outstanding back-orders — persistent banner even when the godown is on
-  // Needs Action / In-Progress, so a Procurement queue can't be forgotten.
-  const backordersQuery = useOutstandingBackorders()
-  const outstandingBackorders = backordersQuery.data ?? []
 
   // Per-shop chips for the active preset. BE forces the inventory scope to
   // this user's godown — so we only see shops served by it. When the Return
@@ -255,7 +246,7 @@ export default function InventoryRequests() {
               }}
             />
           )}
-          {row.requestType === 'Backorder' && <BackorderChip size="small" />}
+          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
           {draftIdSet.has(row.id) && (
             <Chip
               label="Draft"
@@ -521,53 +512,6 @@ export default function InventoryRequests() {
             </Box>
           </Collapse>
         </Box>
-      )}
-
-      {/* Outstanding back-orders — persistent banner (02-Jul-2026). Even
-          when the godown is on Needs Action or In-Progress tabs, the
-          Procurement queue can't slip out of sight. Clicking View switches
-          to the Procurement preset. */}
-      {outstandingBackorders.length > 0 && activePreset !== 'procurement' && (
-        <Paper
-          elevation={0}
-          sx={{
-            mb: 2, borderRadius: 2,
-            border: '1px solid #E8A758', bgcolor: '#FFE0B2',
-            px: 2, py: 1.5,
-            display: 'flex', alignItems: 'center', gap: 2, flexWrap: 'wrap',
-          }}
-        >
-          <Hourglass className="w-5 h-5" style={{ color: '#7C4A00' }} />
-          <Box sx={{ flex: 1, minWidth: 0 }}>
-            <Box sx={{ fontWeight: 700, fontSize: 14, color: '#7C4A00' }}>
-              {outstandingBackorders.length} back-order{outstandingBackorders.length === 1 ? '' : 's'} awaiting vendor stock
-            </Box>
-            <Box sx={{ fontSize: 12, color: '#7C4A00CC' }}>
-              {outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length > 0 && (
-                <>
-                  <strong>{outstandingBackorders.filter(b => b.daysSinceSubmitted > 3).length}</strong> waiting {'>'}3 days ·{' '}
-                </>
-              )}
-              oldest: {outstandingBackorders[0]?.code} ({outstandingBackorders[0]?.daysSinceSubmitted} day{outstandingBackorders[0]?.daysSinceSubmitted === 1 ? '' : 's'})
-            </Box>
-          </Box>
-          <Button
-            variant="contained"
-            color="success"
-            size="small"
-            onClick={() => { setActivePreset('procurement'); setShopId(undefined); setPaginationModel(m => ({ ...m, page: 0 })) }}
-            sx={{
-              textTransform: 'none', fontWeight: 700, whiteSpace: 'nowrap',
-              // color="success" escapes the theme's gold-gradient override on
-              // contained+primary; use `background:` (not `bgcolor:`) so sx
-              // wins over any gradient shorthand set on the class.
-              background: '#7C4A00', color: '#FFFFFF',
-              '&:hover': { background: '#5A3600' },
-            }}
-          >
-            View procurement queue
-          </Button>
-        </Paper>
       )}
 
       {/* Status chips + search — inline single row. Inventory filters per

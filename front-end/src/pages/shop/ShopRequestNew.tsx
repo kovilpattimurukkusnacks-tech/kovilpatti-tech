@@ -253,6 +253,13 @@ export default function ShopRequestNew() {
   const [reviewOpen, setReviewOpen] = useState(false)
   const [localErr, setLocalErr] = useState<string | null>(null)
   const [seeded, setSeeded] = useState(false)
+  // Shop-declared "Special Request" flag (06-Jul-2026, client req). Toggled
+  // on the review-submit step; when true the shop enters a free-text label
+  // ("Diwali stock 2026") that rides on the request through inv approval →
+  // vendor procurement → dispatch → shop receipt. Seeded from a resumed
+  // draft or an edit-mode request; cleared on discard / submit-success.
+  const [isSpecial, setIsSpecial] = useState(false)
+  const [specialLabel, setSpecialLabel] = useState('')
   // True when the cart / notes have changed since the last successful save
   // (or since the cart was seeded from a saved draft). Drives the Save as
   // Draft button's disabled state so a user can't spam-save the same data.
@@ -297,14 +304,16 @@ export default function ShopRequestNew() {
         purchasePrice: null,
         gst: null,
         active: true,
-        // Shop cart doesn't surface the flag anywhere; stub with false so
-        // the ProductDto shape stays satisfied.
-        isVendorProcured: false,
       }
       map.set(it.productId, { product: stub, qty: it.requestedQty })
     }
     setCart(map)
     setNotes(source.notes ?? '')
+    // Hydrate Special-Request flag from the seeded source. Drafts and
+    // edit-mode requests both carry isSpecial + specialLabel; unset flag
+    // is treated as normal request.
+    setIsSpecial(source.isSpecial ?? false)
+    setSpecialLabel(source.specialLabel ?? '')
     setSeeded(true)
   }, [isEditMode, existing, draftQuery.data, seeded])
 
@@ -620,10 +629,14 @@ export default function ShopRequestNew() {
       // counter stays honest. Without this the user re-lands at 1/11
       // even though their cart already spans multiple categories.
       visitedCategoryIds: Array.from(visitedCategoryIds),
+      // Persist the Special-Request declaration too, so an accidental F5
+      // during / after the review dialog doesn't wipe the flag.
+      isSpecial,
+      specialLabel,
       savedAt: new Date().toISOString(),
     }
     try { sessionStorage.setItem(draftLocalKey, JSON.stringify(snapshot)) } catch { /* noop */ }
-  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds])
+  }, [draftEnabled, draftLocalKey, cart, notes, visitedCategoryIds, isSpecial, specialLabel])
 
   // sessionStorage hydration (03-Jul-2026). Runs ONCE per mount if the
   // server-side draft hasn't landed yet. Prevents the "F5 lost my typing"
@@ -652,6 +665,11 @@ export default function ShopRequestNew() {
         }>
         notes: string
         visitedCategoryIds?: number[]
+        // Special-Request declaration — added 06-Jul-2026. Optional so
+        // snapshots written by earlier builds still parse cleanly (both
+        // fall through to their setState defaults).
+        isSpecial?: boolean
+        specialLabel?: string | null
       }
       if (!parsed?.items?.length) return
       const map = new Map<string, CartLine>()
@@ -664,12 +682,14 @@ export default function ShopRequestNew() {
           // falls back to categoryName lookup in that case).
           categoryId: it.categoryId ?? 0,
           categoryName: it.categoryName, type: '',
-          purchasePrice: null, gst: null, active: true, isVendorProcured: false,
+          purchasePrice: null, gst: null, active: true,
         }
         map.set(it.productId, { product: stub, qty: it.qty })
       }
       setCart(map)
       setNotes(parsed.notes ?? '')
+      setIsSpecial(parsed.isSpecial ?? false)
+      setSpecialLabel(parsed.specialLabel ?? '')
       // Restore the visit-history so the "N/11 categories done" counter
       // reflects what the user had already ticked off before the reload.
       // Falls back to derive-from-cart below if the snapshot is old-format
@@ -814,6 +834,8 @@ export default function ShopRequestNew() {
   const clearCart = () => {
     setCart(new Map())
     setNotes('')
+    setIsSpecial(false)
+    setSpecialLabel('')
     setLocalErr(null)
   }
 
@@ -827,12 +849,22 @@ export default function ShopRequestNew() {
       productId: l.product.id,
       requestedQty: l.qty,
     }))
+    // Special-Request payload — only forward the label when the flag is
+    // actually true (BE also guards this via chk_special_label_only_when_special).
+    // Trim + null-empty so a whitespace-only label doesn't pollute the DB.
+    const trimmedLabel = specialLabel.trim()
+    const specialFields = isSpecial
+      ? { isSpecial: true, specialLabel: trimmedLabel || null }
+      : { isSpecial: false }
     try {
       if (isEditMode && editId) {
         await updateMutation.mutateAsync({
           id: editId,
           req: { notes: notes.trim() || undefined, items },
         })
+        // Edit path doesn't touch the Special flag — the shop uses PATCH
+        // /requests/{id}/special separately (SetSpecial hook) if they need
+        // to change it. Keeps the update contract tight.
         // Submission is itself a "save" — flag the guard so the upcoming
         // navigate() doesn't trip the unsaved-changes modal.
         submittingRef.current = true
@@ -842,6 +874,7 @@ export default function ShopRequestNew() {
         const res = await createMutation.mutateAsync({
           notes: notes.trim() || undefined,
           items,
+          ...specialFields,
         })
         submittingRef.current = true
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
@@ -1484,6 +1517,82 @@ export default function ShopRequestNew() {
                   {cartCount} {cartCount === 1 ? 'unit' : 'units'}
                 </Box>
               </Box>
+
+              {/* Special Request toggle (06-Jul-2026, client req). Always
+                  amber-highlighted whether on or off so the shop sees the
+                  option every time they open Review — the client explicitly
+                  asked for a persistent visual, not a subtle checkbox.
+                  Only surfaces on the CREATE path — edit-mode changes to
+                  the flag go through PATCH /special via useSetSpecial().
+                  Hidden entirely in edit-mode so the shop can't half-toggle
+                  the field and expect the update to carry it. */}
+              {!isEditMode && (
+                <Box sx={{ mt: 2 }}>
+                  <Box
+                    onClick={() => setIsSpecial(v => {
+                      const next = !v
+                      // Clear the label when turning the flag off — matches
+                      // the DB constraint chk_special_label_only_when_special.
+                      if (!next) setSpecialLabel('')
+                      setIsDraftDirty(true)
+                      return next
+                    })}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); (e.currentTarget as HTMLElement).click() } }}
+                    sx={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 1.25,
+                      px: 1.5,
+                      py: 1,
+                      borderRadius: 2,
+                      cursor: 'pointer',
+                      bgcolor: isSpecial ? '#FFCC80' : '#FFE0B2',
+                      border: `2px solid ${isSpecial ? '#7C4A00' : '#E8A758'}`,
+                      transition: 'background-color 120ms ease, border-color 120ms ease',
+                      '&:hover': { bgcolor: isSpecial ? '#FFB74D' : '#FFCC80' },
+                    }}
+                  >
+                    <Box
+                      sx={{
+                        width: 22, height: 22, borderRadius: '50%',
+                        bgcolor: isSpecial ? '#7C4A00' : '#FFFFFF',
+                        border: '2px solid #7C4A00',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        color: '#FFFFFF', fontWeight: 800, fontSize: 12,
+                      }}
+                    >
+                      {isSpecial ? '✓' : ''}
+                    </Box>
+                    <Box sx={{ flex: 1, minWidth: 0 }}>
+                      <Box sx={{ fontWeight: 700, color: '#7C4A00', fontSize: 14 }}>
+                        Mark as Special Request
+                      </Box>
+                      <Box sx={{ fontSize: 11.5, color: '#7C4A00CC' }}>
+                        Godown will procure from a vendor rather than pack from stock.
+                      </Box>
+                    </Box>
+                  </Box>
+
+                  {isSpecial && (
+                    <TextField
+                      label="Special Request name"
+                      value={specialLabel}
+                      onChange={e => {
+                        setSpecialLabel(e.target.value.slice(0, 120))
+                        setIsDraftDirty(true)
+                      }}
+                      size="small"
+                      fullWidth
+                      placeholder="e.g. Diwali stock 2026"
+                      helperText="Optional — leave blank to use the default 'Special Request' label."
+                      slotProps={{ htmlInput: { maxLength: 120 } }}
+                      sx={{ mt: 1 }}
+                    />
+                  )}
+                </Box>
+              )}
 
               <TextField
                 label="Notes (optional)"

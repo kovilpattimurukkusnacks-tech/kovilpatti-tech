@@ -139,19 +139,11 @@ export default function PrintRequestThermal() {
               <span className="value">{request.submittedByName}</span>
             </>
           )}
-          {/* Back-order lineage on the thermal slip too. */}
-          {request.requestType === 'Backorder' && request.parentRequestCode && (
+          {/* Special Request marker on the thermal slip (06-Jul-2026). */}
+          {request.isSpecial && (
             <>
-              <span className="label">Of:</span>
-              <span className="value">{request.parentRequestCode}</span>
-              {request.expectedArrivalAt && (
-                <>
-                  <span className="label">ETA:</span>
-                  <span className="value">
-                    {new Date(request.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}
-                  </span>
-                </>
-              )}
+              <span className="label">Special:</span>
+              <span className="value">{request.specialLabel?.trim() || 'Yes'}</span>
             </>
           )}
         </div>

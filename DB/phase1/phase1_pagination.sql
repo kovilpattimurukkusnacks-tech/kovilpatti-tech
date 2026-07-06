@@ -23,9 +23,10 @@ DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int, int, int);
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
 DROP FUNCTION IF EXISTS fn_product_count(varchar, int);
 DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
--- 02-Jul-2026 — RETURNS TABLE gained is_vendor_procured. Re-run of this
--- file needs to drop the prior shape before CREATE OR REPLACE can install
--- the new one. (Same signature; PG blocks a RETURN-shape change.)
+-- 06-Jul-2026 — is_vendor_procured removed (Special Request rework). Same
+-- return-shape drop pattern as above — PG blocks RETURN-shape changes on
+-- CREATE OR REPLACE, so drop first.
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
   p_search       varchar    DEFAULT NULL,
@@ -46,13 +47,12 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean,
-  is_vendor_procured boolean
+  active             boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active, p.is_vendor_procured
+         p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false

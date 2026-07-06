@@ -213,13 +213,6 @@ CREATE TABLE products (
   -- GST rate as a percentage (e.g. 5, 12, 18, 28). Nullable + hidden in the UI
   -- for now; client will surface it in a later phase.
   gst            numeric(5,2),
-  -- Flag for slow-moving SKUs that the godown normally doesn't hold in stock
-  -- and has to source from a vendor (2–4 day lead time) — Pickle / Thokku /
-  -- Podi are the initial candidates. When set, the inventory-side dispatch
-  -- screen pre-checks the corresponding lines for back-order (01-Jul-2026).
-  -- Admin sets this on the product master; godown can still override per
-  -- request via the "Move to back-order" action.
-  is_vendor_procured boolean    NOT NULL DEFAULT false,
   active         boolean       NOT NULL DEFAULT true,
   is_deleted     boolean       NOT NULL DEFAULT false,
   created_at     timestamptz   NOT NULL DEFAULT now(),

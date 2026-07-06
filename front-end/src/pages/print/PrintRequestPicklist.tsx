@@ -166,37 +166,15 @@ export default function PrintRequestPicklist() {
                     )}
                   </div>
                 </div>
-                {/* Back-order lineage (02-Jul-2026). Prints on the child (Backorder)
-                    the parent code + ETA; and on the parent, a note that some
-                    items were carved off — so the picker at the godown knows
-                    to reconcile against the child request as well. */}
-                {request.requestType === 'Backorder' && request.parentRequestCode && (
+                {/* Special Request lineage (06-Jul-2026). Prints the shop's
+                    chosen label so the godown picker knows this batch is a
+                    vendor-procurement — same signal as the amber SP pill
+                    on the cumulative plan. */}
+                {request.isSpecial && (
                   <div className="print-meta-grid-row" style={{ marginTop: 4, fontSize: 11 }}>
                     <div>
-                      <span className="muted">Back-order of: </span>
-                      <strong>{request.parentRequestCode}</strong>
-                      {request.expectedArrivalAt && (
-                        <>
-                          <span className="muted"> · ETA </span>
-                          {formatIstDateTime(request.expectedArrivalAt)}
-                        </>
-                      )}
-                    </div>
-                  </div>
-                )}
-                {request.backorderChildren && request.backorderChildren.length > 0 && (
-                  <div className="print-meta-grid-row" style={{ marginTop: 4, fontSize: 11 }}>
-                    <div>
-                      <span className="muted">Items on back-order: </span>
-                      {request.backorderChildren.map((c, i) => (
-                        <span key={c.id}>
-                          <strong>{c.code}</strong>
-                          {c.expectedArrivalAt && (
-                            <> (ETA {new Date(c.expectedArrivalAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })})</>
-                          )}
-                          {i < request.backorderChildren!.length - 1 && ', '}
-                        </span>
-                      ))}
+                      <span className="muted">Special Request: </span>
+                      <strong>{request.specialLabel?.trim() || 'Yes'}</strong>
                     </div>
                   </div>
                 )}

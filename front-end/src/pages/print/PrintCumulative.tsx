@@ -106,15 +106,21 @@ export default function PrintCumulative() {
   )
 
   // Grand totals across all categories — shown in the footer.
-  const { totalUnits, totalRequests, totalSkus } = useMemo(() => {
-    if (!rows) return { totalUnits: 0, totalRequests: 0, totalSkus: 0 }
+  // 06-Jul-2026 (client req) — also track whether ANY SKU on the plan
+  // carries a Special Request portion. Used to conditionally render the
+  // "SP = Special Request" legend line: shows only when the print actually
+  // contains SP pills, so plans with no specials stay uncluttered.
+  const { totalUnits, totalRequests, totalSkus, hasSpecial } = useMemo(() => {
+    if (!rows) return { totalUnits: 0, totalRequests: 0, totalSkus: 0, hasSpecial: false }
     let units = 0
     let maxReq = 0
+    let sp = false
     for (const r of rows) {
       units += r.totalQty
       if (r.requestCount > maxReq) maxReq = r.requestCount
+      if (r.specialQty > 0) sp = true
     }
-    return { totalUnits: units, totalRequests: maxReq, totalSkus: rows.length }
+    return { totalUnits: units, totalRequests: maxReq, totalSkus: rows.length, hasSpecial: sp }
   }, [rows])
 
   if (isLoading) return <div className="print-page"><p>Loading…</p></div>
@@ -157,6 +163,13 @@ export default function PrintCumulative() {
             {' '}·{' '}
             <span className="muted">Sourced from: </span>
             up to <strong>{totalRequests}</strong> request{totalRequests === 1 ? '' : 's'}
+          </>
+        )}
+        {hasSpecial && (
+          <>
+            {' '}·{' '}
+            <span className="print-badge-sp">SP</span>
+            <span className="muted"> = Special Request (vendor-procured) contribution</span>
           </>
         )}
       </div>
@@ -203,7 +216,7 @@ export default function PrintCumulative() {
                       <col style={{ width: 18 }} />
                       <col />
                       <col style={{ width: 42 }} />
-                      <col style={{ width: 40 }} />
+                      <col style={{ width: 62 }} />
                     </colgroup>
                     <tbody>
                       {flatItems.map((r, i) => (
@@ -216,7 +229,21 @@ export default function PrintCumulative() {
                             {r.type === 'jar' && <span className="print-badge">JAR</span>}
                           </td>
                           <td className="muted print-dense-weight-col">{r.weightLabel}</td>
-                          <td style={{ textAlign: 'right' }} className="strong">{r.totalQty.toLocaleString('en-IN')}</td>
+                          {/* 06-Jul-2026 (client req): amber SP pill signals a
+                              Special Request contribution on this SKU. Kitchen
+                              still packs totalQty total; the pill flags whether
+                              some of that came from a shop-declared Special.
+                                • no SP      → just the number.
+                                • all SP     → "SP" pill (pure special order).
+                                • mixed      → "+N SP" pill (N = special portion). */}
+                          <td style={{ textAlign: 'right' }} className="strong">
+                            {r.totalQty.toLocaleString('en-IN')}
+                            {r.specialQty > 0 && (
+                              <span className="print-badge-sp">
+                                {r.orderQty === 0 ? 'SP' : `+${r.specialQty.toLocaleString('en-IN')} SP`}
+                              </span>
+                            )}
+                          </td>
                         </tr>
                       ))}
                     </tbody>

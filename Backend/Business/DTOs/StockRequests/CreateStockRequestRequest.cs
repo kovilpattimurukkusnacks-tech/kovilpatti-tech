@@ -10,7 +10,16 @@ public interface IStockRequestPayload
 
 public record CreateStockRequestRequest(
     string? Notes,
-    IReadOnlyList<CreateStockRequestItem> Items
+    IReadOnlyList<CreateStockRequestItem> Items,
+    /// 06-Jul-2026 (client req): shop flags this whole request as a
+    /// vendor-procurement "Special Request" on the review/submit step.
+    /// Nullable so pre-rework FE builds that omit the field still POST
+    /// cleanly — treated as false.
+    bool? IsSpecial = false,
+    /// User-supplied label ("Diwali stock 2026"). Ignored when IsSpecial
+    /// is false; nullable when IsSpecial is true (UI falls back to
+    /// "Special Request").
+    string? SpecialLabel = null
 ) : IStockRequestPayload;
 
 public record CreateStockRequestItem(

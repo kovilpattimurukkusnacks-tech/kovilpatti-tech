@@ -598,6 +598,24 @@
   white-space: nowrap;
 }
 
+/* Special Request pill on the cumulative batch plan. Amber to match the
+ * SpecialRequestChip shown on request lists — same visual language
+ * across screen + paper. Solid fill (not outlined) so it survives
+ * grayscale printing better than the JAR outline chip. 06-Jul-2026. */
+.print-badge-sp {
+  margin-left: 4px;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #7C4A00;
+  background: #FCD835;
+  border: 1px solid #E65100;
+  border-radius: 2px;
+  white-space: nowrap;
+  -webkit-print-color-adjust: exact;
+  print-color-adjust: exact;
+}
+
 /* Grand totals strip — same compact font as the cumulative tables. */
 .print-dense-summary {
   margin-top: 8px;

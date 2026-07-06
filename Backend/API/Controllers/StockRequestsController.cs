@@ -304,26 +304,26 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         CancellationToken ct)
         => Ok(await requests.EditDispatchedQtyAsync(id, itemId, request, ct));
 
-    // ─── Back-order (02-Jul-2026) ─────────────────────────────
-    // Godown carves selected items off a parent Order into a linked
-    // Backorder sibling (item moves out of the parent, new REQxxxx-B row
-    // is created). Only Orders in Pending/Approved may be carved.
-    [HttpPost("{id:guid}/move-to-backorder")]
-    [Authorize(Roles = "Inventory,Admin")]
-    public async Task<ActionResult<StockRequestDto>> MoveToBackorder(
+    // ─── Special Request (06-Jul-2026) ────────────────────────
+    // Shop toggles the "special / vendor procurement" flag on a Pending
+    // request. Admin allowed too; Inventory forbidden. Once approved the
+    // flag freezes (SP-side gate).
+    [HttpPatch("{id:guid}/special")]
+    [Authorize(Roles = "ShopUser,Admin")]
+    public async Task<ActionResult<StockRequestDto>> SetSpecial(
         Guid id,
-        [FromBody] MoveToBackorderRequest request,
+        [FromBody] SetSpecialRequest request,
         CancellationToken ct)
-        => Ok(await requests.MoveToBackorderAsync(id, request, ct));
+        => Ok(await requests.SetSpecialAsync(id, request, ct));
 
-    // Pipeline snapshot of Pending Backorders. Never date-filtered. Role
+    // Every un-received Special request in the caller's scope. Powers the
+    // sticky top banner on shop / inv / admin. Never date-filtered. Role
     // scoping (own shop / own inv / tenant-wide) is service-side.
-    [HttpGet("outstanding-backorders")]
+    [HttpGet("active-specials")]
     [Authorize]
-    public async Task<ActionResult<IReadOnlyList<OutstandingBackorderDto>>> OutstandingBackorders(
-        [FromQuery] Guid? inventoryId,
+    public async Task<ActionResult<IReadOnlyList<ActiveSpecialDto>>> ActiveSpecials(
         CancellationToken ct)
-        => Ok(await requests.ListOutstandingBackordersAsync(inventoryId, ct));
+        => Ok(await requests.ListActiveSpecialsAsync(ct));
 
     // ─── Inventory dispatch drafts list (Inventory + Admin) ──
     // Returns Pending/Approved requests that have at least one item with a

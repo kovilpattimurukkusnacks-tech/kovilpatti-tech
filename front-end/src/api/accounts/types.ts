@@ -148,6 +148,8 @@ export type AccountsAdjustmentRowDto = {
   requestCode:    string
   /** 'Order' or 'Return'. Added 19-Jun-2026 (client #13) so the FE filters
    *  audits by view-mode lens. */
+  // 'Backorder' left in for legacy audit rows migrated to Order + is_special
+  // — the BE emits the current request_type, so historical audits still land.
   requestType:    'Order' | 'Return' | 'Backorder'
   shopId:         string
   shopName:       string
