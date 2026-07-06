@@ -62,6 +62,18 @@
   white-space: nowrap;
 }
 
+/* Compact one-line variant (03-Jul-2026, cumulative report 2nd pass) —
+ * folds "Generated / Sourced from" directly under the brand header as a
+ * single centred line instead of its own boxed strip with a border. Lives
+ * in the document body (not <thead>), so it only ever prints once at the
+ * top of page 1. */
+.print-meta-inline {
+  text-align: center;
+  font-size: 11px;
+  color: #1F1F1F;
+  margin-bottom: 10px;
+}
+
 /* Repeating-header wrapper (30-Jun-2026 — client req: header missing on
  * page 2+). Wrapping the whole sheet in a 1-column <table> lets the
  * browser repeat the <thead> (brand block + meta grid) at the top of
@@ -451,7 +463,7 @@
  *     same height with no row-induced gaps. */
 .print-dense-grid {
   display: flex;
-  gap: 18px;
+  gap: 12px;
   align-items: flex-start;
   margin-top: 4px;
 }
@@ -461,7 +473,7 @@
   min-width: 0;       /* allow shrinking; long names ellipsis cleanly */
   display: flex;
   flex-direction: column;
-  gap: 12px;          /* vertical gap between cards within the column */
+  gap: 8px;           /* vertical gap between cards within the column */
 }
 
 .print-dense-section {
@@ -472,15 +484,24 @@
   min-width: 0;
 }
 
+/* 03-Jul-2026 (2nd pass) — shrunk from a 2-line stacked banner (root
+ * eyebrow above category name) to one compact line. The stacked version
+ * doubled banner height across ~32 cards, and the 4px yellow bar + 5-8px
+ * padding read as heavier than the density of the table below it
+ * warranted. Root now sits inline before the category name instead of on
+ * its own line. */
 .print-dense-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
   background: #FFF8DC;
-  border-left: 4px solid #FCD835;
+  border-left: 3px solid #FCD835;
   border-bottom: 1px solid #1F1F1F;
-  padding: 5px 8px;
+  padding: 3px 6px;
   font-weight: 700;
-  font-size: 12px;
+  font-size: 11px;
   text-transform: uppercase;
-  letter-spacing: 0.04em;
+  letter-spacing: 0.03em;
   color: #1F1F1F;
   -webkit-print-color-adjust: exact;
   print-color-adjust: exact;
@@ -490,6 +511,31 @@
   color: rgba(31, 31, 31, 0.55);
   font-weight: 600;
   margin-left: 6px;
+}
+
+/* Root-category label (03-Jul-2026) — inline before the sub-category name.
+ * Replaces the old standalone root heading block that used to force a
+ * break between roots; the root still rides along on each card so the
+ * kitchen knows which production line it belongs to, just without its own
+ * line or a page-flow break. */
+.print-dense-root-eyebrow {
+  flex: 0 0 auto;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: rgba(31, 31, 31, 0.5);
+  text-transform: uppercase;
+}
+
+/* 03-Jul-2026 (3rd pass) — was a strict single-line truncation
+ * (white-space:nowrap + ellipsis), which clipped the SKU/unit count on
+ * longer category names (e.g. "Murukku & Snacks Packed") instead of just
+ * the rare case it was meant for. Letting it wrap keeps every banner's
+ * meta info intact; only the few long-name cards grow to 2 lines, most
+ * stay single-line as before. */
+.print-dense-banner-name {
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
 .print-dense-table {
@@ -512,7 +558,11 @@
   page-break-inside: avoid;
 }
 
-/* Weight subheading inside a category — slim eyebrow, no background. */
+/* Weight subheading inside a category — slim eyebrow, no background.
+ * Still used by the per-request picklist; the cumulative batch plan
+ * dropped this in favour of an inline weight column per row (03-Jul-2026,
+ * client req: cut the batch plan to 3-4 sheets — a banner row per weight
+ * bucket was pure overhead with no SKU data of its own). */
 .print-dense-table tr.print-weight-row-dense td {
   padding: 5px 6px 2px 12px;
   border-bottom: 1px solid rgba(31, 31, 31, 0.08);
@@ -521,6 +571,31 @@
   letter-spacing: 0.08em;
   font-size: 9px;
   font-weight: 700;
+}
+
+/* Inline weight column (cumulative batch plan only, 03-Jul-2026) — replaces
+ * the per-weight-group banner row above. Compact eyebrow-style label sitting
+ * next to the qty instead of on its own row. */
+.print-dense-weight-col {
+  font-size: 9px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+
+/* Small exception badge — flags a SKU that deviates from the overwhelming
+ * default (e.g. type='jar' vs the default 'pack'). Same shape as the "INV"
+ * badge on the per-request picklist so exception call-outs read as one
+ * family across print pages. */
+.print-badge {
+  margin-left: 4px;
+  padding: 0 3px;
+  font-size: 8px;
+  font-weight: 700;
+  color: #0277BD;
+  border: 1px solid #0277BD;
+  border-radius: 2px;
+  white-space: nowrap;
 }
 
 /* Grand totals strip — same compact font as the cumulative tables. */
@@ -546,6 +621,28 @@
  * page uses for short rows. */
 .print-dense-summary .danger {
   color: #C62828;
+}
+
+/* Compact variant (03-Jul-2026, cumulative report only) — the grand-totals
+ * strip used to be its own full-width row below the whole grid, which
+ * could spill onto an otherwise-empty new page if the tallest column
+ * didn't leave quite enough room for it. Now appended inside whichever
+ * column ends up shortest (see PrintCumulative.tsx), so it needs to work
+ * as a narrow stacked block instead of a wide space-between row. */
+.print-column-summary {
+  margin-top: 8px;
+  padding: 6px 8px;
+  border-top: 2px solid #1F1F1F;
+  font-size: 11px;
+  font-weight: 700;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.print-column-summary .muted {
+  font-weight: 500;
+  color: rgba(31, 31, 31, 0.6);
 }
 
 /* Browser-print rules. Hide UI affordances; tighten margins for paper. */
