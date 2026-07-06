@@ -74,24 +74,6 @@
   margin-bottom: 10px;
 }
 
-/* Repeating-header wrapper (30-Jun-2026 — client req: header missing on
- * page 2+). Wrapping the whole sheet in a 1-column <table> lets the
- * browser repeat the <thead> (brand block + meta grid) at the top of
- * every printed page automatically. Pure HTML / CSS — no Paged.js. */
-.print-page-table {
-  width: 100%;
-  border-collapse: collapse;
-}
-.print-page-table > thead { display: table-header-group; }
-.print-page-table > tbody { display: table-row-group; }
-.print-page-table > thead > tr > td,
-.print-page-table > tbody > tr > td {
-  padding: 0;
-  /* Reset default <td> vertical-align so block-level content (the brand
-   * header + meta grid + item sections) starts at the top of the cell. */
-  vertical-align: top;
-}
-
 /* Per-request picklist meta block (30-Jun-2026). Two grid rows with
  * fixed slot alignment so the fields read like a form header instead
  * of a wrapping fact list:
@@ -402,52 +384,6 @@
      • Dropped the 'From Requests' per-row column — surfaced in the page
        summary instead.
    ───────────────────────────────────────────────────────────────────────── */
-/* Root-category section (30-Jun-2026, second pass). Wraps one root's
- * sub-cat banner cards under an underline-style heading.
- *
- * Implemented as a 1-column <table> so the heading (in <thead>) repeats
- * at the top of every page when the root's cards spill across multiple
- * sheets — same trick the outer .print-page-table uses for the brand
- * block. Without this, page 3 would start mid-cards with no clue which
- * root the cards belong to (client report 30-Jun-2026: "MILLET FOODS
- * heading missing on page 3"). */
-.print-root-section {
-  width: 100%;
-  border-collapse: collapse;
-  margin-bottom: 14px;
-  page-break-inside: auto;        /* root can spill across pages, sub-cats can't */
-}
-.print-root-section > thead { display: table-header-group; }
-.print-root-section > tbody { display: table-row-group; }
-.print-root-section > thead > tr > td,
-.print-root-section > tbody > tr > td {
-  padding: 0;
-  vertical-align: top;
-}
-
-.print-root-heading {
-  margin: 10px 0 6px 0;
-  padding: 0 0 4px 0;
-  font-size: 13.5px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  color: #1F1F1F;
-  /* 30-Jun-2026 — centered the title so the root heading reads like a
-   * section banner spanning the full sheet, not a left-anchored label. */
-  text-align: center;
-  border-bottom: 2px solid #1F1F1F;
-  -webkit-print-color-adjust: exact;
-  print-color-adjust: exact;
-}
-.print-root-heading .muted {
-  color: rgba(31, 31, 31, 0.55);
-  font-weight: 600;
-  margin-left: 8px;
-  font-size: 11px;
-  letter-spacing: 0.02em;
-}
-
 /* 30-Jun-2026 (third pass) — two flex columns with FE-side balancing.
  *
  * History:
@@ -468,6 +404,31 @@
   margin-top: 4px;
 }
 
+/* Explicit logical page (07-Jul-2026, per-request picklist's
+ * paginateBalancedColumns) — forces a hard break after every page-block
+ * except the last, so the JS-computed pagination (which fills each page's
+ * columns up to an estimated capacity) lands on its own physical sheet
+ * regardless of how close the estimate is to the browser's own natural
+ * break point. */
+.print-page-block:not(:last-child) {
+  break-after: page;
+  page-break-after: always;
+}
+
+/* Hidden measurement host (07-Jul-2026, per-request picklist) — the
+ * picklist renders every card into this off-screen container at the exact
+ * print column width first, reads the real pixel heights, and only then
+ * runs pagination with true numbers instead of estimated "row units".
+ * visibility:hidden (not display:none) so layout still happens and heights
+ * are real. */
+.print-measure-host {
+  position: absolute;
+  left: -10000px;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
 .print-dense-col {
   flex: 1 1 0;
   min-width: 0;       /* allow shrinking; long names ellipsis cleanly */
@@ -478,7 +439,12 @@
 
 .print-dense-section {
   /* Keep an entire category section together — don't split a category across
-     a column or page boundary unless it's genuinely too tall for one page. */
+     a column or page boundary unless it's genuinely too tall for one page.
+     07-Jul-2026: briefly tried allowing splits to reduce page count on
+     large picklists, but a category's banner and its rows landing on
+     different physical sheets makes that sheet unusable on its own for
+     dispatch/packing (client report — pages get handed out independently
+     at the godown). Reverted; atomicity wins over page count. */
   break-inside: avoid;
   page-break-inside: avoid;
   min-width: 0;
@@ -491,15 +457,17 @@
  * warranted. Root now sits inline before the category name instead of on
  * its own line. */
 .print-dense-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
+  /* 07-Jul-2026 — was a two-cell flex row (eyebrow | name). At the narrow
+     pinned print-column width, a long root label (its cell couldn't
+     shrink) starved the name cell into a 1-2 word column that wrapped 5+
+     lines tall. Plain inline flow instead: eyebrow and name read as one
+     run of text and wrap like a sentence. */
   background: #FFF8DC;
   border-left: 3px solid #FCD835;
   border-bottom: 1px solid #1F1F1F;
-  padding: 3px 6px;
+  padding: 2px 6px;
   font-weight: 700;
-  font-size: 11px;
+  font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.03em;
   color: #1F1F1F;
@@ -519,7 +487,7 @@
  * kitchen knows which production line it belongs to, just without its own
  * line or a page-flow break. */
 .print-dense-root-eyebrow {
-  flex: 0 0 auto;
+  margin-right: 5px;
   font-size: 8px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -534,18 +502,17 @@
  * meta info intact; only the few long-name cards grow to 2 lines, most
  * stay single-line as before. */
 .print-dense-banner-name {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
 .print-dense-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 11px;
+  font-size: 10px;
 }
 
 .print-dense-table td {
-  padding: 3px 6px;
+  padding: 2px 5px;
   border-bottom: 1px solid rgba(31, 31, 31, 0.1);
   vertical-align: top;
 }
@@ -558,23 +525,10 @@
   page-break-inside: avoid;
 }
 
-/* Weight subheading inside a category — slim eyebrow, no background.
- * Still used by the per-request picklist; the cumulative batch plan
- * dropped this in favour of an inline weight column per row (03-Jul-2026,
- * client req: cut the batch plan to 3-4 sheets — a banner row per weight
- * bucket was pure overhead with no SKU data of its own). */
-.print-dense-table tr.print-weight-row-dense td {
-  padding: 5px 6px 2px 12px;
-  border-bottom: 1px solid rgba(31, 31, 31, 0.08);
-  color: rgba(31, 31, 31, 0.55);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
-  font-size: 9px;
-  font-weight: 700;
-}
-
-/* Inline weight column (cumulative batch plan only, 03-Jul-2026) — replaces
- * the per-weight-group banner row above. Compact eyebrow-style label sitting
+/* Inline weight column — used by both the cumulative batch plan (03-Jul-2026)
+ * and the per-request picklist (07-Jul-2026). Replaces the old per-weight-
+ * group banner row: a dedicated row per weight bucket was pure structural
+ * overhead with no SKU data of its own. Compact eyebrow-style label sitting
  * next to the qty instead of on its own row. */
 .print-dense-weight-col {
   font-size: 9px;
@@ -729,7 +683,8 @@
     max-width: none;
   }
   .print-only,
-  .print-trigger {
+  .print-trigger,
+  .print-measure-host {
     display: none !important;
   }
   /* MUI Drawer / Sidebar in the rest of the app might inject content; the
@@ -739,13 +694,16 @@
   }
   @page {
     size: A4;
-    /* 18mm sides for breathing room (client req 30-Jun-2026). Top 12mm.
-     * Bottom bumped to 18mm 02-Jul-2026 — consumer printers reserve a
-     * ~6-10mm non-printable strip at the paper edge, and the 12mm we
-     * had was letting the last row on a page get clipped ("words look
-     * erased" on the printed cumulative). Extra 6mm buys margin of
-     * safety across every printer without wasting a row of real
-     * content (page-break-inside on rows keeps splits above the gap). */
-    margin: 12mm 18mm 18mm 18mm;
+    /* 18mm sides for breathing room (client req 30-Jun-2026).
+     * Bottom kept at 18mm (02-Jul-2026) — consumer printers reserve a
+     * ~6-10mm non-printable strip at the paper edge, and 12mm was letting
+     * the last row on a page get clipped ("words look erased" on the
+     * printed cumulative). Do not shrink this again.
+     * Top trimmed 12mm -> 8mm (07-Jul-2026, reclaim page-count on large
+     * picklists) — top edge was never implicated in the clipping report,
+     * so this is lower-risk than touching the bottom. Sides trimmed
+     * 18mm -> 16mm for the same reason; only a couple mm, kept well clear
+     * of any printer's non-printable zone. */
+    margin: 8mm 16mm 18mm 16mm;
   }
 }

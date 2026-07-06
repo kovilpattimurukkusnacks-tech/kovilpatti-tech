@@ -86,3 +86,82 @@ export function splitBalancedColumnsN<T>(
   }
   return columns
 }
+
+/**
+ * Explicit page-aware bin-packing (07-Jul-2026) — needed when the
+ * whole-document balance from {@link splitBalancedColumnsN} still leaves a
+ * page mostly blank. That function only equalises the TOTAL height per
+ * column across the whole document; it has no idea where physical page
+ * breaks land. A column can hit the same grand total as its neighbours
+ * while still wasting a big chunk of a specific page, because one of its
+ * cards didn't fit in the space left on that page and (being atomic —
+ * `.print-dense-section` never splits, so a category stays intact on one
+ * physical sheet for dispatch) jumped whole to the next page, stranding
+ * the leftover space on the page behind it with nothing to fill it.
+ *
+ * This simulates pagination directly instead: walks a page at a time and
+ * tries to fill every column up to `pageCapacity` using FIRST-FIT over the
+ * remaining items in their original relative order — i.e. it prefers the
+ * next unplaced item, but if that item doesn't fit the column's remaining
+ * space, it skips ahead to the next item that DOES fit. A smaller card
+ * later in the list "backfills" the gap instead of leaving it empty.
+ * Whatever still doesn't fit anywhere on the page carries to the next one.
+ *
+ * `firstPageCapacity` lets page 1 have a smaller budget than the rest —
+ * e.g. to account for a brand header block that only prints once, at the
+ * top of page 1, leaving less room for cards on that sheet specifically.
+ *
+ * Trade-off: cards are no longer guaranteed to render in strict input
+ * order — a smaller later card can jump ahead of a larger earlier one to
+ * plug a gap. Every card is still atomic (never split mid-card). Heights
+ * and capacity are whatever unit the caller supplies — the picklist passes
+ * REAL measured pixels from a hidden pre-render (see PrintRequestPicklist),
+ * after two rounds of estimated "row unit" constants both drifted from the
+ * browser's actual layout and broke the pagination in opposite directions.
+ *
+ *   const pages = paginateBalancedColumns(cards, c => heightOf(c), 3, 32, 21)
+ *   // → pages[p][c] = the cards in column c on page p
+ */
+export function paginateBalancedColumns<T>(
+  items: readonly T[],
+  heightOf: (item: T) => number,
+  numColumns: number,
+  pageCapacity: number,
+  firstPageCapacity: number = pageCapacity,
+): T[][][] {
+  const pool = items.map(item => ({ item, h: heightOf(item) }))
+  const pages: T[][][] = []
+
+  while (pool.length > 0) {
+    const capacity = pages.length === 0 ? firstPageCapacity : pageCapacity
+    const colUsed = new Array(numColumns).fill(0)
+    const page: T[][] = Array.from({ length: numColumns }, () => [])
+
+    let placedAny = true
+    while (placedAny && pool.length > 0) {
+      placedAny = false
+      for (let c = 0; c < numColumns && pool.length > 0; c++) {
+        const remaining = capacity - colUsed[c]
+        if (remaining <= 0) continue
+        const idx = pool.findIndex(p => p.h <= remaining)
+        if (idx === -1) continue
+        const [chosen] = pool.splice(idx, 1)
+        page[c].push(chosen.item)
+        colUsed[c] += chosen.h
+        placedAny = true
+      }
+    }
+
+    // Safety valve: an item taller than a whole page's capacity would
+    // otherwise never satisfy `h <= remaining` and loop forever. Force it
+    // onto the first column alone so pagination always makes progress.
+    if (!page.some(col => col.length > 0) && pool.length > 0) {
+      const [forced] = pool.splice(0, 1)
+      page[0].push(forced.item)
+    }
+
+    pages.push(page)
+  }
+
+  return pages
+}
