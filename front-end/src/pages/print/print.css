@@ -457,9 +457,11 @@
  * warranted. Root now sits inline before the category name instead of on
  * its own line. */
 .print-dense-banner {
-  display: flex;
-  align-items: flex-start;
-  gap: 5px;
+  /* 07-Jul-2026 — was a two-cell flex row (eyebrow | name). At the narrow
+     pinned print-column width, a long root label (its cell couldn't
+     shrink) starved the name cell into a 1-2 word column that wrapped 5+
+     lines tall. Plain inline flow instead: eyebrow and name read as one
+     run of text and wrap like a sentence. */
   background: #FFF8DC;
   border-left: 3px solid #FCD835;
   border-bottom: 1px solid #1F1F1F;
@@ -485,7 +487,7 @@
  * kitchen knows which production line it belongs to, just without its own
  * line or a page-flow break. */
 .print-dense-root-eyebrow {
-  flex: 0 0 auto;
+  margin-right: 5px;
   font-size: 8px;
   font-weight: 600;
   letter-spacing: 0.06em;
@@ -500,7 +502,6 @@
  * meta info intact; only the few long-name cards grow to 2 lines, most
  * stay single-line as before. */
 .print-dense-banner-name {
-  flex: 1 1 auto;
   min-width: 0;
 }
 
