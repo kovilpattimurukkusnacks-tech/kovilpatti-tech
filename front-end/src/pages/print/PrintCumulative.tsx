@@ -3,7 +3,7 @@ import { useSearchParams } from 'react-router-dom'
 import { useCumulativePending } from '../../hooks/useStockRequests'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
-import { splitBalancedColumnsN } from '../../utils/balancedColumns'
+import { splitOrderedColumnsN } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
@@ -185,7 +185,12 @@ export default function PrintCumulative() {
               a card belongs to, without a heading block forcing a break. */}
           {(() => {
             const numCols = Math.min(MAX_COLUMNS, flatCards.length)
-            const columns = splitBalancedColumnsN(flatCards, c => heightOfCatGroup(c.section), numCols)
+            // 07-Jul-2026 (client req) — was splitBalancedColumnsN, whose
+            // shortest-column-first assignment scrambled the reading order
+            // across columns. The godown reads col 1 top-to-bottom then
+            // col 2, and expects root-priority order throughout — ordered
+            // contiguous split now, accepting slightly less-even columns.
+            const columns = splitOrderedColumnsN(flatCards, c => heightOfCatGroup(c.section), numCols)
             const renderCard = (card: typeof flatCards[number]) => {
               const { root, section } = card
               const skuCount    = section.weightGroups.reduce((s, wg) => s + wg.items.length, 0)
