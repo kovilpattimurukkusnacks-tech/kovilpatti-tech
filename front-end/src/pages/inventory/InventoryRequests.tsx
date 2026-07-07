@@ -1,5 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
 import { SpecialRequestChip } from '../../components/SpecialRequestChip'
 import { Alert, Box, Button, Chip, Collapse, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
@@ -18,14 +18,8 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Inventory list excludes Draft server-side. Mapping kept for type-safety.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
+// Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 // Quick-filter presets. Per client feedback (demo, 26 May 2026), the inventory
 // list shows four lifecycle buckets:
@@ -60,8 +54,16 @@ const PRESETS: Preset[] = [
 
 export default function InventoryRequests() {
   const navigate = useNavigate()
-  // Default: Needs Action (Approved)
-  const [activePreset, setActivePreset] = useState<string>('pending')
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Default: Needs Action (Pending). `?preset=` (e.g. from detail-page
+  // navigations after Approve) overrides the default on first mount so
+  // the user lands on the right tab. Guarded by PRESETS.some so a stale
+  // deep-link with a removed preset key falls back cleanly.
+  const initialPreset = (() => {
+    const requested = searchParams.get('preset')
+    return requested && PRESETS.some(p => p.key === requested) ? requested : 'pending'
+  })()
+  const [activePreset, setActivePreset] = useState<string>(initialPreset)
   // Optional second-level drill-down — clicking a shop chip toggles it.
   const [shopId, setShopId] = useState<string | undefined>(undefined)
   const [search, setSearch] = useState<string>('')
@@ -76,6 +78,18 @@ export default function InventoryRequests() {
   // re-filter on every char.
   const [draftFilter, setDraftFilter] = useState('')
   const debouncedDraftFilter = useDebouncedValue(draftFilter, 150)
+
+  // Consume the ?preset= query param once on mount. Once activePreset is
+  // seeded from it, strip it from the URL so a subsequent F5 doesn't lock
+  // the user back to that tab if they've since navigated to a different
+  // preset. Guarded by an empty-dep useEffect so it fires exactly once.
+  useEffect(() => {
+    if (!searchParams.has('preset')) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('preset')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
@@ -251,7 +265,13 @@ export default function InventoryRequests() {
               }}
             />
           )}
-          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
+          {/* Compact mode (07-Jul-2026): the code column is 180px wide; a
+              long specialLabel like "Diwali offer" was pushing the full-
+              label chip onto a second line where DataGrid's fixed row
+              height clipped it. Compact renders a small "SP" pill with the
+              label on hover — full text still visible on the sticky banner
+              + detail strip. */}
+          {row.isSpecial && <SpecialRequestChip size="small" compact label={row.specialLabel} />}
           {draftIdSet.has(row.id) && (
             <Chip
               label="Draft"
@@ -369,6 +389,7 @@ export default function InventoryRequests() {
           size="small"
           color={STATUS_COLOR[value as RequestStatus]}
           variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
+          sx={STATUS_CHIP_SX[value as RequestStatus]}
         />
       ),
     },

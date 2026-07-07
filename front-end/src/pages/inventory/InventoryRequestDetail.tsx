@@ -23,21 +23,13 @@ import {
 import { useProducts } from '../../hooks/useProducts'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
-import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useCategories } from '../../hooks/useCategories'
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Inventory never sees Draft requests (BE excludes them from /incoming).
-  // Mapping kept to satisfy the exhaustive Record type.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
+// Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -90,17 +82,16 @@ export default function InventoryRequestDetail() {
   // Seed dispatchQtys from items when the request loads. Priority order:
   //   1. draftDispatchedQty  — inventory user's saved WIP from a previous visit
   //   2. dispatchedQty       — legacy data where the qty was already set
-  //   3. requestedQty default — only for Approved (post-approval auto-fill,
-  //                             matches the pre-draft "ready to dispatch" UX)
-  //   4. (none)              — empty input; user has to type each line
-  //                            (Pending without a saved draft)
+  //   3. (none)              — empty input; godown types each line manually
   //
-  // isDraftDirty:
-  //   - false when the seed came from BE-persisted values (draft / dispatched)
-  //     — what's in memory matches what's saved, so Save as Draft greys out.
-  //   - true when the seed came from the requestedQty default — those are
-  //     unsaved fresh defaults, so both Save as Draft AND Mark as Dispatched
-  //     light up after Approve, per the inventory workflow.
+  // 07-Jul-2026 (client req): removed the Approved-state auto-fill of every
+  // line to requestedQty. The godown wants explicit intent on every qty —
+  // pre-filling encouraged accidental "Mark as Dispatched" clicks where
+  // the actual on-hand didn't match the shop's ask. Approved rows now
+  // land blank, same as Pending, until the godown types values in.
+  //
+  // isDraftDirty: false on seed (nothing to save yet). Flipped to true
+  // when the user types.
   useEffect(() => {
     if (!request) return
     const status = request.status
@@ -111,23 +102,17 @@ export default function InventoryRequestDetail() {
       return
     }
     const map = new Map<string, number>()
-    let seededAsUnsavedDefaults = false
     for (const item of request.items ?? []) {
       if (item.draftDispatchedQty != null) {
         map.set(item.id, item.draftDispatchedQty)
       } else if (item.dispatchedQty != null) {
         map.set(item.id, item.dispatchedQty)
-      } else if (status === 'Approved') {
-        // Approved-state default: every line at full requested qty so the
-        // godown can dispatch immediately. User can dial individual lines
-        // down (e.g. out-of-stock) before clicking Mark as Dispatched.
-        map.set(item.id, item.requestedQty)
-        seededAsUnsavedDefaults = true
       }
-      // Pending without a draft → no seed → input stays empty.
+      // No default seed for Approved — inputs stay empty until the godown
+      // types a qty, matching the Pending flow.
     }
     setDispatchQtys(map)
-    setIsDraftDirty(seededAsUnsavedDefaults)
+    setIsDraftDirty(false)
     // 02-Jul-2026: dependencies MUST be [id, status] only — NOT the whole
     // request object. Auto-save mutations refetch the request and hand us a
     // new object reference; re-running this seed on that refresh was
@@ -241,8 +226,14 @@ export default function InventoryRequestDetail() {
   // Auto-save dispatch draft 1.5s after the user stops typing. Same debounce
   // pattern as the shop side — cleanup cancels the pending timer on every
   // change, so continuous typing doesn't spam the BE.
+  //
+  // 07-Jul-2026 bug fix: don't short-circuit when the map is empty. Prior
+  // check `dispatchQtys.size === 0` prevented the timer from setting up
+  // when the user erased every line — leaving isDraftDirty=true forever
+  // and the persisted server draft untouched. Now the timer runs and its
+  // own hasAnyValue / hasDraftToClear guard decides whether to POST.
   useEffect(() => {
-    if (!canDispatch || !isDraftDirty || dispatchQtys.size === 0) return
+    if (!canDispatch || !isDraftDirty) return
     // request can be undefined on the very first render before the query
     // resolves; canDispatch evaluates to false in that case so we're
     // already returning above, but the optional chain below is defensive.
@@ -260,10 +251,16 @@ export default function InventoryRequestDetail() {
         id: it.id,
         dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
       }))
-      // If NOTHING is set AND nothing to clear → skip the network round-trip.
+      // If NOTHING is set AND nothing to clear → skip the network round-trip
+      // AND clear the dirty flag. Local state matches the server (both empty),
+      // so leaving isDraftDirty=true would falsely trigger the unsaved-changes
+      // guard on navigate. 07-Jul-2026.
       const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null)
       const hasDraftToClear = items.some(it => it.draftDispatchedQty != null && !dispatchQtys.has(it.id))
-      if (!hasAnyValue && !hasDraftToClear) return
+      if (!hasAnyValue && !hasDraftToClear) {
+        if (changeCountRef.current === startCount) setIsDraftDirty(false)
+        return
+      }
       saveDraftMutation.mutate(
         { id: requestId, req: { items: itemsPayload } },
         {
@@ -401,8 +398,19 @@ export default function InventoryRequestDetail() {
   }
 
   const handleApprove = async () => {
-    try { await approveMutation.mutateAsync(request.id) }
-    finally { setApproveConfirm(false) }
+    try {
+      await approveMutation.mutateAsync(request.id)
+      // Post-approve UX (07-Jul-2026, client req): the request is no longer
+      // in the godown's Needs-Action queue — bounce back to the list AND
+      // switch to In-Progress so the user sees where it moved to. `?preset=`
+      // is read by InventoryRequests.tsx on mount to select the tab.
+      setApproveConfirm(false)
+      navigate('/inventory/requests?preset=approved')
+    } catch {
+      // Error surface via approveError alert. Keep the confirm open so the
+      // user can retry.
+      setApproveConfirm(false)
+    }
   }
 
   const handleReject = async () => {
@@ -457,7 +465,7 @@ export default function InventoryRequestDetail() {
     <Paper
       key={catGroup.category}
       elevation={0}
-      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC', overflow: 'hidden' }}
     >
       {/* Category header — metallic gold gradient with dark text. */}
       <Box
@@ -758,7 +766,7 @@ export default function InventoryRequestDetail() {
           color={STATUS_COLOR[request.status]}
           variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
-          sx={{ fontWeight: 700 }}
+          sx={{ fontWeight: 700, ...STATUS_CHIP_SX[request.status] }}
         />
         {/* Return-type pill — matches the red Return styling on the lists. */}
         {isReturn && (
