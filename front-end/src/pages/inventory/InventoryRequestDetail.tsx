@@ -23,7 +23,6 @@ import {
 import { useProducts } from '../../hooks/useProducts'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
-import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'

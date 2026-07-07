@@ -17,7 +17,6 @@ import {
   useStockRequest, useCancelStockRequest, useReceiveStockRequest, useSetSpecial,
 } from '../../hooks/useStockRequests'
 import { useSettings } from '../../hooks/useSettings'
-import type { RequestStatus } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
