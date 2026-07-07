@@ -88,6 +88,90 @@ export function splitBalancedColumnsN<T>(
 }
 
 /**
+ * Order-preserving N-column split (07-Jul-2026, client req: "cards must
+ * print in category order"). The balanced splitters above assign cards to
+ * whichever column is shortest, which scrambles the reading sequence across
+ * columns — the godown reads the sheet column 1 top-to-bottom, then column
+ * 2, and expects root-priority order throughout. This keeps the input
+ * sequence intact: each column is a CONTIGUOUS run of the input, cut so the
+ * columns end at roughly equal heights (each cut aims at the average of the
+ * remaining height over the remaining columns). Trade-off accepted: columns
+ * can be less evenly balanced than the LPT greedy when one card is huge.
+ */
+export function splitOrderedColumnsN<T>(
+  items: readonly T[],
+  heightOf: (item: T) => number,
+  numColumns: number,
+): T[][] {
+  const hs = items.map(heightOf)
+  let remainingH = hs.reduce((s, h) => s + h, 0)
+  const columns: T[][] = []
+  let idx = 0
+  for (let c = 0; c < numColumns; c++) {
+    const target = remainingH / (numColumns - c)
+    const col: T[] = []
+    let h = 0
+    while (idx < items.length) {
+      // Always take at least one item; after that, stop before an item that
+      // overshoots the target by more than it would undershoot without it.
+      const overshoot = h + hs[idx] - target
+      if (col.length > 0 && overshoot > 0 && overshoot > target - h) break
+      col.push(items[idx])
+      h += hs[idx]
+      idx++
+    }
+    remainingH -= h
+    columns.push(col)
+  }
+  // Rounding can leave stragglers — they belong at the end of the sequence.
+  while (idx < items.length) columns[numColumns - 1].push(items[idx++])
+  return columns
+}
+
+/**
+ * Order-preserving page-aware pagination (07-Jul-2026, client req — same
+ * "must print in category order" ask as {@link splitOrderedColumnsN}, for
+ * the per-request picklist which paginates against real pixel capacities).
+ * Strict next-fit: fills column 1 top-to-bottom, then column 2, … then the
+ * next page — never skipping an item ahead of an earlier one. When the next
+ * (atomic) card doesn't fit the column's remaining space it moves to the
+ * next column/page, so a page can carry unused tail space that
+ * {@link paginateBalancedColumns}'s first-fit would have backfilled.
+ * Reading order wins over page count.
+ */
+export function paginateOrderedColumns<T>(
+  items: readonly T[],
+  heightOf: (item: T) => number,
+  numColumns: number,
+  pageCapacity: number,
+  firstPageCapacity: number = pageCapacity,
+): T[][][] {
+  const pool = items.map(item => ({ item, h: heightOf(item) }))
+  const pages: T[][][] = []
+  let idx = 0
+  while (idx < pool.length) {
+    const capacity = pages.length === 0 ? firstPageCapacity : pageCapacity
+    const page: T[][] = Array.from({ length: numColumns }, () => [])
+    for (let c = 0; c < numColumns && idx < pool.length; c++) {
+      let used = 0
+      while (idx < pool.length && used + pool[idx].h <= capacity) {
+        page[c].push(pool[idx].item)
+        used += pool[idx].h
+        idx++
+      }
+    }
+    // Safety valve: a card taller than a whole page's capacity would never
+    // fit any column — force it onto its own page so we always progress.
+    if (!page.some(col => col.length > 0)) {
+      page[0].push(pool[idx].item)
+      idx++
+    }
+    pages.push(page)
+  }
+  return pages
+}
+
+/**
  * Explicit page-aware bin-packing (07-Jul-2026) — needed when the
  * whole-document balance from {@link splitBalancedColumnsN} still leaves a
  * page mostly blank. That function only equalises the TOTAL height per
