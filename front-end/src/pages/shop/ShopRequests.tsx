@@ -36,21 +36,9 @@ const PRESETS: Preset[] = [
   { key: 'return',     label: 'Return',     requestType: 'Return' },
 ]
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Drafts surface only via the Resume Draft strip — they're filtered out
-  // of the /mine list endpoint, so a Draft chip never renders here. Entry
-  // kept to satisfy the exhaustive Record type.
-  Draft:      'default',
-  Pending:    'warning',
-  Approved:   'info',
-  Rejected:   'error',
-  Dispatched: 'primary',
-  Received:   'success',
-  Cancelled:  'default',
-  // Returns' terminal state — green-success, same as Received, since the
-  // goods have changed hands successfully (just in the opposite direction).
-  Accepted:   'success',
-}
+// STATUS_COLOR + STATUS_CHIP_SX consolidated into a shared util so a color
+// tweak lands in one place. See utils/statusChipStyle.ts.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 export default function ShopRequests() {
   const navigate = useNavigate()
@@ -418,7 +406,7 @@ export default function ShopRequests() {
                               }}
                             />
                           )}
-                          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
+                          {row.isSpecial && <SpecialRequestChip size="small" compact label={row.specialLabel} />}
                         </Box>
                       </TableCell>
                       <TableCell>{formatIstDateTime(row.submittedAt)}</TableCell>
@@ -434,6 +422,7 @@ export default function ShopRequests() {
                           size="small"
                           color={STATUS_COLOR[row.status]}
                           variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
+                          sx={STATUS_CHIP_SX[row.status]}
                         />
                       </TableCell>
                     </TableRow>
