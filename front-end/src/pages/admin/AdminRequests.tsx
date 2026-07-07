@@ -15,19 +15,8 @@ import { FilterBar, FilterRow, FilterPanel, type FilterPill } from '../../compon
 import type { RequestStatus, RequestType, StockRequestDto } from '../../api/stock-requests/types'
 import '../Products.css'
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // 'Draft' is filtered out of all list endpoints by the BE; admin never
-  // sees one. Mapping kept to satisfy the exhaustive Record type.
-  Draft:      'default',
-  Pending:    'warning',
-  Approved:   'info',
-  Rejected:   'error',
-  Dispatched: 'primary',
-  Received:   'success',
-  Cancelled:  'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted:   'success',
-}
+// Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 // Quick-filter chip presets. `undefined` = show all statuses (default).
 // Last preset "Return" (added 28 May 2026) filters by request_type and cuts
@@ -165,7 +154,7 @@ export default function AdminRequests() {
               }}
             />
           )}
-          {row.isSpecial && <SpecialRequestChip size="small" label={row.specialLabel} />}
+          {row.isSpecial && <SpecialRequestChip size="small" compact label={row.specialLabel} />}
           {draftIdSet.has(row.id) && (
             <Chip
               label="Draft"
@@ -284,6 +273,7 @@ export default function AdminRequests() {
           size="small"
           color={STATUS_COLOR[value as RequestStatus]}
           variant={row.status === 'Received' || row.status === 'Accepted' ? 'filled' : 'outlined'}
+          sx={STATUS_CHIP_SX[value as RequestStatus]}
         />
       ),
     },
