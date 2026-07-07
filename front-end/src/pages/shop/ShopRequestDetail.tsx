@@ -23,19 +23,8 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useCategories } from '../../hooks/useCategories'
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // Drafts are reached via the dedicated draft endpoint, not the detail
-  // route. The mapping exists only to satisfy the exhaustive Record type.
-  Draft:      'default',
-  Pending:    'warning',
-  Approved:   'info',
-  Rejected:   'error',
-  Dispatched: 'primary',
-  Received:   'success',
-  Cancelled:  'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted:   'success',
-}
+// Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 export default function ShopRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -246,7 +235,7 @@ export default function ShopRequestDetail() {
     <Paper
       key={catGroup.category}
       elevation={0}
-      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC', overflow: 'hidden' }}
     >
       {/* Category header — metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
           with dark text. Luxury brand-feel sweep; no dark stops so the bar
@@ -403,7 +392,7 @@ export default function ShopRequestDetail() {
           color={STATUS_COLOR[request.status]}
           variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
-          sx={{ fontWeight: 700 }}
+          sx={{ fontWeight: 700, ...STATUS_CHIP_SX[request.status] }}
         />
         {/* Return pill — same red as the Return Stock submit button + the
             list-page pill. Visible only on Return-type requests so the user
@@ -582,7 +571,7 @@ export default function ShopRequestDetail() {
       })()}
 
       {/* Timeline */}
-      <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF' }}>
+      <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC' }}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: 'repeat(3, 1fr)' }, gap: 2 }}>
           {/* Approval step removed — Submitted → Dispatched → Received. */}
           <TimelineItem label="Submitted"  value={formatIstDateTime(request.submittedAt)}  by={request.submittedByName}  done />
@@ -778,10 +767,58 @@ export default function ShopRequestDetail() {
           borderRadius: 0,
           borderTop: '2px solid #1F1F1F',
           bgcolor: '#FFFFFF',
-          px: { xs: 2, sm: 3 },
-          py: 1.5,
         }}
       >
+        {/* Edit Items + Cancel Request row (07-Jul-2026, client req: mirror
+            admin's footer action bar on the shop side). Renders only while
+            the request is still editable. Sits above the summary row so
+            the buttons stay reachable without scrolling — matches the
+            AdminRequestDetail pattern. */}
+        {(canEdit || canCancel) && (
+          <Box
+            sx={{
+              display: 'flex',
+              justifyContent: 'flex-end',
+              gap: 1,
+              flexWrap: 'wrap',
+              px: { xs: 2, sm: 3 },
+              py: 1,
+              borderBottom: '1px solid rgba(31,31,31,0.15)',
+              bgcolor: '#FFF8E1',
+            }}
+          >
+            {canEdit && (
+              <Button
+                variant="outlined"
+                startIcon={<Edit2 className="w-4 h-4" />}
+                onClick={() => navigate(`/shop/requests/${request.id}/edit`)}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                }}
+              >
+                Edit Items
+              </Button>
+            )}
+            {canCancel && (
+              <Button
+                variant="outlined"
+                startIcon={<Ban className="w-4 h-4" />}
+                onClick={() => setCancelOpen(true)}
+                disabled={cancelMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#C62828', color: '#C62828', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
+                }}
+              >
+                Cancel Request
+              </Button>
+            )}
+          </Box>
+        )}
+        <Box sx={{ px: { xs: 2, sm: 3 }, py: 1.5 }}>
         <RequestSummary
           request={request}
           variant="footer"
@@ -825,6 +862,7 @@ export default function ShopRequestDetail() {
             </Button>
           ) : undefined}
         />
+        </Box>
       </Paper>
 
       {/* Notes */}
@@ -839,41 +877,9 @@ export default function ShopRequestDetail() {
       {cancelError  && <Alert severity="error" sx={{ mb: 1 }}>{cancelError}</Alert>}
       {receiveError && <Alert severity="error" sx={{ mb: 1 }}>{receiveError}</Alert>}
 
-      {/* Actions */}
-      <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1, flexWrap: 'wrap' }}>
-        {canEdit && (
-          <Button
-            variant="outlined"
-            startIcon={<Edit2 className="w-4 h-4" />}
-            onClick={() => navigate(`/shop/requests/${request.id}/edit`)}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFF8E1',
-              '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
-            }}
-          >
-            Edit
-          </Button>
-        )}
-        {canCancel && (
-          <Button
-            variant="outlined"
-            startIcon={<Ban className="w-4 h-4" />}
-            onClick={() => setCancelOpen(true)}
-            disabled={cancelMutation.isPending}
-            sx={{
-              textTransform: 'none', fontWeight: 600,
-              borderColor: '#C62828', color: '#C62828',
-              '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
-            }}
-          >
-            Cancel Request
-          </Button>
-        )}
-        {/* Confirm Received was relocated to the fixed footer's center slot
-            on 29-Jun-2026 — it's the primary post-dispatch action and was
-            hiding below the items grid here. See RequestSummary actionSlot. */}
-      </Box>
+      {/* Edit + Cancel moved to the fixed footer's action row (07-Jul-2026,
+          matching admin's pattern). Confirm Received still lives in the
+          footer's center slot. See the Paper block above. */}
 
       <ConfirmDialog
         open={cancelOpen}

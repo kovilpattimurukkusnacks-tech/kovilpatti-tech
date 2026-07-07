@@ -1,6 +1,7 @@
 import { useQuery, useMutation, useQueryClient, keepPreviousData } from '@tanstack/react-query'
 import { stockRequestsApi } from '../api/stock-requests/api'
 import { NotFoundError } from '../api/errors'
+import { useToast } from '../context/ToastContext'
 import type {
   StockRequestListFilters, CreateStockRequestRequest, UpdateStockRequestRequest,
   RejectRequest, DispatchRequest, PagedResult, StockRequestDto, RequestStatus,
@@ -149,12 +150,13 @@ function patchAllListCaches(qc: ReturnType<typeof useQueryClient>, updated: Stoc
 
 export function useCreateStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (req: CreateStockRequestRequest) => stockRequestsApi.create(req),
     // For create, we don't try to insert into the paged list (sort order is by
     // submitted_at DESC — new row would appear at the top of page 1). Simpler
     // to invalidate just the "mine" list since shop user lands back on it.
-    onSuccess: () => {
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
       // A newly-created request may carry isSpecial=true — refresh the
       // banner feed so it shows up immediately on shop / inv / admin.
@@ -162,6 +164,10 @@ export function useCreateStockRequest() {
       // Submit consumes the draft (BE-side, in fn_request_create). Clear the
       // cached draft so the Resume Draft strip disappears immediately.
       qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
+      toast.success({
+        title: 'Request submitted',
+        description: `${created.code} is now awaiting approval`,
+      })
     },
   })
 }
@@ -182,10 +188,12 @@ export function useSaveShopDraft() {
 /** Discard the shop user's draft. */
 export function useDeleteShopDraft() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: () => stockRequestsApi.deleteDraft(),
     onSuccess: () => {
       qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
+      toast.info('Draft discarded')
     },
   })
 }
@@ -212,11 +220,13 @@ export function useSaveDispatchDraft() {
 /** Discard the saved dispatch draft on a request (Inventory/Admin). */
 export function useClearDispatchDraft() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (id: string) => stockRequestsApi.clearDispatchDraft(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+      toast.info('Dispatch draft discarded')
     },
   })
 }
@@ -226,14 +236,17 @@ export function useClearDispatchDraft() {
  *  items so the UI reflects them without a manual refetch. */
 export function useInventoryAddItems() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: InventoryAddItemsRequest }) =>
       stockRequestsApi.inventoryAddItems(id, req),
-    onSuccess: (updated) => {
+    onSuccess: (updated, vars) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       // Header aggregates (total_items / total_qty / total_amount) change,
       // so lists that show these need to refetch.
       qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+      const n = vars.req.items.length
+      toast.success(`${n} product${n === 1 ? '' : 's'} added`)
     },
   })
 }
@@ -243,12 +256,14 @@ export function useInventoryAddItems() {
  *  added_by = 'Inventory'). */
 export function useInventoryRemoveItem() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, itemId }: { id: string; itemId: string }) =>
       stockRequestsApi.inventoryRemoveItem(id, itemId),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       qc.invalidateQueries({ queryKey: stockRequestsKeys.all })
+      toast.info('Product removed')
     },
   })
 }
@@ -340,35 +355,44 @@ export function useInventoryDispatchDrafts() {
 
 export function useUpdateStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: UpdateStockRequestRequest }) =>
       stockRequestsApi.update(id, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.success(`Request ${updated.code} updated`)
     },
   })
 }
 
 export function useApproveStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (id: string) => stockRequestsApi.approve(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.success({
+        title: 'Request approved',
+        description: `${updated.code} is now In-Progress`,
+      })
     },
   })
 }
 
 export function useRejectStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: RejectRequest }) =>
       stockRequestsApi.reject(id, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.info(`Request ${updated.code} rejected`)
     },
   })
 }
@@ -376,23 +400,30 @@ export function useRejectStockRequest() {
 /** Reverse an Approve/Reject decision — status flips back to Pending. */
 export function useRevokeStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (id: string) => stockRequestsApi.revoke(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.info(`Request ${updated.code} — decision reverted to Pending`)
     },
   })
 }
 
 export function useDispatchStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: DispatchRequest }) =>
       stockRequestsApi.dispatch(id, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.success({
+        title: 'Marked as Dispatched',
+        description: `${updated.code} · shop will confirm receipt`,
+      })
     },
   })
 }
@@ -402,6 +433,7 @@ export function useDispatchStockRequest() {
  *  to record per-item discrepancy (shop short/over count). */
 export function useReceiveStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (args: string | { id: string; req?: ReceiveRequest }) => {
       // Overload for backward-compat: existing callers pass a bare id.
@@ -415,6 +447,10 @@ export function useReceiveStockRequest() {
       // the row once it flips to Received. Invalidate so it disappears
       // in the same tick.
       qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
+      toast.success({
+        title: 'Receipt confirmed',
+        description: `${updated.code} closed`,
+      })
     },
   })
 }
@@ -425,10 +461,12 @@ export function useReceiveStockRequest() {
  *  user navigates to /incoming. */
 export function useCreateReturn() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (req: CreateReturnRequest) => stockRequestsApi.createReturn(req),
-    onSuccess: () => {
+    onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
+      toast.success(`Return ${created.code} submitted`)
     },
   })
 }
@@ -439,23 +477,27 @@ export function useCreateReturn() {
  *  Needs-Action and pick it up on the All chip). */
 export function useAcceptReturn() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: AcceptReturnRequest }) =>
       stockRequestsApi.acceptReturn(id, req),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.success(`Return ${updated.code} accepted`)
     },
   })
 }
 
 export function useCancelStockRequest() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: (id: string) => stockRequestsApi.cancel(id),
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.info(`Request ${updated.code} cancelled`)
     },
   })
 }
@@ -466,15 +508,31 @@ export function useCancelStockRequest() {
  *  directly, every list cache patched, active-specials banner invalidated. */
 export function useSetSpecial() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ id, req }: { id: string; req: SetSpecialRequest }) =>
       stockRequestsApi.setSpecial(id, req),
-    onSuccess: (updated) => {
+    onSuccess: (updated, vars) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
       // The sticky top banner reads from the active-specials list; force a
       // refetch so a newly-toggled special surfaces (or drops off) live.
       qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
+      // Distinct copy for toggle-on vs toggle-off vs rename — the callers
+      // hit the same endpoint but the intent differs, and a one-size
+      // "Updated" toast reads confusing when the shop just turned the
+      // flag OFF but sees a Special-branded chip.
+      if (!vars.req.isSpecial) {
+        toast.success({
+          title: 'Special Request removed',
+          description: `${updated.code} will pack from stock`,
+        })
+      } else {
+        toast.success({
+          title: 'Marked as Special Request',
+          description: `${updated.code} · godown will procure from vendor`,
+        })
+      }
     },
   })
 }
@@ -498,6 +556,7 @@ export function useActiveSpecials(options?: { enabled?: boolean }) {
  *  so list caches need to reflect that too (delivered amount column). */
 export function useEditDispatchedQty() {
   const qc = useQueryClient()
+  const toast = useToast()
   return useMutation({
     mutationFn: ({ requestId, itemId, req }: {
       requestId: string
@@ -507,6 +566,7 @@ export function useEditDispatchedQty() {
     onSuccess: (updated) => {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
+      toast.success('Quantity updated')
     },
   })
 }

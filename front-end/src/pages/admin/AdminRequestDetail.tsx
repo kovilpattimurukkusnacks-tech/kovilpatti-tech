@@ -23,16 +23,8 @@ import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useCategories } from '../../hooks/useCategories'
 
-const STATUS_COLOR: Record<RequestStatus, 'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'> = {
-  // 'Draft' is filtered out of admin lists/detail endpoints by the BE, so
-  // this branch shouldn't render in practice — the value is here to keep
-  // the type system happy if a Draft ever leaks through.
-  Draft: 'default',
-  Pending: 'warning', Approved: 'info', Rejected: 'error',
-  Dispatched: 'primary', Received: 'success', Cancelled: 'default',
-  // Returns' terminal state — green-success once goods are back at godown.
-  Accepted: 'success',
-}
+// Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
+import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 export default function AdminRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -210,7 +202,7 @@ export default function AdminRequestDetail() {
     <Paper
       key={catGroup.category}
       elevation={0}
-      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}
+      sx={{ mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC', overflow: 'hidden' }}
     >
       {/* Category header — metallic gold gradient with dark text. */}
       <Box
@@ -364,7 +356,7 @@ export default function AdminRequestDetail() {
           color={STATUS_COLOR[request.status]}
           variant={request.status === 'Received' || request.status === 'Accepted' ? 'filled' : 'outlined'}
           size="small"
-          sx={{ fontWeight: 700 }}
+          sx={{ fontWeight: 700, ...STATUS_CHIP_SX[request.status] }}
         />
         {/* Red "Return" pill — sits next to the status chip so admin can
             see at a glance that this is a Return, regardless of where it
@@ -605,7 +597,7 @@ export default function AdminRequestDetail() {
         </Alert>
       )}
 
-      <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF' }}>
+      <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC' }}>
         {/* Approval step removed from the workflow. Timeline is now Submitted →
             Dispatched → Received. (Legacy approvedAt/approvedByName values on
             historical rows remain in the DTO but aren't surfaced anymore.) */}
@@ -801,8 +793,11 @@ export default function AdminRequestDetail() {
                 disabled={cancelMutation.isPending}
                 sx={{
                   textTransform: 'none', fontWeight: 600,
-                  borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
-                  '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+                  // 07-Jul-2026: match the shop-side Cancel Request styling —
+                  // red border + red text so the destructive action reads
+                  // consistent across both roles.
+                  borderColor: '#C62828', color: '#C62828', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#C62828', bgcolor: 'rgba(198,40,40,0.05)' },
                 }}
               >
                 Cancel Request
