@@ -305,6 +305,11 @@ export default function PrintRequestPicklist() {
             + padding alone exceed a third of the printable width, so
             every px given up here goes straight to fewer name wraps →
             visibly shorter cards → fewer pages). */}
+        {/* 08-Jul-2026 (client req: amount on the RIGHT side, back as a
+            column). To make it fit in the 3-column card layout without
+            overlap: drop decimals (kitchen doesn't need paise) and pin
+            nowrap. "1,050" instead of "1,050.00" is ~40% narrower — fits
+            in a 46px column, leaving ~64px for the name. */}
         <table className="print-dense-table">
           <colgroup>
             <col style={{ width: 18 }} />
@@ -312,12 +317,15 @@ export default function PrintRequestPicklist() {
             <col style={{ width: 34 }} />
             <col style={{ width: 28 }} />
             {hasDispatch && <col style={{ width: 34 }} />}
-            <col style={{ width: 50 }} />
+            <col style={{ width: 46 }} />
           </colgroup>
           <tbody>
             {section.weightGroups.flatMap(wg => wg.items.map(it => ({ ...it, weightLabel: wg.label }))).map((it, idx) => {
               const effQty = it.dispatchedQty ?? it.requestedQty
               const lineAmt = effQty * it.unitPrice
+              // Drop decimals — Math.round because .5 halves round to nearest
+              // whole rupee, which matches how the kitchen counts on paper.
+              const lineAmtWhole = Math.round(lineAmt).toLocaleString('en-IN')
               return (
                 <tr key={it.id}>
                   <td>{idx + 1}</td>
@@ -332,8 +340,8 @@ export default function PrintRequestPicklist() {
                       <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
                     </td>
                   )}
-                  <td style={{ textAlign: 'right' }} className="strong">
-                    {formatINR(lineAmt, { prefix: false })}
+                  <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} className="strong">
+                    {lineAmtWhole}
                   </td>
                 </tr>
               )

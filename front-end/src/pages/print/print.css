@@ -5,11 +5,22 @@
   background: #FFFFFF;
   color: #1F1F1F;
   font-family: 'Plus Jakarta Sans', system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
-  /* Side padding bumped 32px → 56px (30-Jun-2026) so on-screen preview
-   * breathes against the white panel edges. Vertical kept at 24px. */
-  padding: 24px 56px;
-  max-width: 960px;
+  /* Side padding 08-Jul-2026: chopped 56px → 16px on-screen. The 56px
+   * added "breathing room" but the card grid itself is already width-
+   * capped at 176mm (~665px) — the extra 40+px on each side just left a
+   * blank moat around the preview. 16px keeps a hairline gap without
+   * feeling empty. */
+  padding: 24px 16px;
+  max-width: 720px;
   margin: 0 auto;
+}
+@media print {
+  /* Paper uses @page margins (8mm 16mm 18mm) — the wrapper padding is
+   * only for on-screen. Zero it out on print so nothing double-margins. */
+  .print-page {
+    padding: 0;
+    max-width: none;
+  }
 }
 
 /* ─────────────────────────────────────────────────────────────────────

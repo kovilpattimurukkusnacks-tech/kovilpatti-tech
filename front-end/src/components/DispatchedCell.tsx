@@ -45,20 +45,25 @@ export function DispatchedCell({ qty, requested, received }: {
     )
   }
   if (qty === 0) {
+    // 08-Jul-2026 (client req): chip label shortened "Out of stock" → "OOS"
+    // so the qty column can hold both the number and the badge without the
+    // chip overflowing into the neighbouring amount cell on the printout.
+    // Full text still discoverable on hover via title.
     return (
-      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.75, justifyContent: 'flex-end' }}>
+      <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 0.5, justifyContent: 'flex-end' }}>
         <span style={{ color: '#C62828', fontWeight: 700 }}>0</span>
         <Chip
-          label="Out of stock"
+          label="OOS"
           size="small"
+          title="Out of stock"
           sx={{
-            height: 18,
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.3,
+            height: 16,
+            fontSize: 9,
+            fontWeight: 800,
+            letterSpacing: 0.4,
             bgcolor: '#C62828',
             color: '#FFFFFF',
-            '& .MuiChip-label': { px: 0.75 },
+            '& .MuiChip-label': { px: 0.5 },
           }}
         />
       </Box>
