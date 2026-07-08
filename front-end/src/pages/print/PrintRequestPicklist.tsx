@@ -5,7 +5,7 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
-import { paginateBalancedColumns } from '../../utils/balancedColumns'
+import { paginateOrderedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
 import './print.css'
@@ -427,7 +427,11 @@ export default function PrintRequestPicklist() {
   const pageCap = PAGE_CONTENT_HEIGHT_PX + CARD_GAP
   const page1Cap = pageCap - measured.header
   const indexed = flatCards.map((card, i) => ({ card, i }))
-  const pages = paginateBalancedColumns(
+  // 07-Jul-2026 (client req) — was paginateBalancedColumns, whose first-fit
+  // backfill let a smaller later card jump ahead of a larger earlier one.
+  // Strict category order down each column now; reading order wins over
+  // page count.
+  const pages = paginateOrderedColumns(
     indexed, x => measured.cards[x.i] + CARD_GAP, numCols, pageCap, page1Cap,
   )
   if (pages.length === 0) pages.push(Array.from({ length: numCols }, () => []))
