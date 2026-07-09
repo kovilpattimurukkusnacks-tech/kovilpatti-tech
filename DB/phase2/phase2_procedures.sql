@@ -814,10 +814,13 @@ BEGIN
       total_amount = v_total_amount
   WHERE id = v_id;
 
-  -- Consume the shop's draft (if any). Items cascade via ON DELETE CASCADE.
+  -- Consume the caller's draft on that shop (if any). Items cascade via
+  -- ON DELETE CASCADE. 08-Jul-2026: scoped by created_by too so admin's
+  -- submit doesn't wipe Shop A user's own draft (or vice versa).
   DELETE FROM stock_requests
-  WHERE shop_id = p_shop_id
-    AND status  = 'Draft'
+  WHERE shop_id    = p_shop_id
+    AND created_by = p_user_id
+    AND status     = 'Draft'
     AND is_deleted = false;
 
   RETURN v_id;
@@ -865,9 +868,15 @@ BEGIN
   END IF;
 
   -- Existing draft? Update in place; otherwise insert fresh.
+  -- 08-Jul-2026: scoped by (shop_id, created_by=p_user_id) so admin's
+  -- draft for Shop A doesn't collide with Shop A user's own draft.
+  -- Matches the uq_stock_requests_one_draft_per_shop_user partial index.
   SELECT id INTO v_id
   FROM stock_requests
-  WHERE shop_id = p_shop_id AND status = 'Draft' AND is_deleted = false
+  WHERE shop_id = p_shop_id
+    AND created_by = p_user_id
+    AND status = 'Draft'
+    AND is_deleted = false
   LIMIT 1;
 
   IF v_id IS NULL THEN
@@ -934,9 +943,13 @@ $$;
 -- fn_request_get so the BE can deserialise into the same DTO. Empty
 -- result set when no draft exists.
 -- Return shape gained `updated_at` → must DROP before redefining.
+-- 08-Jul-2026: signature gained p_user_id so admin's draft on Shop A
+-- and Shop A user's own draft are addressed independently. Prior
+-- 1-arg shape dropped so both DB states re-apply cleanly.
 DROP FUNCTION IF EXISTS fn_request_get_shop_draft(uuid);
+DROP FUNCTION IF EXISTS fn_request_get_shop_draft(uuid, uuid);
 
-CREATE OR REPLACE FUNCTION fn_request_get_shop_draft(p_shop_id uuid)
+CREATE OR REPLACE FUNCTION fn_request_get_shop_draft(p_shop_id uuid, p_user_id uuid)
 RETURNS TABLE (
   id                    uuid,
   code                  varchar,
@@ -976,7 +989,10 @@ DECLARE
 BEGIN
   SELECT r.id INTO v_id
   FROM stock_requests r
-  WHERE r.shop_id = p_shop_id AND r.status = 'Draft' AND r.is_deleted = false
+  WHERE r.shop_id = p_shop_id
+    AND r.created_by = p_user_id
+    AND r.status = 'Draft'
+    AND r.is_deleted = false
   LIMIT 1;
 
   IF v_id IS NULL THEN
@@ -990,12 +1006,19 @@ $$;
 
 -- Discard a shop's draft. Idempotent — returns true if a draft was
 -- deleted, false if none existed.
-CREATE OR REPLACE FUNCTION fn_request_delete_shop_draft(p_shop_id uuid)
+-- 08-Jul-2026: signature gained p_user_id so a shop user can't
+-- accidentally delete an admin's parallel draft on the same shop
+-- (and vice versa). Prior 1-arg shape dropped explicitly.
+DROP FUNCTION IF EXISTS fn_request_delete_shop_draft(uuid);
+DROP FUNCTION IF EXISTS fn_request_delete_shop_draft(uuid, uuid);
+
+CREATE OR REPLACE FUNCTION fn_request_delete_shop_draft(p_shop_id uuid, p_user_id uuid)
 RETURNS boolean
 LANGUAGE plpgsql AS $$
 BEGIN
   DELETE FROM stock_requests
   WHERE shop_id = p_shop_id
+    AND created_by = p_user_id
     AND status  = 'Draft'
     AND is_deleted = false;
   RETURN FOUND;

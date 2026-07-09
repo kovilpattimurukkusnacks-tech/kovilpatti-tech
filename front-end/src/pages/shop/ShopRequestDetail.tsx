@@ -221,7 +221,15 @@ export default function ShopRequestDetail() {
     const payload = diffItems.length > 0 ? { items: diffItems } : undefined
     try {
       await receiveMutation.mutateAsync({ id: request.id, req: payload })
-    } finally {
+      // 08-Jul-2026 (client req): after confirming receipt, bounce back
+      // to the shop's list on the Pending tab so the user immediately
+      // sees what they still need to work on next. Dispatched tab would
+      // still show this newly-Received row for a blink until the cache
+      // catches up — Pending sidesteps that entirely.
+      setReceiveOpen(false)
+      setReceivedQtys(new Map())
+      navigate('/shop/requests?preset=pending')
+    } catch {
       setReceiveOpen(false)
       setReceivedQtys(new Map())
     }

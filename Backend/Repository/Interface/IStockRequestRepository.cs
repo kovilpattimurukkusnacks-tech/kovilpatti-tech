@@ -44,8 +44,8 @@ public interface IStockRequestRepository
 
     // ── Shop drafts (single live draft per shop, status='Draft') ──
     Task<Guid> SaveShopDraftAsync(Guid shopId, Guid inventoryId, string? notes, string itemsJson, Guid userId, CancellationToken ct = default);
-    Task<StockRequest?> GetShopDraftAsync(Guid shopId, CancellationToken ct = default);
-    Task<bool> DeleteShopDraftAsync(Guid shopId, CancellationToken ct = default);
+    Task<StockRequest?> GetShopDraftAsync(Guid shopId, Guid userId, CancellationToken ct = default);
+    Task<bool> DeleteShopDraftAsync(Guid shopId, Guid userId, CancellationToken ct = default);
 
     // ── Return Stock (request_type = 'Return') ──
     /// Create a Return — shop user sends items BACK to the godown. Optional

@@ -10,6 +10,7 @@ import PageHeader from '../../components/PageHeader'
 import { useApp } from '../../context/AppContext'
 import { useProducts } from '../../hooks/useProducts'
 import { useCategories } from '../../hooks/useCategories'
+import { useShops } from '../../hooks/useShops'
 import {
   useCreateStockRequest, useUpdateStockRequest, useStockRequest,
   useShopDraft, useSaveShopDraft, useDeleteShopDraft,
@@ -50,6 +51,14 @@ export default function ShopRequestNew() {
   const isEditMode = !!editId
   const { currentUser } = useApp()
   const isAdmin = currentUser?.role === 'Admin'
+  // 08-Jul-2026: admin can now open /admin/requests/new to raise a request
+  // for a specific shop. Distinct branch from isEditMode — mode = "admin
+  // creates for a shop". Shop-user create is the third branch (no shop
+  // picker; forces currentUser.ShopId).
+  const isAdminCreate = isAdmin && !isEditMode
+  // Admin's chosen target shop for the new-request flow. Null until they
+  // pick from the shop picker at the top of the review dialog.
+  const [adminShopId, setAdminShopId] = useState<string | null>(null)
   // Admin lands here from /admin/requests/:id/edit, shop from /shop/requests/:id/edit
   const detailPath = isEditMode && editId
     ? (isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
@@ -65,14 +74,24 @@ export default function ShopRequestNew() {
   const existingQuery        = useStockRequest(editId)
   const existing             = existingQuery.data
 
-  // Drafts only apply to the shop user's new-request flow. Disabled for:
-  //   • edit mode (we're already working on a real request)
-  //   • admin (admin doesn't have a shop, so no draft to load/save)
-  const draftEnabled = !isEditMode && !isAdmin
-  const draftQuery     = useShopDraft({ enabled: draftEnabled })
+  // Drafts (08-Jul-2026: admin drafts too). Rules:
+  //   • edit mode → no drafts (we're already working on a real request).
+  //   • shop user new-request → draft on their own shop.
+  //   • admin new-request → draft on the picked shop only. If no shop is
+  //     picked yet, drafts are disabled — nothing to key off of.
+  // The `(shop_id, created_by)` partial unique index guarantees admin's
+  // draft and the shop user's draft on the same shop don't collide.
+  const draftShopId = isAdminCreate ? (adminShopId ?? undefined) : undefined
+  const draftEnabled = !isEditMode && (!isAdmin || !!adminShopId)
+  const draftQuery = useShopDraft(draftShopId, { enabled: draftEnabled })
   const saveDraftMutation   = useSaveShopDraft()
   const deleteDraftMutation = useDeleteShopDraft()
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Shops list — only loaded when the admin-create branch actually needs
+  // the picker. Cheap query; server returns the full shop list ordered
+  // by code so the picker options are stable.
+  const shopsQuery = useShops()
+  const shops = isAdminCreate ? (shopsQuery.data ?? []) : []
   // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
   // Discarding wipes work that took the shop minutes to build — a single
   // accidental click on the sticky bottom bar shouldn't be enough.
@@ -242,8 +261,14 @@ export default function ShopRequestNew() {
   // beforeunload keepalive fetch isn't 100% reliable across browsers.
   // sessionStorage is synchronous + survives refresh; we hydrate cart
   // from it on mount and clear it on submit.
-  const draftLocalKey = currentUser?.shopId
-    ? `shop-request-new-cart:${currentUser.shopId}`
+  // sessionStorage key — per-user, per-shop. For shop users, shopId comes
+  // from the auth claim. For admin-create, it's the picked shop; null
+  // until they select one, so drafts and F5-hydration wait until then.
+  // 08-Jul-2026: also namespaces by currentUser.id so admin's local
+  // snapshot doesn't leak across roles on a shared browser profile.
+  const draftScopeShopId = isAdminCreate ? adminShopId : (currentUser?.shopId ?? null)
+  const draftLocalKey = draftScopeShopId && currentUser?.userId
+    ? `shop-request-new-cart:${currentUser.userId}:${draftScopeShopId}`
     : null
 
   // Cart state — Map keyed by productId so add/update/remove is O(1).
@@ -373,6 +398,33 @@ export default function ShopRequestNew() {
       return changed ? next : prev
     })
   }, [cart, allCats, rootCats])
+
+  // 08-Jul-2026: reset cart when admin switches the shop picker. Without
+  // this, if admin picks Shop A → carts 5 items → switches to Shop B, the
+  // in-memory cart still shows Shop A's items — which would then autosave
+  // to Shop B's draft slot on the next keystroke. Resetting `seeded` also
+  // lets the newly-loaded Shop B draft hydrate the cart on its query.
+  const prevAdminShopIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isAdminCreate) return
+    // First render captures the initial state; only fire on actual switch.
+    if (prevAdminShopIdRef.current === adminShopId) return
+    // Skip the initial null → firstShop transition; that's just the
+    // user picking their first shop, not a "switch". Reset only when
+    // moving from one shop to another (both non-null and different).
+    if (prevAdminShopIdRef.current !== null) {
+      setCart(new Map())
+      setNotes('')
+      setIsSpecial(false)
+      setSpecialLabel('')
+      setVisitedCategoryIds(new Set())
+      setIsDraftDirty(false)
+      setSeeded(false)
+      hydratedFromSourceRef.current = false
+      hasAutoNavigatedRef.current = false
+    }
+    prevAdminShopIdRef.current = adminShopId
+  }, [isAdminCreate, adminShopId])
 
   // Jump-to-first-unvisited on resume (03-Jul-2026). When the user comes
   // back to /new with a hydrated cart (from server draft OR sessionStorage)
@@ -588,7 +640,13 @@ export default function ShopRequestNew() {
         requestedQty: l.qty,
       }))
       saveDraftMutation.mutate(
-        { notes: notes.trim() || undefined, items },
+        {
+          notes: notes.trim() || undefined,
+          items,
+          // Admin drafts carry the picked shop; shop-user submit omits
+          // it (BE reads shop_id from the auth claim).
+          ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
+        },
         {
           onSuccess: () => {
             setDraftSavedAt(new Date())
@@ -864,6 +922,13 @@ export default function ShopRequestNew() {
       setLocalErr('Add at least one product to the request.')
       return
     }
+    // Admin-create branch requires the shop picker to be filled in.
+    // Blocking here (not just at the Submit button's disabled) means a
+    // keyboard user hitting Enter can't sneak past.
+    if (isAdminCreate && !adminShopId) {
+      setLocalErr('Pick a shop before submitting.')
+      return
+    }
     const items = Array.from(cart.values()).map(l => ({
       productId: l.product.id,
       requestedQty: l.qty,
@@ -890,14 +955,26 @@ export default function ShopRequestNew() {
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
       } else {
-        const res = await createMutation.mutateAsync({
+        // Admin-create passes an explicit shopId (BE requires it for
+        // admin callers). Shop-user submit omits the field; the BE
+        // pins it to currentUser.ShopId server-side.
+        await createMutation.mutateAsync({
           notes: notes.trim() || undefined,
           items,
           ...specialFields,
+          ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
         })
         submittingRef.current = true
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
-        navigate(`/shop/requests/${res.id}`)
+        // Post-submit redirect (08-Jul-2026 client req): land on the LIST
+        // page where the new request will surface — not the detail page.
+        //   • Admin → All tab on the admin list.
+        //   • Shop → Pending tab on the shop list.
+        // AdminRequests reads ?preset= from the URL (defaults to 'all' if
+        // unset). ShopRequests holds preset in local state; its initial
+        // useState value is 'pending', so a fresh mount lands there.
+        // Both cases: navigating to the list URL is enough.
+        navigate(isAdminCreate ? '/admin/requests?preset=all' : '/shop/requests')
       }
     } catch {
       // shown via apiErrorMessage below
@@ -966,6 +1043,7 @@ export default function ShopRequestNew() {
       await saveDraftMutation.mutateAsync({
         notes: notes.trim() || undefined,
         items,
+        ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
       })
       setDraftSavedAt(new Date())
       // Only mark clean if nothing changed while the save was in flight —
@@ -986,7 +1064,9 @@ export default function ShopRequestNew() {
    */
   const handleDiscardDraft = async () => {
     try {
-      await deleteDraftMutation.mutateAsync()
+      // Admin's delete goes against the picked shop; shop-user's omits
+      // (BE resolves via auth claim).
+      await deleteDraftMutation.mutateAsync(isAdminCreate ? adminShopId ?? undefined : undefined)
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
@@ -1081,6 +1161,59 @@ export default function ShopRequestNew() {
           {existing.status !== 'Pending' ? ` (status: ${existing.status})` : ' (edit window has closed)'}.
           Only an admin can modify it now.
         </Alert>
+      )}
+
+      {/* Admin-create shop picker (08-Jul-2026, moved from inside the
+          Review dialog on 08-Jul-2026 evening). Admin picks the target
+          shop UP-FRONT so:
+            • auto-save has a shopId to key against (draftEnabled needs it).
+            • the browsing UX is anchored to "you are ordering for Shop X".
+          Card is amber-tinted so it stands out as the primary decision on
+          this page. Filter row + product grid render below regardless,
+          but nothing saves until this is picked. */}
+      {isAdminCreate && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2, p: 1.5, borderRadius: 2,
+            bgcolor: '#FFF8DC',
+            border: `2px solid ${adminShopId ? '#C28A00' : '#E65100'}`,
+            display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
+          }}
+        >
+          <Box sx={{
+            fontSize: 11, fontWeight: 800, textTransform: 'uppercase',
+            letterSpacing: 0.5, color: '#7C4A00', minWidth: 100,
+          }}>
+            Raise for shop
+          </Box>
+          <Autocomplete
+            size="small"
+            options={shops}
+            value={shops.find(s => s.id === adminShopId) ?? null}
+            onChange={(_e, value) => setAdminShopId(value?.id ?? null)}
+            getOptionLabel={s => `${s.code} · ${s.name}`}
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            sx={{ flex: 1, minWidth: 260, maxWidth: 480 }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder={shopsQuery.isLoading ? 'Loading shops…' : 'Select a shop'}
+                variant="outlined"
+                // 08-Jul-2026: no pure white anywhere in this app — the
+                // pale-yellow/cream family is the uniform palette. #FFFBE6
+                // is the lightest cream + reads as a distinct input inside
+                // the amber "Raise for shop" card.
+                sx={{ bgcolor: '#FFFBE6', borderRadius: 1 }}
+              />
+            )}
+          />
+          {!adminShopId && (
+            <Box sx={{ fontSize: 12, fontWeight: 700, color: '#E65100' }}>
+              Required — nothing saves until you pick a shop.
+            </Box>
+          )}
+        </Paper>
       )}
 
       {/* Filter row: search + single-category + multi-type + clear filters + clear cart */}
@@ -1420,6 +1553,27 @@ export default function ShopRequestNew() {
             </Box>
           ) : (
             <>
+              {/* Admin-create shop picker moved to the top of the page
+                  (08-Jul-2026 evening) so admin picks up-front and the
+                  auto-save has a shopId to key against BEFORE the cart
+                  builds. See the Paper block just below PageHeader. The
+                  review dialog no longer needs its own picker — a small
+                  read-only recap below lets the admin double-check the
+                  target shop before Submit. */}
+              {isAdminCreate && adminShopId && (
+                <Box sx={{
+                  mb: 2, px: 1.5, py: 1, borderRadius: 2,
+                  bgcolor: '#FFF8DC', border: '1px solid #C28A00',
+                  fontSize: 12, color: '#7C4A00',
+                }}>
+                  <strong>Raising for:</strong>{' '}
+                  {(() => {
+                    const s = shops.find(x => x.id === adminShopId)
+                    return s ? `${s.code} · ${s.name}` : adminShopId
+                  })()}
+                </Box>
+              )}
+
               {/* Two-level grouping: outer = ROOT category (1 KG SNACKS, etc.)
                   with an underline-style heading; inner = leaf-cat cards
                   (existing yellow banner + per-product rows). Mirrors the
@@ -1707,7 +1861,14 @@ export default function ShopRequestNew() {
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={cart.size === 0 || activeMutation.isPending || (isEditMode && !editWindowOpen)}
+            disabled={
+              cart.size === 0
+              || activeMutation.isPending
+              || (isEditMode && !editWindowOpen)
+              // Admin must pick a shop before Submit lights up.
+              || (isAdminCreate && !adminShopId)
+            }
+            title={isAdminCreate && !adminShopId ? 'Pick a shop first' : undefined}
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >
             {activeMutation.isPending
@@ -1912,6 +2073,7 @@ export default function ShopRequestNew() {
               await saveDraftMutation.mutateAsync({
                 notes: notes.trim() || undefined,
                 items,
+                ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
               })
               setDraftSavedAt(new Date())
               setIsDraftDirty(false)
