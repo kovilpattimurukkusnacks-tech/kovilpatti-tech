@@ -208,20 +208,22 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         }, cancellationToken: ct));
     }
 
-    public async Task<StockRequest?> GetShopDraftAsync(Guid shopId, CancellationToken ct = default)
+    public async Task<StockRequest?> GetShopDraftAsync(Guid shopId, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT * FROM fn_request_get_shop_draft(@p_shop_id)";
+        // 08-Jul-2026: SP scoped to (shop_id, user_id) so admin's draft
+        // for Shop A and Shop A user's own draft don't collide.
+        const string sql = "SELECT * FROM fn_request_get_shop_draft(@p_shop_id, @p_user_id)";
         return await conn.QuerySingleOrDefaultAsync<StockRequest>(
-            new CommandDefinition(sql, new { p_shop_id = shopId }, cancellationToken: ct));
+            new CommandDefinition(sql, new { p_shop_id = shopId, p_user_id = userId }, cancellationToken: ct));
     }
 
-    public async Task<bool> DeleteShopDraftAsync(Guid shopId, CancellationToken ct = default)
+    public async Task<bool> DeleteShopDraftAsync(Guid shopId, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = "SELECT fn_request_delete_shop_draft(@p_shop_id)";
+        const string sql = "SELECT fn_request_delete_shop_draft(@p_shop_id, @p_user_id)";
         return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
-            sql, new { p_shop_id = shopId }, cancellationToken: ct));
+            sql, new { p_shop_id = shopId, p_user_id = userId }, cancellationToken: ct));
     }
 
     // ── Return Stock ──────────────────────────────────────────────

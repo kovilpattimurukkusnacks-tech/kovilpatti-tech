@@ -1,9 +1,10 @@
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Printer } from 'lucide-react'
-import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui/material'
+import { Search, Printer, Plus, X as XIcon } from 'lucide-react'
+import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import { DispatchedCell } from '../../components/DispatchedCell'
 import { AdjustmentQtyCell } from '../../components/AdjustmentQtyCell'
 import { useAllStockRequests, useCumulativePending, useRequestCountByShop, useInventoryDispatchDrafts } from '../../hooks/useStockRequests'
@@ -120,6 +121,89 @@ export default function AdminRequests() {
   // as some Pending row exists anywhere across the system.
   const cumulative = useCumulativePending()
   const hasPending = (cumulative.data?.length ?? 0) > 0
+
+  // Standalone Pending count (independent of the active preset / date filter)
+  // — drives the confirmation dialog on the Print Cumulative button so admin
+  // knows "N requests are still pending and won't be in this print" before
+  // a tab opens. Matches the inventory-side gating (see InventoryRequests).
+  const pendingShopCounts = useRequestCountByShop({ status: 'Pending' })
+  const totalPending = useMemo(
+    () => (pendingShopCounts.data ?? []).reduce((sum, r) => sum + r.requestCount, 0),
+    [pendingShopCounts.data],
+  )
+
+  // Print Cumulative gating: only enabled on the Approved tab — the report
+  // itself is scoped to status='Approved' rows, so allowing the print from
+  // other tabs is semantically wrong. Mirrors the inventory-side rule.
+  const isInProgressTab = activePreset === 'approved'
+  const canPrintCumulative = isInProgressTab && hasPending
+  const printCumulativeTooltip =
+    !isInProgressTab ? 'Switch to Approved tab to print the batch plan'
+    : !hasPending    ? 'No in-progress requests to print'
+    : totalPending > 0
+      ? `${totalPending} request${totalPending === 1 ? ' is' : 's are'} still pending — you'll get a confirmation first`
+      : undefined
+
+  const [printConfirmOpen, setPrintConfirmOpen] = useState(false)
+  const [printSelectionOpen, setPrintSelectionOpen] = useState(false)
+  const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(new Set())
+  const [printShopFilter, setPrintShopFilter] = useState<string>('')
+
+  // Fetch the Approved request list ONLY when the selection dialog is open —
+  // keeps the list page's query pool lean. pageSize 200 covers realistic
+  // queues even for tenant-wide admin scope without pagination.
+  const approvedForSelection = useAllStockRequests({ status: 'Approved', pageSize: 200 })
+  const approvedRows = approvedForSelection.data?.items ?? []
+
+  // Distinct shops present in the approved queue — populates the filter
+  // dropdown at the top of the selection dialog.
+  const shopsInApproved = useMemo(() => {
+    const map = new Map<string, string>()
+    for (const r of approvedRows) map.set(r.shopId, r.shopName)
+    return Array.from(map.entries())
+      .map(([shopId, shopName]) => ({ shopId, shopName }))
+      .sort((a, b) => a.shopName.localeCompare(b.shopName))
+  }, [approvedRows])
+
+  const visibleApprovedRows = useMemo(
+    () => printShopFilter
+      ? approvedRows.filter(r => r.shopId === printShopFilter)
+      : approvedRows,
+    [approvedRows, printShopFilter],
+  )
+
+  const openPrintCumulative = (ids?: string[]) => {
+    const qs = new URLSearchParams()
+    if (ids && ids.length) {
+      qs.set('requestIds', ids.join(','))
+      const idSet = new Set(ids)
+      const shopNames = Array.from(new Set(
+        approvedRows.filter(r => idSet.has(r.id)).map(r => r.shopName),
+      )).sort()
+      if (shopNames.length > 0) qs.set('shopNames', shopNames.join(', '))
+    }
+    const suffix = qs.toString() ? `?${qs.toString()}` : ''
+    window.open(`/print/cumulative${suffix}`, '_blank', 'noopener,noreferrer')
+  }
+
+  const openPrintSelection = () => {
+    setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    setPrintShopFilter('')
+    setPrintSelectionOpen(true)
+  }
+
+  const onPrintCumulativeClick = () => {
+    if (totalPending > 0) setPrintConfirmOpen(true)
+    else openPrintSelection()
+  }
+
+  useEffect(() => {
+    if (!printSelectionOpen) return
+    if (selectedRequestIds.size === 0 && approvedRows.length > 0) {
+      setSelectedRequestIds(new Set(approvedRows.map(r => r.id)))
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [printSelectionOpen, approvedRows.length])
 
   // Tenant-wide dispatch-drafts snapshot → "Draft" chip on list rows.
   // 02-Jul-2026. Admin sees the badge across every inventory's queue.
@@ -318,18 +402,48 @@ export default function AdminRequests() {
         title="Stock Requests"
         subtitle={list.isLoading ? 'Loading…' : `${total} ${total === 1 ? 'request' : 'requests'} from all shops`}
         action={
-          <Button
-            variant="contained"
-            startIcon={<Printer className="w-4 h-4" />}
-            // noopener severs the parent↔child link so the new tab's
-            // print dialog never blocks interaction on this tab.
-            onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
-            disabled={!hasPending}
-            title={hasPending ? undefined : 'No in-progress requests to print'}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Print Cumulative
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {/* Admin direct-order (08-Jul-2026). Opens the same
+                ShopRequestNew component with a shop picker at the top;
+                bypasses the visit-category gate the shop-user flow
+                enforces (admin orders are one-off, not routine). */}
+            <Button
+              variant="contained"
+              disableElevation
+              startIcon={<Plus className="w-4 h-4" />}
+              onClick={() => navigate('/admin/requests/new')}
+              sx={{
+                textTransform: 'none', fontWeight: 700,
+                color: '#1F1F1F',
+                border: '1px solid #C28A00',
+                background: 'linear-gradient(90deg, #C28A00 0%, #E6B800 35%, #FFD700 65%, #FFF1A6 100%)',
+                boxShadow: '0 2px 6px rgba(194,138,0,0.25)',
+                '&:hover': {
+                  background: 'linear-gradient(90deg, #A07000 0%, #C28A00 35%, #E6B800 65%, #FFD700 100%)',
+                  boxShadow: '0 3px 10px rgba(194,138,0,0.35)',
+                },
+              }}
+            >
+              New Request
+            </Button>
+            {/* MUI Tooltip wraps a <span> so hover fires even when the Button
+                underneath is disabled — browsers swallow pointer events on
+                disabled buttons, so a native `title` attribute never shows
+                in the wrong-tab case. */}
+            <Tooltip title={printCumulativeTooltip ?? ''} placement="bottom" arrow>
+              <span style={{ display: 'inline-block' }}>
+                <Button
+                  variant="contained"
+                  startIcon={<Printer className="w-4 h-4" />}
+                  onClick={onPrintCumulativeClick}
+                  disabled={!canPrintCumulative}
+                  sx={{ textTransform: 'none', fontWeight: 600 }}
+                >
+                  Print Cumulative
+                </Button>
+              </span>
+            </Tooltip>
+          </Box>
         }
       />
 
@@ -481,6 +595,238 @@ export default function AdminRequests() {
           }}
         />
       </Paper>
+
+      {/* Print Cumulative confirmation — fires only when there are Pending
+          requests that won't be included in the print (which sources only
+          Approved data). Lets admin decide whether to wait for more
+          approvals or print the current set as-is. Mirrors the inventory
+          flow so both roles get the same safety net. */}
+      <ConfirmDialog
+        open={printConfirmOpen}
+        title={`${totalPending} ${totalPending === 1 ? 'request is' : 'requests are'} still pending`}
+        message={`Only the in-progress (approved) requests will be included in this batch plan. Pending requests won't appear here until they're approved. Print anyway?`}
+        confirmLabel="Yes, choose requests"
+        cancelLabel="Cancel"
+        onConfirm={() => {
+          setPrintConfirmOpen(false)
+          openPrintSelection()
+        }}
+        onCancel={() => setPrintConfirmOpen(false)}
+      />
+
+      {/* Selection dialog — lists every Approved request in scope; admin
+          un-checks the ones they don't want to pack in this batch. Print
+          button opens the cumulative report scoped to only those IDs.
+          Default: everything checked → one-click "Print all". */}
+      <Dialog
+        open={printSelectionOpen}
+        onClose={(_e, reason) => {
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown') return
+          setPrintSelectionOpen(false)
+        }}
+        maxWidth="sm"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
+        <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 700 }}>
+          Select requests for the batch plan
+          <IconButton size="small" onClick={() => setPrintSelectionOpen(false)}>
+            <XIcon className="w-4 h-4" />
+          </IconButton>
+        </DialogTitle>
+        <DialogContent dividers>
+          {approvedForSelection.isLoading ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>Loading approved requests…</Box>
+          ) : approvedRows.length === 0 ? (
+            <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+              No approved requests in the queue.
+            </Box>
+          ) : (
+            <>
+              <TextField
+                select
+                size="small"
+                fullWidth
+                label="Shop"
+                value={printShopFilter}
+                onChange={e => setPrintShopFilter(e.target.value)}
+                sx={{ mb: 1.5 }}
+                slotProps={{
+                  inputLabel: { shrink: true },
+                  select: {
+                    displayEmpty: true,
+                    MenuProps: {
+                      slotProps: {
+                        paper: {
+                          sx: {
+                            borderRadius: 2,
+                            boxShadow: '0 6px 18px rgba(31,31,31,0.18)',
+                            border: '1px solid rgba(31,31,31,0.12)',
+                          },
+                        },
+                      },
+                    },
+                  },
+                }}
+              >
+                <MenuItem value="">All shops ({approvedRows.length})</MenuItem>
+                {shopsInApproved.map(s => {
+                  const count = approvedRows.filter(r => r.shopId === s.shopId).length
+                  return (
+                    <MenuItem key={s.shopId} value={s.shopId}>
+                      {s.shopName} ({count})
+                    </MenuItem>
+                  )
+                })}
+              </TextField>
+
+              {(() => {
+                const visibleIds = visibleApprovedRows.map(r => r.id)
+                const visibleChecked = visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).length
+                const allVisibleChecked = visibleIds.length > 0 && visibleChecked === visibleIds.length
+                const noneVisibleChecked = visibleChecked === 0
+                const selectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.add(id)
+                  return n
+                })
+                const deselectAll = () => setSelectedRequestIds(prev => {
+                  const n = new Set(prev)
+                  for (const id of visibleIds) n.delete(id)
+                  return n
+                })
+                return (
+                  <Box sx={{ mb: 1, display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap' }}>
+                    <Box sx={{ fontSize: 12, color: '#1F1F1F99', flex: 1, minWidth: 0 }}>
+                      {printShopFilter
+                        ? `${visibleChecked} of ${visibleIds.length} selected in this shop`
+                        : `${selectedRequestIds.size} of ${approvedRows.length} selected`}
+                    </Box>
+                    <Button
+                      size="small"
+                      onClick={selectAll}
+                      disabled={allVisibleChecked || visibleIds.length === 0}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1 }}
+                    >
+                      Select all
+                    </Button>
+                    <Button
+                      size="small"
+                      onClick={deselectAll}
+                      disabled={noneVisibleChecked}
+                      sx={{ textTransform: 'none', fontWeight: 700, minWidth: 'auto', px: 1, color: '#C62828' }}
+                    >
+                      Deselect all
+                    </Button>
+                  </Box>
+                )
+              })()}
+
+              <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
+                {visibleApprovedRows.map(r => {
+                  const checked = selectedRequestIds.has(r.id)
+                  return (
+                    <Box
+                      key={r.id}
+                      onClick={() => {
+                        setSelectedRequestIds(prev => {
+                          const n = new Set(prev)
+                          if (n.has(r.id)) n.delete(r.id); else n.add(r.id)
+                          return n
+                        })
+                      }}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        px: 1.5, py: 0.75,
+                        borderBottom: '1px solid rgba(31,31,31,0.08)',
+                        '&:last-child': { borderBottom: 'none' },
+                        cursor: 'pointer',
+                        bgcolor: checked ? '#FFFBE6' : 'transparent',
+                        '&:hover': { bgcolor: '#FFF8DC' },
+                      }}
+                    >
+                      <Box
+                        component="input"
+                        type="checkbox"
+                        checked={checked}
+                        onChange={() => {}}
+                        sx={{ pointerEvents: 'none' }}
+                      />
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        <Box sx={{ fontSize: 13, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
+                          {r.code}
+                          {!printShopFilter && (
+                            <Box component="span" sx={{ fontWeight: 500, color: '#1F1F1F99' }}>· {r.shopName}</Box>
+                          )}
+                          {r.isSpecial && (
+                            <Box
+                              component="span"
+                              title={r.specialLabel?.trim() || 'Special Request'}
+                              sx={{
+                                display: 'inline-flex', alignItems: 'center', gap: 0.4,
+                                px: 0.75, py: 0.15, borderRadius: 0.75,
+                                bgcolor: '#FFB74D', border: '1px solid #E65100',
+                                color: '#3E2500', fontSize: 10, fontWeight: 800,
+                                letterSpacing: 0.4, textTransform: 'uppercase',
+                                lineHeight: 1.2,
+                                maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                              }}
+                            >
+                              ★ Special
+                              {r.specialLabel?.trim() && (
+                                <Box component="span" sx={{ fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
+                                  · {r.specialLabel.trim()}
+                                </Box>
+                              )}
+                            </Box>
+                          )}
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {r.totalItems} items · {r.totalQty} units · {formatIstDateTime(r.submittedAt)}
+                        </Box>
+                      </Box>
+                    </Box>
+                  )
+                })}
+                {visibleApprovedRows.length === 0 && (
+                  <Box sx={{ p: 2, fontSize: 13, color: '#1F1F1F99' }}>
+                    No approved requests for this shop.
+                  </Box>
+                )}
+              </Box>
+            </>
+          )}
+        </DialogContent>
+        <DialogActions sx={{ p: 2 }}>
+          <Button
+            onClick={() => setPrintSelectionOpen(false)}
+            variant="outlined"
+            sx={{ textTransform: 'none', fontWeight: 600, borderColor: '#1F1F1F', color: '#1F1F1F' }}
+          >
+            Cancel
+          </Button>
+          {(() => {
+            const scopedIds = printShopFilter
+              ? visibleApprovedRows.filter(r => selectedRequestIds.has(r.id)).map(r => r.id)
+              : Array.from(selectedRequestIds)
+            const scopedCount = scopedIds.length
+            const allSelected = !printShopFilter && scopedCount === approvedRows.length
+            return (
+              <Button
+                variant="contained"
+                disabled={scopedCount === 0}
+                onClick={() => {
+                  openPrintCumulative(allSelected ? undefined : scopedIds)
+                  setPrintSelectionOpen(false)
+                }}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
+              >
+                Print {scopedCount} selected
+              </Button>
+            )
+          })()}
+        </DialogActions>
+      </Dialog>
     </div>
   )
 }

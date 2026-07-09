@@ -105,9 +105,12 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     public async Task<ActionResult<StockRequestDto>> Get(Guid id, CancellationToken ct)
         => Ok(await requests.GetAsync(id, ct));
 
-    // ─── Shop user: create ───────────────────────────────────
+    // ─── Create (shop user for own shop, admin for any shop) ───
+    // 08-Jul-2026: admin allowed too. Service enforces the role split:
+    //   • Admin caller     → REQUIRES request.ShopId (creates for that shop).
+    //   • ShopUser caller  → ignores/rejects request.ShopId, uses own claim.
     [HttpPost]
-    [Authorize(Roles = "ShopUser")]
+    [Authorize(Roles = "ShopUser,Admin")]
     public async Task<ActionResult<StockRequestDto>> Create([FromBody] CreateStockRequestRequest request, CancellationToken ct)
     {
         var dto = await requests.CreateAsync(request, ct);
@@ -172,26 +175,35 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     // are excluded from every list/count endpoint; this is the only way to
     // reach one.
 
+    // 08-Jul-2026: draft endpoints now serve Admin too. Admin passes
+    // `shopId` (path they're drafting for); shop users omit it and get
+    // their own shop's draft via the auth claim. Service enforces the
+    // role-based shop resolution; controller just forwards the query
+    // param through.
     [HttpGet("draft")]
-    [Authorize(Roles = "ShopUser")]
-    public async Task<ActionResult<StockRequestDto>> GetDraft(CancellationToken ct)
+    [Authorize(Roles = "ShopUser,Admin")]
+    public async Task<ActionResult<StockRequestDto>> GetDraft(
+        [FromQuery] Guid? shopId,
+        CancellationToken ct)
     {
-        var draft = await requests.GetShopDraftAsync(ct);
+        var draft = await requests.GetShopDraftAsync(shopId, ct);
         return draft is null ? NotFound() : Ok(draft);
     }
 
     [HttpPost("draft")]
-    [Authorize(Roles = "ShopUser")]
+    [Authorize(Roles = "ShopUser,Admin")]
     public async Task<ActionResult<StockRequestDto>> SaveDraft(
         [FromBody] CreateStockRequestRequest request,
         CancellationToken ct)
         => Ok(await requests.SaveShopDraftAsync(request, ct));
 
     [HttpDelete("draft")]
-    [Authorize(Roles = "ShopUser")]
-    public async Task<IActionResult> DeleteDraft(CancellationToken ct)
+    [Authorize(Roles = "ShopUser,Admin")]
+    public async Task<IActionResult> DeleteDraft(
+        [FromQuery] Guid? shopId,
+        CancellationToken ct)
     {
-        await requests.DeleteShopDraftAsync(ct);
+        await requests.DeleteShopDraftAsync(shopId, ct);
         return NoContent();
     }
 

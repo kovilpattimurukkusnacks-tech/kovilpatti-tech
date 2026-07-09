@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { ArrowRight, ChevronDown, ChevronRight, FileEdit, Package, Plus, Search } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Collapse, IconButton, InputAdornment, Paper,
@@ -42,9 +42,20 @@ import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
 export default function ShopRequests() {
   const navigate = useNavigate()
-  // Default to Pending — shop user lands on what's still outstanding
-  // (29-Jun-2026 client follow-up); they can switch to All any time.
-  const [activePreset, setActivePreset] = useState<string>('pending')
+  const [searchParams, setSearchParams] = useSearchParams()
+  // Preset resolution priority (08-Jul-2026):
+  //   1. ?preset= in the URL — set by the confirm-receipt redirect
+  //      ("?preset=pending") and any deep-linked navigation. Honored
+  //      verbatim if it matches a known preset key.
+  //   2. Default 'pending' at initial mount. A follow-up effect flips
+  //      this to 'dispatched' on first render if the peek query returns
+  //      at least one Dispatched row — client req: shop user landing
+  //      on the page with pending receipts should SEE them first.
+  const initialPreset = (() => {
+    const requested = searchParams.get('preset')
+    return requested && PRESETS.some(p => p.key === requested) ? requested : 'pending'
+  })()
+  const [activePreset, setActivePreset] = useState<string>(initialPreset)
   const [search, setSearch] = useState<string>('')
   const [page, setPage] = useState(0)
   const [pageSize, setPageSize] = useState(10)
@@ -154,6 +165,36 @@ export default function ShopRequests() {
   // Only surface the banner when there IS something to confirm AND the
   // user isn't already on the Dispatched tab (would be redundant).
   const showDispatchedBanner = dispatchedCount > 0 && activePreset !== 'dispatched'
+
+  // Auto-land on the Dispatched tab (08-Jul-2026 client req): when the
+  // shop user logs in and has ≥1 Dispatched request awaiting receipt,
+  // that's the most urgent thing they need to see — surface it first.
+  // Guarded by a one-shot ref so it fires ONCE per mount: if the user
+  // then clicks another tab, we don't yank them back. Also skipped when
+  // the URL carries an explicit ?preset= (deep link / receive redirect
+  // knows better than the heuristic).
+  const dispatchedAutoLandedRef = useRef(false)
+  useEffect(() => {
+    if (dispatchedAutoLandedRef.current) return
+    // Only auto-land when the URL didn't ask for a specific preset.
+    if (searchParams.get('preset')) { dispatchedAutoLandedRef.current = true; return }
+    // Wait for the peek query to resolve. `data` is undefined while
+    // loading, populated (possibly zero-count) once landed.
+    if (dispatchedPeek.data === undefined) return
+    dispatchedAutoLandedRef.current = true
+    if (dispatchedCount > 0) setActivePreset('dispatched')
+  }, [dispatchedPeek.data, dispatchedCount, searchParams])
+
+  // Strip the ?preset= param once consumed so a subsequent F5 doesn't
+  // lock the user onto that tab if they've since clicked around.
+  // Same one-shot pattern as InventoryRequests. 08-Jul-2026.
+  useEffect(() => {
+    if (!searchParams.has('preset')) return
+    const next = new URLSearchParams(searchParams)
+    next.delete('preset')
+    setSearchParams(next, { replace: true })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const rows  = list.data?.items ?? []
   const total = list.data?.total ?? 0
