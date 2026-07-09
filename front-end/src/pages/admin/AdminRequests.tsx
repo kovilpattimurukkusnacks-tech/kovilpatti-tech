@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
-import { Search, Printer } from 'lucide-react'
+import { Search, Printer, Plus } from 'lucide-react'
 import { Alert, Box, Button, Chip, InputAdornment, Paper, TextField } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
@@ -318,18 +318,36 @@ export default function AdminRequests() {
         title="Stock Requests"
         subtitle={list.isLoading ? 'Loading…' : `${total} ${total === 1 ? 'request' : 'requests'} from all shops`}
         action={
-          <Button
-            variant="contained"
-            startIcon={<Printer className="w-4 h-4" />}
-            // noopener severs the parent↔child link so the new tab's
-            // print dialog never blocks interaction on this tab.
-            onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
-            disabled={!hasPending}
-            title={hasPending ? undefined : 'No in-progress requests to print'}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-          >
-            Print Cumulative
-          </Button>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+            {/* Admin direct-order (08-Jul-2026). Opens the same
+                ShopRequestNew component with a shop picker at the top;
+                bypasses the visit-category gate the shop-user flow
+                enforces (admin orders are one-off, not routine). */}
+            <Button
+              variant="outlined"
+              startIcon={<Plus className="w-4 h-4" />}
+              onClick={() => navigate('/admin/requests/new')}
+              sx={{
+                textTransform: 'none', fontWeight: 600,
+                borderColor: '#1F1F1F', color: '#1F1F1F', bgcolor: '#FFFFFF',
+                '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
+              }}
+            >
+              New Request
+            </Button>
+            <Button
+              variant="contained"
+              startIcon={<Printer className="w-4 h-4" />}
+              // noopener severs the parent↔child link so the new tab's
+              // print dialog never blocks interaction on this tab.
+              onClick={() => window.open('/print/cumulative', '_blank', 'noopener,noreferrer')}
+              disabled={!hasPending}
+              title={hasPending ? undefined : 'No in-progress requests to print'}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
+            >
+              Print Cumulative
+            </Button>
+          </Box>
         }
       />
 

@@ -19,7 +19,13 @@ public record CreateStockRequestRequest(
     /// User-supplied label ("Diwali stock 2026"). Ignored when IsSpecial
     /// is false; nullable when IsSpecial is true (UI falls back to
     /// "Special Request").
-    string? SpecialLabel = null
+    string? SpecialLabel = null,
+    /// 08-Jul-2026: admin-only field. When present + caller is Admin, the
+    /// request is created FOR that shop (not the caller's own — admin has
+    /// no ShopId claim). Shop users MUST leave this null; the service
+    /// rejects any supplied ShopId from a shop caller as an authorisation
+    /// mismatch.
+    Guid? ShopId = null
 ) : IStockRequestPayload;
 
 public record CreateStockRequestItem(

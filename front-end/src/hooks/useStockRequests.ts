@@ -155,9 +155,13 @@ export function useCreateStockRequest() {
     mutationFn: (req: CreateStockRequestRequest) => stockRequestsApi.create(req),
     // For create, we don't try to insert into the paged list (sort order is by
     // submitted_at DESC — new row would appear at the top of page 1). Simpler
-    // to invalidate just the "mine" list since shop user lands back on it.
+    // to invalidate every list scope since admin-create (08-Jul-2026) can
+    // land the row in either the "all" admin list OR the "incoming" inv
+    // list, and shop-user-create still lands in "mine".
     onSuccess: (created) => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'incoming'] })
+      qc.invalidateQueries({ queryKey: ['stock-requests', 'all'] })
       // A newly-created request may carry isSpecial=true — refresh the
       // banner feed so it shows up immediately on shop / inv / admin.
       qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })

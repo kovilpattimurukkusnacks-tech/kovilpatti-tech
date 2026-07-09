@@ -66,6 +66,10 @@ const router = createBrowserRouter(
         <Route path="create-account/shop" element={<Shops />} />
         <Route path="create-account/user" element={<Staff />} />
         <Route path="requests" element={<AdminRequests />} />
+        {/* Admin can raise a new stock request on behalf of any shop
+            (08-Jul-2026). Same component as the shop's /new — role +
+            path drive the shop-picker + gate-bypass branches. */}
+        <Route path="requests/new" element={<ShopRequestNew />} />
         <Route path="requests/:id" element={<AdminRequestDetail />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
         <Route path="accounts" element={<AdminAccounts />} />

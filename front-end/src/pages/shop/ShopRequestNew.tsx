@@ -10,6 +10,7 @@ import PageHeader from '../../components/PageHeader'
 import { useApp } from '../../context/AppContext'
 import { useProducts } from '../../hooks/useProducts'
 import { useCategories } from '../../hooks/useCategories'
+import { useShops } from '../../hooks/useShops'
 import {
   useCreateStockRequest, useUpdateStockRequest, useStockRequest,
   useShopDraft, useSaveShopDraft, useDeleteShopDraft,
@@ -50,6 +51,14 @@ export default function ShopRequestNew() {
   const isEditMode = !!editId
   const { currentUser } = useApp()
   const isAdmin = currentUser?.role === 'Admin'
+  // 08-Jul-2026: admin can now open /admin/requests/new to raise a request
+  // for a specific shop. Distinct branch from isEditMode — mode = "admin
+  // creates for a shop". Shop-user create is the third branch (no shop
+  // picker; forces currentUser.ShopId).
+  const isAdminCreate = isAdmin && !isEditMode
+  // Admin's chosen target shop for the new-request flow. Null until they
+  // pick from the shop picker at the top of the review dialog.
+  const [adminShopId, setAdminShopId] = useState<string | null>(null)
   // Admin lands here from /admin/requests/:id/edit, shop from /shop/requests/:id/edit
   const detailPath = isEditMode && editId
     ? (isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
@@ -73,6 +82,11 @@ export default function ShopRequestNew() {
   const saveDraftMutation   = useSaveShopDraft()
   const deleteDraftMutation = useDeleteShopDraft()
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
+  // Shops list — only loaded when the admin-create branch actually needs
+  // the picker. Cheap query; server returns the full shop list ordered
+  // by code so the picker options are stable.
+  const shopsQuery = useShops()
+  const shops = isAdminCreate ? (shopsQuery.data ?? []) : []
   // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
   // Discarding wipes work that took the shop minutes to build — a single
   // accidental click on the sticky bottom bar shouldn't be enough.
@@ -864,6 +878,13 @@ export default function ShopRequestNew() {
       setLocalErr('Add at least one product to the request.')
       return
     }
+    // Admin-create branch requires the shop picker to be filled in.
+    // Blocking here (not just at the Submit button's disabled) means a
+    // keyboard user hitting Enter can't sneak past.
+    if (isAdminCreate && !adminShopId) {
+      setLocalErr('Pick a shop before submitting.')
+      return
+    }
     const items = Array.from(cart.values()).map(l => ({
       productId: l.product.id,
       requestedQty: l.qty,
@@ -890,14 +911,18 @@ export default function ShopRequestNew() {
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
         navigate(isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)
       } else {
+        // Admin-create passes an explicit shopId (BE requires it for
+        // admin callers). Shop-user submit omits the field; the BE
+        // pins it to currentUser.ShopId server-side.
         const res = await createMutation.mutateAsync({
           notes: notes.trim() || undefined,
           items,
           ...specialFields,
+          ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
         })
         submittingRef.current = true
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
-        navigate(`/shop/requests/${res.id}`)
+        navigate(isAdminCreate ? `/admin/requests/${res.id}` : `/shop/requests/${res.id}`)
       }
     } catch {
       // shown via apiErrorMessage below
@@ -1420,6 +1445,41 @@ export default function ShopRequestNew() {
             </Box>
           ) : (
             <>
+              {/* Admin-create shop picker (08-Jul-2026). Only rendered on
+                  the admin's /admin/requests/new route; shop-user submit
+                  path skips this block entirely (BE pins their shopId
+                  from the auth claim). Placed at the TOP of the review
+                  dialog so the admin decides "who is this for" before
+                  they see the totals. Required — blocks submit until
+                  filled. */}
+              {isAdminCreate && (
+                <Box sx={{ mb: 2, p: 1.5, bgcolor: '#FFF8DC', border: '1px solid #C28A00', borderRadius: 2 }}>
+                  <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7C4A00', mb: 0.75 }}>
+                    Raise for shop
+                  </Box>
+                  <Autocomplete
+                    size="small"
+                    options={shops}
+                    value={shops.find(s => s.id === adminShopId) ?? null}
+                    onChange={(_e, value) => setAdminShopId(value?.id ?? null)}
+                    getOptionLabel={s => `${s.code} · ${s.name}`}
+                    isOptionEqualToValue={(a, b) => a.id === b.id}
+                    disableClearable={false}
+                    renderInput={(params) => (
+                      <TextField
+                        {...params}
+                        placeholder={shopsQuery.isLoading ? 'Loading shops…' : 'Select a shop'}
+                        variant="outlined"
+                        sx={{ bgcolor: '#FFFFFF', borderRadius: 1 }}
+                      />
+                    )}
+                  />
+                  <Box sx={{ fontSize: 11, color: '#7C4A00CC', mt: 0.75 }}>
+                    Required. Admin creates this request on the shop's behalf.
+                  </Box>
+                </Box>
+              )}
+
               {/* Two-level grouping: outer = ROOT category (1 KG SNACKS, etc.)
                   with an underline-style heading; inner = leaf-cat cards
                   (existing yellow banner + per-product rows). Mirrors the
@@ -1707,7 +1767,14 @@ export default function ShopRequestNew() {
           <Button
             onClick={handleSubmit}
             variant="contained"
-            disabled={cart.size === 0 || activeMutation.isPending || (isEditMode && !editWindowOpen)}
+            disabled={
+              cart.size === 0
+              || activeMutation.isPending
+              || (isEditMode && !editWindowOpen)
+              // Admin must pick a shop before Submit lights up.
+              || (isAdminCreate && !adminShopId)
+            }
+            title={isAdminCreate && !adminShopId ? 'Pick a shop first' : undefined}
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >
             {activeMutation.isPending

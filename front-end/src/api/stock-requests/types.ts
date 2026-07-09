@@ -148,6 +148,11 @@ export type CreateStockRequestRequest = {
   /** User-supplied name for a special request. Ignored unless
    *  isSpecial=true. Trimmed + null-emptied server-side. */
   specialLabel?: string | null
+  /** Admin-only (08-Jul-2026): raise this request on behalf of a
+   *  specific shop. Required when the caller is Admin, forbidden for
+   *  ShopUser (BE rejects any supplied value that doesn't match the
+   *  caller's own shop). Shop users MUST omit this field. */
+  shopId?: string
 }
 
 export type UpdateStockRequestRequest = CreateStockRequestRequest

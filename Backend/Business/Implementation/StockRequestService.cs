@@ -128,11 +128,36 @@ public class StockRequestService(
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var shopId = currentUser.ShopId
-            ?? throw new ForbiddenException("Only shop users can create stock requests.");
+        // Resolve the target shop (08-Jul-2026: admin can now raise a
+        // request on any shop's behalf — the DTO carries an optional
+        // ShopId that only admin may set).
+        //   • Admin caller:   REQUIRE request.ShopId → use it.
+        //   • ShopUser caller: MUST NOT supply ShopId → force own ShopId.
+        //   • Inventory: forbidden either way (already outside the shop
+        //     write surface today, matches existing role gating).
+        Guid shopId;
+        if (IsRole(RoleNames.Admin))
+        {
+            if (request.ShopId is null)
+                throw new ValidationException(new[] {
+                    new ValidationFailure(nameof(request.ShopId), "Admin must select a shop.")
+                });
+            shopId = request.ShopId.Value;
+        }
+        else if (IsRole(RoleNames.ShopUser))
+        {
+            if (request.ShopId is not null && request.ShopId != currentUser.ShopId)
+                throw new ForbiddenException("Shop users can only create requests for their own shop.");
+            shopId = currentUser.ShopId
+                ?? throw new ForbiddenException("Your account is not linked to a shop.");
+        }
+        else
+        {
+            throw new ForbiddenException("This role cannot create stock requests.");
+        }
 
         var shop = await shops.GetAsync(shopId, ct)
-            ?? throw new NotFoundException("Your shop record was not found.");
+            ?? throw new NotFoundException("Shop record not found.");
 
         // Compute editable_until. When request_lock_enabled = false, the shop
         // can edit anytime — set a far-future timestamp so the FE chip / the
