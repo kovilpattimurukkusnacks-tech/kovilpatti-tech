@@ -78,9 +78,19 @@ export const stockRequestsApi = {
 
   // Shop draft (ShopUser) — at most one live draft per shop, identified
   // by the shop_id on the JWT. No URL id needed.
-  getDraft:    ()                                          => apiClient.get<StockRequestDto>('/api/stock-requests/draft'),
-  saveDraft:   (req: CreateStockRequestRequest)            => apiClient.post<StockRequestDto>('/api/stock-requests/draft', req),
-  deleteDraft: ()                                          => apiClient.delete<void>('/api/stock-requests/draft'),
+  // 08-Jul-2026: draft endpoints accept an optional `shopId` (admin-only).
+  // Shop user calls omit it → BE resolves from the auth claim. Admin must
+  // pass it → the specific shop they're drafting for.
+  getDraft:    (shopId?: string) =>
+    apiClient.get<StockRequestDto>(
+      shopId ? `/api/stock-requests/draft?shopId=${shopId}` : '/api/stock-requests/draft',
+    ),
+  saveDraft:   (req: CreateStockRequestRequest) =>
+    apiClient.post<StockRequestDto>('/api/stock-requests/draft', req),
+  deleteDraft: (shopId?: string) =>
+    apiClient.delete<void>(
+      shopId ? `/api/stock-requests/draft?shopId=${shopId}` : '/api/stock-requests/draft',
+    ),
 
   // Inventory dispatch draft (Inventory/Admin) — same payload shape as the
   // finalising dispatch endpoint; writes to draft_dispatched_qty only.

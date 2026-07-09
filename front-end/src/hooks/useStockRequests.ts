@@ -18,7 +18,11 @@ export const stockRequestsKeys = {
   listIncoming: (f?: StockRequestListFilters) => ['stock-requests', 'incoming', f ?? {}] as const,
   listAll:      (f?: StockRequestListFilters) => ['stock-requests', 'all',      f ?? {}] as const,
   detail:       (id: string)                  => ['stock-requests', id] as const,
-  shopDraft:    ()                            => ['stock-requests', 'shop-draft'] as const,
+  // 08-Jul-2026: draft cache keyed by shopId so admin switching shops
+  // in the picker resolves to the target shop's draft (not the last
+  // one they looked at). Shop-user calls pass no shopId → keyed under
+  // a stable 'self' bucket.
+  shopDraft:    (shopId?: string)             => ['stock-requests', 'shop-draft', shopId ?? 'self'] as const,
 }
 
 // ─── Queries ─────────────────────────────────────────────
@@ -95,12 +99,14 @@ export function useRequestCountByShop(args?: { status?: RequestStatus; inventory
  * Pass `enabled: false` when the caller isn't a ShopUser — the BE rejects
  * the call with 403 otherwise.
  */
-export function useShopDraft(options?: { enabled?: boolean }) {
+export function useShopDraft(shopId?: string, options?: { enabled?: boolean }) {
   return useQuery<StockRequestDto | null>({
-    queryKey: stockRequestsKeys.shopDraft(),
+    // 08-Jul-2026: shopId in the key so admin's picker change resolves to
+    // that shop's draft. Shop-user calls omit shopId → the 'self' bucket.
+    queryKey: stockRequestsKeys.shopDraft(shopId),
     queryFn: async () => {
       try {
-        return await stockRequestsApi.getDraft()
+        return await stockRequestsApi.getDraft(shopId)
       } catch (e) {
         if (e instanceof NotFoundError) return null
         throw e
@@ -158,7 +164,7 @@ export function useCreateStockRequest() {
     // to invalidate every list scope since admin-create (08-Jul-2026) can
     // land the row in either the "all" admin list OR the "incoming" inv
     // list, and shop-user-create still lands in "mine".
-    onSuccess: (created) => {
+    onSuccess: (created, req) => {
       qc.invalidateQueries({ queryKey: ['stock-requests', 'mine'] })
       qc.invalidateQueries({ queryKey: ['stock-requests', 'incoming'] })
       qc.invalidateQueries({ queryKey: ['stock-requests', 'all'] })
@@ -166,8 +172,10 @@ export function useCreateStockRequest() {
       // banner feed so it shows up immediately on shop / inv / admin.
       qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
       // Submit consumes the draft (BE-side, in fn_request_create). Clear the
-      // cached draft so the Resume Draft strip disappears immediately.
-      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
+      // cached draft for the SPECIFIC shop the caller submitted for so the
+      // Resume Draft strip disappears immediately. Admin's per-shop draft
+      // slots each have their own key.
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(req.shopId), null)
       toast.success({
         title: 'Request submitted',
         description: `${created.code} is now awaiting approval`,
@@ -176,27 +184,32 @@ export function useCreateStockRequest() {
   })
 }
 
-/** Save (or replace) the shop user's single live draft. */
+/** Save (or replace) the caller's single live draft on a shop. Admin
+ *  passes the picked shopId as part of the request payload; shop users
+ *  omit it (BE fills from their auth claim). */
 export function useSaveShopDraft() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (req: CreateStockRequestRequest) => stockRequestsApi.saveDraft(req),
-    onSuccess: (draft) => {
+    onSuccess: (draft, req) => {
       // Seed the cache with the fresh draft so subsequent reads (e.g. another
-      // tab) get the latest items without a refetch round-trip.
-      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), draft)
+      // tab) get the latest items without a refetch round-trip. Cache key
+      // reflects the shopId used in the write — admin's per-shop draft
+      // slots stay independent.
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(req.shopId), draft)
     },
   })
 }
 
-/** Discard the shop user's draft. */
+/** Discard the caller's draft on a shop. Admin passes shopId, shop user
+ *  omits it (BE resolves via auth claim). */
 export function useDeleteShopDraft() {
   const qc = useQueryClient()
   const toast = useToast()
   return useMutation({
-    mutationFn: () => stockRequestsApi.deleteDraft(),
-    onSuccess: () => {
-      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(), null)
+    mutationFn: (shopId?: string) => stockRequestsApi.deleteDraft(shopId),
+    onSuccess: (_res, shopId) => {
+      qc.setQueryData<StockRequestDto | null>(stockRequestsKeys.shopDraft(shopId), null)
       toast.info('Draft discarded')
     },
   })

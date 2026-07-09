@@ -128,33 +128,7 @@ public class StockRequestService(
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        // Resolve the target shop (08-Jul-2026: admin can now raise a
-        // request on any shop's behalf — the DTO carries an optional
-        // ShopId that only admin may set).
-        //   • Admin caller:   REQUIRE request.ShopId → use it.
-        //   • ShopUser caller: MUST NOT supply ShopId → force own ShopId.
-        //   • Inventory: forbidden either way (already outside the shop
-        //     write surface today, matches existing role gating).
-        Guid shopId;
-        if (IsRole(RoleNames.Admin))
-        {
-            if (request.ShopId is null)
-                throw new ValidationException(new[] {
-                    new ValidationFailure(nameof(request.ShopId), "Admin must select a shop.")
-                });
-            shopId = request.ShopId.Value;
-        }
-        else if (IsRole(RoleNames.ShopUser))
-        {
-            if (request.ShopId is not null && request.ShopId != currentUser.ShopId)
-                throw new ForbiddenException("Shop users can only create requests for their own shop.");
-            shopId = currentUser.ShopId
-                ?? throw new ForbiddenException("Your account is not linked to a shop.");
-        }
-        else
-        {
-            throw new ForbiddenException("This role cannot create stock requests.");
-        }
+        var shopId = ResolveTargetShopId(request);
 
         var shop = await shops.GetAsync(shopId, ct)
             ?? throw new NotFoundException("Shop record not found.");
@@ -439,11 +413,14 @@ public class StockRequestService(
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var shopId = currentUser.ShopId
-            ?? throw new ForbiddenException("Only shop users can save drafts.");
+        // Same role-based shop resolution as CreateAsync — admin can save
+        // a draft on any shop's behalf; shop user forced to their own.
+        // 08-Jul-2026: (shop_id, created_by) partial unique index means
+        // admin + shop user drafts on the same shop coexist safely.
+        var shopId = ResolveTargetShopId(request);
 
         var shop = await shops.GetAsync(shopId, ct)
-            ?? throw new NotFoundException("Your shop record was not found.");
+            ?? throw new NotFoundException("Shop record not found.");
 
         var itemsJson = await BuildItemsJsonAsync(request.Items, ct);
 
@@ -453,21 +430,85 @@ public class StockRequestService(
         return await GetAsync(draftId, ct);
     }
 
-    public async Task<StockRequestDto?> GetShopDraftAsync(CancellationToken ct = default)
+    public async Task<StockRequestDto?> GetShopDraftAsync(Guid? adminShopId, CancellationToken ct = default)
     {
-        var shopId = currentUser.ShopId
-            ?? throw new ForbiddenException("Only shop users have drafts.");
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var row = await requests.GetShopDraftAsync(shopId, ct);
+        // Admin: must supply the shopId being drafted for. Shop user:
+        // forced to own. Same rules as CreateAsync — see ResolveTargetShopId.
+        Guid shopId;
+        if (IsRole(RoleNames.Admin))
+        {
+            if (adminShopId is null)
+                throw new ValidationException(new[] {
+                    new ValidationFailure("shopId", "Admin must specify shopId to fetch a draft.")
+                });
+            shopId = adminShopId.Value;
+        }
+        else if (IsRole(RoleNames.ShopUser))
+        {
+            shopId = currentUser.ShopId
+                ?? throw new ForbiddenException("Your account is not linked to a shop.");
+        }
+        else
+        {
+            throw new ForbiddenException("This role has no shop drafts.");
+        }
+
+        var row = await requests.GetShopDraftAsync(shopId, userId, ct);
         return row is null ? null : MapWithItems(row);
     }
 
-    public async Task<bool> DeleteShopDraftAsync(CancellationToken ct = default)
+    public async Task<bool> DeleteShopDraftAsync(Guid? adminShopId, CancellationToken ct = default)
     {
-        var shopId = currentUser.ShopId
-            ?? throw new ForbiddenException("Only shop users have drafts.");
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
 
-        return await requests.DeleteShopDraftAsync(shopId, ct);
+        Guid shopId;
+        if (IsRole(RoleNames.Admin))
+        {
+            if (adminShopId is null)
+                throw new ValidationException(new[] {
+                    new ValidationFailure("shopId", "Admin must specify shopId to delete a draft.")
+                });
+            shopId = adminShopId.Value;
+        }
+        else if (IsRole(RoleNames.ShopUser))
+        {
+            shopId = currentUser.ShopId
+                ?? throw new ForbiddenException("Your account is not linked to a shop.");
+        }
+        else
+        {
+            throw new ForbiddenException("This role has no shop drafts.");
+        }
+
+        return await requests.DeleteShopDraftAsync(shopId, userId, ct);
+    }
+
+    // Shared shop-resolution helper — used by CreateAsync + SaveShopDraft.
+    // Admin: MUST supply request.ShopId. Shop user: forced to own; ignores
+    // any (matching) supplied ShopId, rejects mismatched. Any other role
+    // is forbidden from touching this surface. 08-Jul-2026.
+    private Guid ResolveTargetShopId(CreateStockRequestRequest request)
+    {
+        if (IsRole(RoleNames.Admin))
+        {
+            if (request.ShopId is null)
+                throw new ValidationException(new[] {
+                    new ValidationFailure(nameof(request.ShopId), "Admin must select a shop.")
+                });
+            return request.ShopId.Value;
+        }
+        if (IsRole(RoleNames.ShopUser))
+        {
+            if (request.ShopId is not null && request.ShopId != currentUser.ShopId)
+                throw new ForbiddenException("Shop users can only create requests for their own shop.");
+            return currentUser.ShopId
+                ?? throw new ForbiddenException("Your account is not linked to a shop.");
+        }
+        throw new ForbiddenException("This role cannot create stock requests.");
     }
 
     // ───────── Inventory dispatch draft ─────────

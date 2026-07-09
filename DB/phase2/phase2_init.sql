@@ -217,8 +217,14 @@ CREATE INDEX IF NOT EXISTS idx_stock_requests_active_specials
 -- the DB itself reject a second draft insert; the BE can rely on this and
 -- treat duplicate_object as "another tab beat me" rather than coding a
 -- race-prone read-then-write.
-CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_requests_one_draft_per_shop
-  ON stock_requests(shop_id)
+-- 08-Jul-2026: uniqueness widened from (shop_id) → (shop_id, created_by).
+-- The prior single-column index meant admin's admin-create draft for
+-- Shop A would clobber Shop A user's own draft. Widening to include the
+-- creator lets each user keep their own draft slot per shop — admin +
+-- shop user can now hold parallel drafts for the same shop without
+-- overwriting each other.
+CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_requests_one_draft_per_shop_user
+  ON stock_requests(shop_id, created_by)
   WHERE status = 'Draft' AND is_deleted = false;
 
 -- Seed seq_request_code past any existing REQ-NNNN codes so re-runs of

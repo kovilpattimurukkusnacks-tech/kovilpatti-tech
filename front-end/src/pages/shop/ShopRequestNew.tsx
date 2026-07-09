@@ -74,11 +74,16 @@ export default function ShopRequestNew() {
   const existingQuery        = useStockRequest(editId)
   const existing             = existingQuery.data
 
-  // Drafts only apply to the shop user's new-request flow. Disabled for:
-  //   • edit mode (we're already working on a real request)
-  //   • admin (admin doesn't have a shop, so no draft to load/save)
-  const draftEnabled = !isEditMode && !isAdmin
-  const draftQuery     = useShopDraft({ enabled: draftEnabled })
+  // Drafts (08-Jul-2026: admin drafts too). Rules:
+  //   • edit mode → no drafts (we're already working on a real request).
+  //   • shop user new-request → draft on their own shop.
+  //   • admin new-request → draft on the picked shop only. If no shop is
+  //     picked yet, drafts are disabled — nothing to key off of.
+  // The `(shop_id, created_by)` partial unique index guarantees admin's
+  // draft and the shop user's draft on the same shop don't collide.
+  const draftShopId = isAdminCreate ? (adminShopId ?? undefined) : undefined
+  const draftEnabled = !isEditMode && (!isAdmin || !!adminShopId)
+  const draftQuery = useShopDraft(draftShopId, { enabled: draftEnabled })
   const saveDraftMutation   = useSaveShopDraft()
   const deleteDraftMutation = useDeleteShopDraft()
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
@@ -256,8 +261,14 @@ export default function ShopRequestNew() {
   // beforeunload keepalive fetch isn't 100% reliable across browsers.
   // sessionStorage is synchronous + survives refresh; we hydrate cart
   // from it on mount and clear it on submit.
-  const draftLocalKey = currentUser?.shopId
-    ? `shop-request-new-cart:${currentUser.shopId}`
+  // sessionStorage key — per-user, per-shop. For shop users, shopId comes
+  // from the auth claim. For admin-create, it's the picked shop; null
+  // until they select one, so drafts and F5-hydration wait until then.
+  // 08-Jul-2026: also namespaces by currentUser.id so admin's local
+  // snapshot doesn't leak across roles on a shared browser profile.
+  const draftScopeShopId = isAdminCreate ? adminShopId : (currentUser?.shopId ?? null)
+  const draftLocalKey = draftScopeShopId && currentUser?.userId
+    ? `shop-request-new-cart:${currentUser.userId}:${draftScopeShopId}`
     : null
 
   // Cart state — Map keyed by productId so add/update/remove is O(1).
@@ -387,6 +398,33 @@ export default function ShopRequestNew() {
       return changed ? next : prev
     })
   }, [cart, allCats, rootCats])
+
+  // 08-Jul-2026: reset cart when admin switches the shop picker. Without
+  // this, if admin picks Shop A → carts 5 items → switches to Shop B, the
+  // in-memory cart still shows Shop A's items — which would then autosave
+  // to Shop B's draft slot on the next keystroke. Resetting `seeded` also
+  // lets the newly-loaded Shop B draft hydrate the cart on its query.
+  const prevAdminShopIdRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (!isAdminCreate) return
+    // First render captures the initial state; only fire on actual switch.
+    if (prevAdminShopIdRef.current === adminShopId) return
+    // Skip the initial null → firstShop transition; that's just the
+    // user picking their first shop, not a "switch". Reset only when
+    // moving from one shop to another (both non-null and different).
+    if (prevAdminShopIdRef.current !== null) {
+      setCart(new Map())
+      setNotes('')
+      setIsSpecial(false)
+      setSpecialLabel('')
+      setVisitedCategoryIds(new Set())
+      setIsDraftDirty(false)
+      setSeeded(false)
+      hydratedFromSourceRef.current = false
+      hasAutoNavigatedRef.current = false
+    }
+    prevAdminShopIdRef.current = adminShopId
+  }, [isAdminCreate, adminShopId])
 
   // Jump-to-first-unvisited on resume (03-Jul-2026). When the user comes
   // back to /new with a hydrated cart (from server draft OR sessionStorage)
@@ -602,7 +640,13 @@ export default function ShopRequestNew() {
         requestedQty: l.qty,
       }))
       saveDraftMutation.mutate(
-        { notes: notes.trim() || undefined, items },
+        {
+          notes: notes.trim() || undefined,
+          items,
+          // Admin drafts carry the picked shop; shop-user submit omits
+          // it (BE reads shop_id from the auth claim).
+          ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
+        },
         {
           onSuccess: () => {
             setDraftSavedAt(new Date())
@@ -991,6 +1035,7 @@ export default function ShopRequestNew() {
       await saveDraftMutation.mutateAsync({
         notes: notes.trim() || undefined,
         items,
+        ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
       })
       setDraftSavedAt(new Date())
       // Only mark clean if nothing changed while the save was in flight —
@@ -1011,7 +1056,9 @@ export default function ShopRequestNew() {
    */
   const handleDiscardDraft = async () => {
     try {
-      await deleteDraftMutation.mutateAsync()
+      // Admin's delete goes against the picked shop; shop-user's omits
+      // (BE resolves via auth claim).
+      await deleteDraftMutation.mutateAsync(isAdminCreate ? adminShopId ?? undefined : undefined)
       clearCart()
       setDraftSavedAt(null)
       setIsDraftDirty(false)
@@ -1979,6 +2026,7 @@ export default function ShopRequestNew() {
               await saveDraftMutation.mutateAsync({
                 notes: notes.trim() || undefined,
                 items,
+                ...(isAdminCreate && adminShopId ? { shopId: adminShopId } : {}),
               })
               setDraftSavedAt(new Date())
               setIsDraftDirty(false)

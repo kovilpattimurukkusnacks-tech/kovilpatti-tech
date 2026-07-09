@@ -62,10 +62,12 @@ public interface IStockRequestService
     // ── Shop drafts (ShopUser only) ──
     /// Save (or replace) the shop user's single live draft.
     Task<StockRequestDto> SaveShopDraftAsync(CreateStockRequestRequest request, CancellationToken ct = default);
-    /// Get the shop user's current draft. Returns null when none exists.
-    Task<StockRequestDto?> GetShopDraftAsync(CancellationToken ct = default);
-    /// Discard the shop user's draft. Returns true if a draft was deleted.
-    Task<bool> DeleteShopDraftAsync(CancellationToken ct = default);
+    /// Get the caller's current draft. Returns null when none exists.
+    /// Admin must pass `adminShopId` (the shop they're creating for);
+    /// shop users ignore the param and get their own shop's draft.
+    Task<StockRequestDto?> GetShopDraftAsync(Guid? adminShopId, CancellationToken ct = default);
+    /// Discard the caller's draft. Same shop-resolution rules as above.
+    Task<bool> DeleteShopDraftAsync(Guid? adminShopId, CancellationToken ct = default);
 
     // ── Inventory dispatch draft (Inventory/Admin) ──
     /// Save WIP dispatch quantities without finalising. Pre-fills the dispatch
