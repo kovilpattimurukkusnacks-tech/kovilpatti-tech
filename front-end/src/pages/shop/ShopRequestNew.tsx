@@ -958,7 +958,7 @@ export default function ShopRequestNew() {
         // Admin-create passes an explicit shopId (BE requires it for
         // admin callers). Shop-user submit omits the field; the BE
         // pins it to currentUser.ShopId server-side.
-        const res = await createMutation.mutateAsync({
+        await createMutation.mutateAsync({
           notes: notes.trim() || undefined,
           items,
           ...specialFields,
