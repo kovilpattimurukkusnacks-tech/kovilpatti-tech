@@ -966,7 +966,15 @@ export default function ShopRequestNew() {
         })
         submittingRef.current = true
         if (draftLocalKey) { try { sessionStorage.removeItem(draftLocalKey) } catch { /* noop */ } }
-        navigate(isAdminCreate ? `/admin/requests/${res.id}` : `/shop/requests/${res.id}`)
+        // Post-submit redirect (08-Jul-2026 client req): land on the LIST
+        // page where the new request will surface — not the detail page.
+        //   • Admin → All tab on the admin list.
+        //   • Shop → Pending tab on the shop list.
+        // AdminRequests reads ?preset= from the URL (defaults to 'all' if
+        // unset). ShopRequests holds preset in local state; its initial
+        // useState value is 'pending', so a fresh mount lands there.
+        // Both cases: navigating to the list URL is enough.
+        navigate(isAdminCreate ? '/admin/requests?preset=all' : '/shop/requests')
       }
     } catch {
       // shown via apiErrorMessage below
@@ -1153,6 +1161,59 @@ export default function ShopRequestNew() {
           {existing.status !== 'Pending' ? ` (status: ${existing.status})` : ' (edit window has closed)'}.
           Only an admin can modify it now.
         </Alert>
+      )}
+
+      {/* Admin-create shop picker (08-Jul-2026, moved from inside the
+          Review dialog on 08-Jul-2026 evening). Admin picks the target
+          shop UP-FRONT so:
+            • auto-save has a shopId to key against (draftEnabled needs it).
+            • the browsing UX is anchored to "you are ordering for Shop X".
+          Card is amber-tinted so it stands out as the primary decision on
+          this page. Filter row + product grid render below regardless,
+          but nothing saves until this is picked. */}
+      {isAdminCreate && (
+        <Paper
+          elevation={0}
+          sx={{
+            mb: 2, p: 1.5, borderRadius: 2,
+            bgcolor: '#FFF8DC',
+            border: `2px solid ${adminShopId ? '#C28A00' : '#E65100'}`,
+            display: 'flex', alignItems: 'center', gap: 1.5, flexWrap: 'wrap',
+          }}
+        >
+          <Box sx={{
+            fontSize: 11, fontWeight: 800, textTransform: 'uppercase',
+            letterSpacing: 0.5, color: '#7C4A00', minWidth: 100,
+          }}>
+            Raise for shop
+          </Box>
+          <Autocomplete
+            size="small"
+            options={shops}
+            value={shops.find(s => s.id === adminShopId) ?? null}
+            onChange={(_e, value) => setAdminShopId(value?.id ?? null)}
+            getOptionLabel={s => `${s.code} · ${s.name}`}
+            isOptionEqualToValue={(a, b) => a.id === b.id}
+            sx={{ flex: 1, minWidth: 260, maxWidth: 480 }}
+            renderInput={(params) => (
+              <TextField
+                {...params}
+                placeholder={shopsQuery.isLoading ? 'Loading shops…' : 'Select a shop'}
+                variant="outlined"
+                // 08-Jul-2026: no pure white anywhere in this app — the
+                // pale-yellow/cream family is the uniform palette. #FFFBE6
+                // is the lightest cream + reads as a distinct input inside
+                // the amber "Raise for shop" card.
+                sx={{ bgcolor: '#FFFBE6', borderRadius: 1 }}
+              />
+            )}
+          />
+          {!adminShopId && (
+            <Box sx={{ fontSize: 12, fontWeight: 700, color: '#E65100' }}>
+              Required — nothing saves until you pick a shop.
+            </Box>
+          )}
+        </Paper>
       )}
 
       {/* Filter row: search + single-category + multi-type + clear filters + clear cart */}
@@ -1492,38 +1553,24 @@ export default function ShopRequestNew() {
             </Box>
           ) : (
             <>
-              {/* Admin-create shop picker (08-Jul-2026). Only rendered on
-                  the admin's /admin/requests/new route; shop-user submit
-                  path skips this block entirely (BE pins their shopId
-                  from the auth claim). Placed at the TOP of the review
-                  dialog so the admin decides "who is this for" before
-                  they see the totals. Required — blocks submit until
-                  filled. */}
-              {isAdminCreate && (
-                <Box sx={{ mb: 2, p: 1.5, bgcolor: '#FFF8DC', border: '1px solid #C28A00', borderRadius: 2 }}>
-                  <Box sx={{ fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#7C4A00', mb: 0.75 }}>
-                    Raise for shop
-                  </Box>
-                  <Autocomplete
-                    size="small"
-                    options={shops}
-                    value={shops.find(s => s.id === adminShopId) ?? null}
-                    onChange={(_e, value) => setAdminShopId(value?.id ?? null)}
-                    getOptionLabel={s => `${s.code} · ${s.name}`}
-                    isOptionEqualToValue={(a, b) => a.id === b.id}
-                    disableClearable={false}
-                    renderInput={(params) => (
-                      <TextField
-                        {...params}
-                        placeholder={shopsQuery.isLoading ? 'Loading shops…' : 'Select a shop'}
-                        variant="outlined"
-                        sx={{ bgcolor: '#FFFFFF', borderRadius: 1 }}
-                      />
-                    )}
-                  />
-                  <Box sx={{ fontSize: 11, color: '#7C4A00CC', mt: 0.75 }}>
-                    Required. Admin creates this request on the shop's behalf.
-                  </Box>
+              {/* Admin-create shop picker moved to the top of the page
+                  (08-Jul-2026 evening) so admin picks up-front and the
+                  auto-save has a shopId to key against BEFORE the cart
+                  builds. See the Paper block just below PageHeader. The
+                  review dialog no longer needs its own picker — a small
+                  read-only recap below lets the admin double-check the
+                  target shop before Submit. */}
+              {isAdminCreate && adminShopId && (
+                <Box sx={{
+                  mb: 2, px: 1.5, py: 1, borderRadius: 2,
+                  bgcolor: '#FFF8DC', border: '1px solid #C28A00',
+                  fontSize: 12, color: '#7C4A00',
+                }}>
+                  <strong>Raising for:</strong>{' '}
+                  {(() => {
+                    const s = shops.find(x => x.id === adminShopId)
+                    return s ? `${s.code} · ${s.name}` : adminShopId
+                  })()}
                 </Box>
               )}
 
