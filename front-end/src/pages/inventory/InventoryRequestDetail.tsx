@@ -31,6 +31,33 @@ import { useCategories } from '../../hooks/useCategories'
 // Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
 import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
 
+// Token-based product-picker filter (10-Jul-2026, client feedback).
+// MUI Autocomplete's default filter treats the whole input as ONE substring
+// against getOptionLabel — so typing "nat.kam" fails to find "Nattu Kambu"
+// because the label has a space between the words, not a dot. Client also
+// reported that mixing code + separator ("1kg lkd") didn't hit.
+//
+// This filter splits the input on ANY non-alphanumeric separator (space, dot,
+// comma, dash, slash) and requires EVERY resulting token to appear as a
+// case-insensitive substring somewhere in the combined "code name" string.
+// So "nat.kam" / "nat kam" / "kambu" / "017 kam" / "nk-25" all find the row.
+//
+// Kept as a pure module-level function so it doesn't re-create per render.
+type PickerProduct = { code: string; name: string }
+function productPickerFilter<T extends PickerProduct>(
+  options: T[],
+  state: { inputValue: string },
+): T[] {
+  const raw = state.inputValue.trim().toLowerCase()
+  if (!raw) return options
+  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean)
+  if (tokens.length === 0) return options
+  return options.filter(p => {
+    const hay = `${p.code} ${p.name}`.toLowerCase()
+    return tokens.every(t => hay.includes(t))
+  })
+}
+
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -1357,6 +1384,10 @@ export default function InventoryRequestDetail() {
                   getOptionLabel={(p) => `${p.code} — ${p.name}`}
                   isOptionEqualToValue={(a, b) => a.id === b.id}
                   loading={productsQuery.isLoading}
+                  // Custom tokenized filter — see productPickerFilter comment
+                  // above the component. Fixes the "nat.kam" / "code with
+                  // separator" complaint (10-Jul-2026).
+                  filterOptions={productPickerFilter}
                   renderInput={(params) => (
                     <TextField {...params} placeholder="Search product…" />
                   )}

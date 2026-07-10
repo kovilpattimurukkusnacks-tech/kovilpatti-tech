@@ -509,13 +509,114 @@ Bill / return / stock-take / expense / vendor / shipment codes generated via DEF
 - `fn_eway_api_log_write(eway_bill_id?, endpoint, request_body, response_body, http_status, error_message)` — audit every GSP call
 - `fn_eway_api_log_search(endpoint?, eway_bill_id?, from, to, page)` — investigation queries
 
-**Reports**
+**Operational reports (Phase 4 — day-to-day shop/admin views)**
 - `fn_report_daily_sales(shop_id, date)` — bills issued, revenue, tax split, top products
-- `fn_report_gst_summary(shop_id?, from, to)` — GSTR-1 grouping
-- `fn_report_bill_history(shop_id, customer_id?, from, to)`
+- `fn_report_bill_history(shop_id, customer_id?, from, to)` — customer / date drilldown
 - `fn_report_expense_monthly(shop_id, month)` — category-wise expense breakdown
-- `fn_report_profit_loss(shop_id, from, to)` — Revenue − COGS − OPEX = Net Profit
-- `fn_report_eway_register(shop_id?, from, to)` — inbound movement compliance register
+- `fn_report_eway_register(shop_id?, from, to)` — compliance register (inbound + outbound)
+
+> **Accounting-layer reports** (P&L, Balance Sheet, Cash Flow, GST filings, inventory valuation, wastage, top products across shops) live in Phase 3, NOT here — see the "Accounts / Reporting integration" section below.
+
+---
+
+## Accounts / Reporting integration (Phase 3 extension)
+
+Phase 3 currently is a reports-only shell — it was written when only `stock_requests` existed, so its SPs only see dispatch data. Phase 4 introduces a full financial pipeline (sales, expenses, cash, inventory value, GST liability) that must feed the accounts layer, otherwise the client's P&L / Balance Sheet stays blind to everything the POS records.
+
+**Decision:** Phase 3 gets extended with new SPs that read Phase 4 tables live. Phase 4 owns the operational tables (writes); Phase 3 owns the accounting reports (reads). Clean semantic boundary.
+
+### Design fork: how do numbers reach the accounts layer?
+
+**Option A — Read-time aggregation (RECOMMENDED for Phase 4 / 5)**
+
+Phase 3 SPs query Phase 4 tables live at report time. Example:
+```
+fn_report_profit_loss(shop_id, from, to)
+  → Revenue: SUM(bills.total_amount) - SUM(bill_returns.total_amount) in range
+  − COGS:    SUM(shop_inventory_movements.qty_delta × unit_cost)
+             WHERE movement_type='Sale' in range
+  − OPEX:    SUM(shop_expenses.amount) WHERE status='Recorded' in range
+  − Wastage: SUM(negative stock-take diffs × avg_cost) in range
+  = Net Profit
+```
+
+- **Pros:** Simple. Zero triggers. One source of truth (operational tables). Bug-tolerant — no missed journal entries.
+- **Cons:** A 12-month consolidated P&L touches millions of rows. Needs solid indexes + potentially materialized views for month-end runs.
+
+**Option B — Double-entry ledger (deferred to Phase 6+)**
+
+Every operational write ALSO posts to a `ledger_entries` table (balanced debit + credit rows against a Chart of Accounts). Reports read only from the ledger.
+
+- **Pros:** True double-entry books. Auditor-friendly. Trial balance + period locks possible.
+- **Cons:** Every writer SP has to also emit ledger rows. A missed journal entry silently corrupts accounts. Needs `gl_accounts` (chart), opening balances, period locks — a whole phase of its own.
+
+**Recommendation:** Ship Option A now. Revisit Option B when the client hires a CA / auditor who wants proper books + Tally export in journal format.
+
+### 14 new SPs in Phase 3 (as part of Phase 4 delivery)
+
+**Financial statements**
+- `fn_report_profit_loss(shop_id?, from, to)` — P&L per shop or consolidated (Revenue − COGS − OPEX = Net Profit)
+- `fn_report_balance_sheet(shop_id?, as_of_date)` — Asset / Liability snapshot
+- `fn_report_cash_flow(shop_id?, from, to)` — Inflow (sales, PayIn) / Outflow (expenses, PayOut) bucketed
+
+**GST filings**
+- `fn_report_gst_liability(shop_id?, from, to)` — Output tax − ITC = net payable
+- `fn_report_gstr1_export(shop_id?, month)` — Portal-format JSON/CSV for outward supplies + CDNR
+- `fn_report_gstr3b_summary(shop_id?, month)` — Monthly summary return
+
+**Sales analytics**
+- `fn_report_daily_sales_summary(shop_id, date)` — Day-end digest per shop
+- `fn_report_monthly_sales_summary(shop_id?, month)` — Rollup, revenue trends
+- `fn_report_top_products(shop_id?, from, to, limit)` — Best sellers by revenue + qty
+
+**Inventory + wastage**
+- `fn_report_inventory_valuation(shop_id?, as_of_date)` — SUM(on_hand × avg_cost) balance-sheet number
+- `fn_report_wastage_analysis(shop_id?, from, to)` — Stock-take diffs + damage adjustments × avg_cost
+
+**Customer + expense analytics**
+- `fn_report_customer_analytics(shop_id?, from, to)` — Repeat customers, avg bill value, top spenders (needs Domain 4 customer_id link on bills)
+- `fn_report_expense_breakdown(shop_id?, from, to)` — Category-wise OPEX split
+
+**Cash reconciliation**
+- `fn_report_cash_reconciliation(shop_id?, session_id?)` — Till variance investigations — bridges cash_sessions ↔ bill_payments ↔ cash_movements
+
+### Which Phase 4 tables feed which report
+
+| Report | Reads from |
+|---|---|
+| Profit & Loss | `bills`, `bill_items`, `bill_returns`, `shop_inventory_movements`, `shop_expenses`, `shop_stock_take_items` |
+| Balance Sheet | `shop_inventory`, `cash_sessions`, `bills` (GST cols), `shop_expenses` (gst_amount) |
+| Cash Flow | `bill_payments`, `cash_movements`, `shop_expenses` (payment_mode=Cash) |
+| GST Liability / GSTR-1 / GSTR-3B | `bills` + `bill_items` (outward), `bill_returns` (CDNR), `shop_expenses.gst_amount` (ITC), `eway_bills` (annex) |
+| Daily / Monthly Sales | `bills`, `bill_items` (product-level), `bill_returns` |
+| Top Products | `bill_items` grouped by product |
+| Inventory Valuation | `shop_inventory` |
+| Wastage Analysis | `shop_stock_take_items`, `shop_inventory_movements` (Adjustment) |
+| Customer Analytics | `bills.customer_id` → `customers`, `bill_items` |
+| Expense Breakdown | `shop_expenses` grouped by `expense_categories` |
+| Cash Reconciliation | `cash_sessions`, `cash_denominations`, `cash_movements`, `bill_payments` (mode=Cash) |
+
+### What Phase 4 accounts do NOT cover — deferred to later phases
+
+| Missing | Impact | When |
+|---|---|---|
+| **Bank accounts** | Owner deposits ₹40k to bank at day-end — nowhere to record it, cash-only in Phase 4 | Future "banking" phase — `bank_accounts`, `bank_txns`, statement reconciliation |
+| **Accounts Payable (AP)** | `vendor_shipments` has an amount but no "we owe vendor X ₹40k, 30 days overdue" ledger | Phase 5 procurement — `supplier_bills` + `supplier_payments` |
+| **Accounts Receivable (AR)** | No credit sales in v1, so no AR needed. If added later → new module | Only if fork #1 (credit sales) flips |
+| **Fixed assets + depreciation** | Buying a ₹80k fridge is a one-shot `shop_expenses` row today; proper accounting capitalises it and depreciates over 5 years | Phase 6 — `fixed_assets`, `depreciation_schedules` |
+| **Income tax provision** | GST is covered end-to-end; income tax on net profit isn't | Phase 6 |
+| **Journal entries / Chart of Accounts** | Option B above — real double-entry books | Phase 6+ |
+| **Period locks** | Nothing stops back-dating a bill to a closed month | Phase 6+ (comes with Option B) |
+| **Tally / Zoho Books export** | Client's CA probably uses Tally. No direct export in v1 | Add as SP once accounts structure is stable |
+
+### Migration order impact
+
+**Phase 3 extension ships alongside Phase 4** — same release train. Update `phase3_procedures.sql` (or add `phase3_procedures_accounts.sql` as an addendum) with the 14 SPs above. No `phase3_init.sql` change — Phase 3 stays table-less.
+
+**Order:**
+1. Phase 4 init (tables) runs first
+2. Phase 4 procedures (writers + operational reports) run next
+3. Phase 3 procedures addendum (accounts readers) run LAST — it FKs to Phase 4 tables via SELECT, so those must exist
 
 ---
 
@@ -561,8 +662,16 @@ Final table count: **24 new tables + 2 col adds on `shops` + 10 `app_settings` k
 ```
 DB/phase4/
   phase4_init.sql          -- DDL: all 18 tables + col adds + seeds
-  phase4_procedures.sql    -- All SPs listed above
+  phase4_procedures.sql    -- Phase 4 operational SPs (writers + operational reports)
   phase4_seed.sql          -- Opening seed for shop_inventory from phase 2 receipts
+
+DB/phase3/
+  phase3_procedures_accounts.sql   -- ADDENDUM: 14 new accounts-layer SPs that
+                                   -- read Phase 4 tables (P&L, Balance Sheet,
+                                   -- Cash Flow, GSTR-1, GSTR-3B, valuations,
+                                   -- wastage, customer analytics, cash recon).
+                                   -- Ships in the same release train as Phase 4.
+                                   -- Order: after phase4_procedures.sql runs.
 ```
 
 Optionally, split further if `phase4_init.sql` grows past ~800 lines:
@@ -570,7 +679,7 @@ Optionally, split further if `phase4_init.sql` grows past ~800 lines:
   phase4_init_sales.sql        -- Domain 1 + 3 + 4
   phase4_init_inventory.sql    -- Domain 2
   phase4_init_cash.sql         -- Domain 6
-  phase4_init_ops.sql          -- Domain 7
+  phase4_init_ops.sql          -- Domain 7 + Domain 6.5 + 6.7
 ```
 Prefer single file for now, split later only if reading it becomes painful.
 

@@ -56,9 +56,17 @@ LANGUAGE sql STABLE AS $$
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
-    AND (p_search IS NULL
-         OR p.name ILIKE '%' || p_search || '%'
-         OR p.code ILIKE '%' || p_search || '%')
+    -- Tokenised search — see fn_product_list (phase1_procedures.sql) for
+    -- the full rationale. MUST STAY IN SYNC with fn_product_count below +
+    -- fn_product_list. 10-Jul-2026, client feedback: 'nat.kam' returned
+    -- No options because the label had a space, not a dot.
+    AND (p_search IS NULL OR trim(p_search) = ''
+         OR NOT EXISTS (
+           SELECT 1
+           FROM regexp_split_to_table(lower(trim(p_search)), '[^a-z0-9]+') AS tok
+           WHERE tok <> ''
+             AND strpos(lower(p.code || ' ' || p.name), tok) = 0
+         ))
     AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
          OR p.category_id = ANY(p_category_ids))
     AND (p_types IS NULL OR cardinality(p_types) = 0
@@ -79,9 +87,16 @@ LANGUAGE sql STABLE AS $$
   SELECT COUNT(*)
   FROM products p
   WHERE p.is_deleted = false
-    AND (p_search IS NULL
-         OR p.name ILIKE '%' || p_search || '%'
-         OR p.code ILIKE '%' || p_search || '%')
+    -- Tokenised search — MUST STAY IN SYNC with fn_product_list_paged above
+    -- and fn_product_list (phase1_procedures.sql). Divergence here breaks
+    -- pagination: page-1 shows X rows but count returns Y.
+    AND (p_search IS NULL OR trim(p_search) = ''
+         OR NOT EXISTS (
+           SELECT 1
+           FROM regexp_split_to_table(lower(trim(p_search)), '[^a-z0-9]+') AS tok
+           WHERE tok <> ''
+             AND strpos(lower(p.code || ' ' || p.name), tok) = 0
+         ))
     AND (p_category_ids IS NULL OR cardinality(p_category_ids) = 0
          OR p.category_id = ANY(p_category_ids))
     AND (p_types IS NULL OR cardinality(p_types) = 0

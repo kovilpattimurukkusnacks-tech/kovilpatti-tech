@@ -341,9 +341,19 @@ LANGUAGE sql STABLE AS $$
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
-    AND (p_search IS NULL
-         OR p.name ILIKE '%' || p_search || '%'
-         OR p.code ILIKE '%' || p_search || '%')
+    -- Tokenised search (10-Jul-2026, client feedback). MUST STAY IN SYNC
+    -- with the identical predicate in fn_product_list_paged + fn_product_count
+    -- (phase1_pagination.sql). Splits p_search on any non-alnum separator
+    -- and requires EVERY token to appear as a case-insensitive substring
+    -- of the combined "code name" — so 'nat.kam', 'nat kam', '1kg lkd',
+    -- 'nk-25' all find the row where the naive whole-string ILIKE failed.
+    AND (p_search IS NULL OR trim(p_search) = ''
+         OR NOT EXISTS (
+           SELECT 1
+           FROM regexp_split_to_table(lower(trim(p_search)), '[^a-z0-9]+') AS tok
+           WHERE tok <> ''
+             AND strpos(lower(p.code || ' ' || p.name), tok) = 0
+         ))
     AND (p_category_id IS NULL OR p.category_id = p_category_id)
   ORDER BY p.code;
 $$;
