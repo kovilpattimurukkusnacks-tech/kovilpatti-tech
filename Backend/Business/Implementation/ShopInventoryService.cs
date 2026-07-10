@@ -57,7 +57,8 @@ public class ShopInventoryService(
         var scopedShopId = ResolveShopId(shopId);
         var rows = await repo.LowStockAsync(scopedShopId, threshold, ct);
         return rows.Select(r => new ShopInventoryLowStockDto(
-            r.Product_Id, r.Product_Code, r.Product_Name, r.On_Hand, r.Mrp)).ToList();
+            r.Product_Id, r.Product_Code, r.Product_Name, r.On_Hand, r.Mrp,
+            r.Category_Id, r.Category_Name, r.Category_Path)).ToList();
     }
 
     public async Task<decimal> ValuationAsync(Guid? shopId, CancellationToken ct = default)

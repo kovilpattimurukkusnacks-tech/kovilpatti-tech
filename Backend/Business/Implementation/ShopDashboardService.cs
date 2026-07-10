@@ -66,11 +66,14 @@ public class ShopDashboardService(
         var receiptBucket    = todayBuckets.FirstOrDefault(b => b.Movement_Type == "Receipt");
         var adjustmentBucket = todayBuckets.FirstOrDefault(b => b.Movement_Type == "Adjustment");
 
-        // Map low-stock top-N
+        // Map low-stock top-N (category + breadcrumb travel with each row so
+        // the dashboard shows "1KG Snacks > Chips 300" in bold above the
+        // product name — client asked 10-Jul-2026).
         var lowStockDtos = lowStock
             .Take(LowStockTopN)
             .Select(l => new ShopInventoryLowStockDto(
-                l.Product_Id, l.Product_Code, l.Product_Name, l.On_Hand, l.Mrp))
+                l.Product_Id, l.Product_Code, l.Product_Name, l.On_Hand, l.Mrp,
+                l.Category_Id, l.Category_Name, l.Category_Path))
             .ToList();
 
         // Map recent movements

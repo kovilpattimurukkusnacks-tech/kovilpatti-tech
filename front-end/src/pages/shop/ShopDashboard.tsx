@@ -1,15 +1,13 @@
 import { useMemo, useState } from 'react'
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight,
+  AlertTriangle, ArrowUpRight, ChevronDown, ChevronRight,
   ClipboardCheck, ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
 } from 'lucide-react'
 import { Alert, Box, Chip, Paper, Skeleton } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { useShopDashboard, useShopInventoryTree } from '../../hooks/useShopInventory'
 import { useCategories } from '../../hooks/useCategories'
-import type {
-  MovementType, ShopInventoryMovementDto, ShopInventoryTreeItemDto,
-} from '../../api/shop-inventory/types'
+import type { ShopInventoryTreeItemDto } from '../../api/shop-inventory/types'
 import type { CategoryDto } from '../../api/categories/types'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -190,6 +188,23 @@ export default function ShopDashboard() {
                     }}
                   >
                     <Box sx={{ flex: 1, minWidth: 0 }}>
+                      {/* Breadcrumb in bold above the product name so the
+                          shop user immediately sees WHERE the low item
+                          sits (root category > sub-category). Falls back
+                          to leaf name if path is null, then hides
+                          entirely if both are gone. */}
+                      {(item.categoryPath || item.categoryName) && (
+                        <Box
+                          sx={{
+                            fontSize: 10.5, fontWeight: 800,
+                            color: '#7C4A00',
+                            textTransform: 'uppercase', letterSpacing: 0.4,
+                            lineHeight: 1.3, mb: 0.25,
+                          }}
+                        >
+                          {item.categoryPath ?? item.categoryName}
+                        </Box>
+                      )}
                       <Box sx={{ fontWeight: 700, fontSize: 13.5, color: '#1F1F1F' }}>
                         {item.productName}
                       </Box>
@@ -286,32 +301,6 @@ export default function ShopDashboard() {
           fn_shop_inventory_tree (slim, unpaginated) + the existing categories
           list; rollups happen client-side in buildInventoryTree(). */}
       <InventoryByCategorySection />
-
-      {/* ─── Recent activity feed ─── */}
-      <Paper elevation={0} sx={panelSx}>
-        <SectionHeader
-          icon={<Package className="w-4 h-4" />}
-          title="Recent activity"
-        />
-        {isLoading ? (
-          <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-            {Array.from({ length: 5 }, (_, i) => (
-              <Skeleton key={i} variant="rectangular" height={44} sx={{ borderRadius: 1 }} />
-            ))}
-          </Box>
-        ) : (data?.recentMovements.length ?? 0) === 0 ? (
-          <EmptyState
-            message="No inventory movements yet."
-            hint="Once the godown dispatches a request and you confirm receipt, movements will land here."
-          />
-        ) : (
-          <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
-            {data!.recentMovements.map(m => (
-              <MovementRow key={m.id} m={m} />
-            ))}
-          </Box>
-        )}
-      </Paper>
     </div>
   )
 }
@@ -435,78 +424,6 @@ function ActivityRow({
       </Box>
     </Box>
   )
-}
-
-/**
- * One row in the recent-activity feed. Movement types get consistent icon
- * + colour so the shop user learns to scan (green up = Receipt, red down =
- * Sale, etc.). Refund and Return share the same visual as "stock coming
- * back in" but the label distinguishes.
- */
-function MovementRow({ m }: { m: ShopInventoryMovementDto }) {
-  const style = MOVEMENT_STYLES[m.movementType]
-  const isPositive = m.qtyDelta > 0
-  return (
-    <Box
-      sx={{
-        display: 'flex', alignItems: 'center', gap: 1.25,
-        px: 1.5, py: 0.75,
-        borderRadius: 1,
-        borderBottom: '1px solid rgba(31,31,31,0.06)',
-        '&:last-child': { borderBottom: 'none' },
-      }}
-    >
-      <Box
-        sx={{
-          width: 28, height: 28, borderRadius: '50%',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          bgcolor: style.bg, color: style.fg, flexShrink: 0,
-        }}
-      >
-        {isPositive
-          ? <ArrowUpRight   className="w-3.5 h-3.5" />
-          : <ArrowDownRight className="w-3.5 h-3.5" />}
-      </Box>
-      <Box sx={{ flex: 1, minWidth: 0 }}>
-        <Box sx={{ fontSize: 13, fontWeight: 700, color: '#1F1F1F', display: 'flex', alignItems: 'center', gap: 0.75, flexWrap: 'wrap' }}>
-          <span>{m.productName}</span>
-          <Chip
-            size="small"
-            label={style.label}
-            sx={{
-              height: 18, fontSize: 10, fontWeight: 700, letterSpacing: 0.3,
-              bgcolor: style.bg, color: style.fg,
-              border: 'none',
-              '& .MuiChip-label': { px: 0.75 },
-            }}
-          />
-        </Box>
-        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-          {m.productCode} · {formatIstDateTime(m.createdAt)}
-          {m.createdByName ? ` · ${m.createdByName}` : ''}
-        </Box>
-      </Box>
-      <Box
-        sx={{
-          fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap',
-          color: isPositive ? '#2E7D32' : '#C62828',
-        }}
-      >
-        {isPositive ? '+' : ''}{m.qtyDelta}
-      </Box>
-    </Box>
-  )
-}
-
-// Colour mapping per movement type. Kept in one place so the feed stays
-// consistent with any future widget that shows movement rows.
-const MOVEMENT_STYLES: Record<MovementType, { label: string; bg: string; fg: string }> = {
-  Opening:    { label: 'OPEN',   bg: '#E3F2FD', fg: '#0D47A1' },
-  Receipt:    { label: 'IN',     bg: '#E8F5E9', fg: '#1B5E20' },
-  Sale:       { label: 'SOLD',   bg: '#FFEBEE', fg: '#B71C1C' },
-  Return:     { label: 'RETURN', bg: '#FFF3E0', fg: '#7C4A00' },
-  Adjustment: { label: 'ADJUST', bg: '#F3E5F5', fg: '#4A148C' },
-  Refund:     { label: 'REFUND', bg: '#E8F5E9', fg: '#1B5E20' },
 }
 
 function EmptyState({ message, hint }: { message: string; hint?: string }) {

@@ -33,6 +33,9 @@ export type ShopInventoryLowStockDto = {
   productName: string
   onHand: number
   mrp: number
+  categoryId: number | null
+  categoryName: string | null      // leaf, e.g. "Chips 300"
+  categoryPath: string | null      // full breadcrumb, e.g. "1KG Snacks > Chips 300"
 }
 
 // Movement types match phase4_shop_inventory_procedures.sql check constraint:

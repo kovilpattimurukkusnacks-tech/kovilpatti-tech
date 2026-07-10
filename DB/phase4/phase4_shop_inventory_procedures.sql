@@ -371,6 +371,14 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 -- Reorder-suggestion feed.
+-- Also joins to fn_category_list() so each row carries the breadcrumb
+-- path ("1KG Snacks > Chips 300") + leaf name — dashboard renders these
+-- in bold so the shop user immediately sees WHERE the low item sits.
+--
+-- Return-shape changed 10-Jul-2026 (added category_id/name/path) — drop
+-- the old shape first because CREATE OR REPLACE can't alter RETURNS.
+DROP FUNCTION IF EXISTS fn_shop_inventory_low_stock(uuid, numeric);
+
 CREATE OR REPLACE FUNCTION fn_shop_inventory_low_stock(
   p_shop_id   uuid,
   p_threshold numeric DEFAULT 5
@@ -380,12 +388,17 @@ RETURNS TABLE (
   product_code  text,
   product_name  varchar,
   on_hand       numeric,
-  mrp           numeric
+  mrp           numeric,
+  category_id   int,
+  category_name varchar,
+  category_path varchar
 )
 LANGUAGE sql STABLE AS $$
-  SELECT p.id, p.code, p.name, si.on_hand, p.mrp
+  SELECT p.id, p.code, p.name, si.on_hand, p.mrp,
+         c.id, c.name, c.path
   FROM shop_inventory si
-  INNER JOIN products p ON p.id = si.product_id
+  INNER JOIN products      p ON p.id = si.product_id
+  LEFT  JOIN fn_category_list() c ON c.id = p.category_id
   WHERE si.shop_id = p_shop_id
     AND p.is_deleted = false
     AND p.active = true
