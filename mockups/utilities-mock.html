@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Utilities / Shop Expenses — Mockup</title>
+<style>
+  :root{
+    --gold-1:#C28A00; --gold-2:#E6B800; --gold-3:#FFD700; --gold-4:#FFF1A6;
+    --cream:#FFFBE6; --yellow:#FCD835; --red:#C62828; --green:#2E7D32; --dark:#1F1F1F;
+    --gold-gradient: linear-gradient(90deg, var(--gold-1) 0%, var(--gold-2) 35%, var(--gold-3) 65%, var(--gold-4) 100%);
+  }
+  *{box-sizing:border-box;}
+  body{ margin:0; background:#F3EEDD; color:var(--dark); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif; }
+  .brandfont{ font-family:"Arial Narrow",Arial,sans-serif; font-weight:800; letter-spacing:0.5px; text-transform:uppercase; }
+  .mock-ribbon{
+    position:sticky; top:0; z-index:50; background:var(--dark); color:var(--gold-3);
+    text-align:center; font-size:11px; font-weight:700; letter-spacing:1px; padding:5px 8px; text-transform:uppercase;
+  }
+  .app{ max-width:1180px; margin:0 auto; padding:16px 16px 40px; }
+  header.topbar{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    padding:14px 18px; margin-bottom:16px; background:var(--dark); border-radius:14px; color:#fff;
+  }
+  header.topbar .brand{ display:flex; align-items:center; gap:10px; }
+  header.topbar .brand .mark{
+    width:38px; height:38px; border-radius:9px; background:var(--gold-gradient);
+    display:flex; align-items:center; justify-content:center; font-weight:900; color:var(--dark); font-size:15px;
+  }
+  header.topbar .brand h1{ font-size:16px; margin:0; }
+  header.topbar .brand .sub{ font-size:11.5px; color:#ffffffaa; margin-top:1px; }
+  select, input.f{
+    background:#ffffff14; border:1px solid #ffffff2a; color:#fff; border-radius:999px;
+    font-size:12px; font-weight:700; padding:6px 11px;
+  }
+  .chip{ display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:999px; font-size:12px; font-weight:700; background:#ffffff14; border:1px solid #ffffff2a; color:#fff; }
+
+  .card{ background:#fff; border:2px solid var(--dark); border-radius:14px; box-shadow:6px 6px 0 0 var(--yellow); padding:16px; }
+  .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px; }
+  .kpi .lbl{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#1F1F1F99; }
+  .kpi .val{ font-size:24px; font-weight:900; margin-top:4px; }
+  .kpi .delta{ font-size:12px; font-weight:700; margin-top:4px; }
+  .delta.up{ color:var(--red); } .delta.down{ color:var(--green); }
+
+  .row2{ display:grid; grid-template-columns:1.5fr 1fr; gap:16px; margin-bottom:16px; }
+
+  .section-title{
+    font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em;
+    padding-bottom:10px; margin-bottom:12px; border-bottom:2px solid var(--dark);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .btn{ border:2px solid var(--dark); background:var(--yellow); color:var(--dark); font-weight:800; font-size:12.5px;
+    padding:8px 14px; border-radius:10px; cursor:pointer; box-shadow:3px 3px 0 0 var(--dark); }
+  .btn:active{ transform:translate(2px,2px); box-shadow:1px 1px 0 0 var(--dark); }
+  .btn-outline{ background:#fff; }
+  .btn-sm{ padding:5px 10px; font-size:11.5px; box-shadow:2px 2px 0 0 var(--dark); }
+  .btn-red-outline{ background:#fff; border-color:var(--red); color:var(--red); }
+
+  table.simple{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.simple th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; color:#1F1F1F99; padding:6px 8px; border-bottom:2px solid var(--dark); }
+  table.simple td{ padding:8px; border-bottom:1px solid #1F1F1F1c; vertical-align:middle; }
+  table.simple tr:last-child td{ border-bottom:none; }
+  .cat-pill{ display:inline-flex; align-items:center; gap:5px; padding:3px 9px; border-radius:999px; font-size:11px; font-weight:700; background:#FFF3C4; }
+  .amt-neg{ color:var(--red); font-weight:800; }
+
+  .cat-row{ display:flex; align-items:center; justify-content:space-between; padding:9px 0; border-bottom:1px solid #1F1F1F1c; }
+  .cat-row:last-child{ border-bottom:none; }
+  .cat-row .lbl{ font-size:12.5px; font-weight:700; display:flex; align-items:center; gap:8px; }
+  .dot{ width:10px; height:10px; border-radius:3px; display:inline-block; }
+  .cat-row .val{ font-size:12.5px; font-weight:800; }
+  .bar-track{ background:#1F1F1F14; border-radius:6px; height:7px; overflow:hidden; margin-top:4px; }
+  .bar-fill{ height:100%; border-radius:6px; }
+
+  /* Accounts impact strip */
+  .impact{ display:flex; gap:14px; flex-wrap:wrap; margin-top:10px; padding-top:10px; border-top:1px dashed #1F1F1F33; font-size:12px; }
+  .impact span b{ display:block; font-size:15px; }
+
+  /* Modal */
+  .overlay{ display:none; position:fixed; inset:0; background:#00000066; align-items:flex-end; justify-content:center; z-index:100; }
+  .overlay.open{ display:flex; }
+  .sheet{ background:#fff; border-radius:16px 16px 0 0; width:100%; max-width:480px; padding:18px; border-top:3px solid var(--dark); }
+  .field{ margin-bottom:12px; }
+  .field label{ display:block; font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.04em; color:#1F1F1F99; margin-bottom:4px; }
+  .field select, .field input, .field textarea{
+    width:100%; padding:9px 10px; border:2px solid var(--dark); border-radius:8px; font-size:13px; font-family:inherit;
+  }
+  .cat-chip-row{ display:flex; flex-wrap:wrap; gap:6px; }
+  .cat-chip{ padding:6px 12px; border:2px solid var(--dark); border-radius:999px; font-size:12px; font-weight:700; background:#fff; cursor:pointer; }
+  .cat-chip.active{ background:var(--yellow); }
+
+  footer.note{ text-align:center; font-size:11px; color:#1F1F1F77; margin-top:20px; }
+  @media (max-width:860px){ .kpi-grid{ grid-template-columns:repeat(2,1fr);} .row2{ grid-template-columns:1fr;} }
+</style>
+</head>
+<body>
+  <div class="mock-ribbon">⚠ Mockup only — sample data · entries here reduce Net in Accounts &amp; Dashboard</div>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">KM</div>
+        <div>
+          <h1 class="brandfont">Kovilpatti Murukku &amp; Snacks</h1>
+          <div class="sub">Utilities / Shop Expenses</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <select><option>All Shops</option><option>Kovilpatti Main</option><option>Tirunelveli Junction</option><option>Sankarankovil Bypass</option><option>Madurai Anna Nagar</option><option>Kayathar Highway</option></select>
+        <select><option selected>This Month — Jul 2026</option><option>Last Month</option><option>Custom range</option></select>
+        <span class="chip">📅 06 Jul 2026</span>
+      </div>
+    </header>
+
+    <!-- KPI summary -->
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="lbl">Total Utilities (This Month)</div>
+        <div class="val">₹18,650</div>
+        <div class="delta up">▲ 6.2% vs last month</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Entries Logged</div>
+        <div class="val">14</div>
+        <div class="delta down">▼ across 5 shops</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Largest Category</div>
+        <div class="val">Rent</div>
+        <div class="delta up">₹9,000 (48% of total)</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Net Impact on Profit</div>
+        <div class="val amt-neg">− ₹18,650</div>
+        <div class="delta down">Deducted automatically in Accounts</div>
+      </div>
+    </div>
+
+    <div class="row2">
+      <!-- Expense list -->
+      <div class="card">
+        <div class="section-title">
+          Utility Entries
+          <button class="btn btn-sm" onclick="document.getElementById('addOverlay').classList.add('open')">+ Add Expense</button>
+        </div>
+        <table class="simple">
+          <thead><tr><th>Date</th><th>Shop</th><th>Category</th><th>Note</th><th style="text-align:right;">Amount</th><th></th></tr></thead>
+          <tbody>
+            <tr><td>05 Jul</td><td>Kovilpatti Main</td><td><span class="cat-pill">⚡ Electricity</span></td><td>EB bill — June</td><td style="text-align:right;" class="amt-neg">− ₹2,450</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>05 Jul</td><td>Tirunelveli Junction</td><td><span class="cat-pill">🏠 Rent</span></td><td>Monthly shop rent</td><td style="text-align:right;" class="amt-neg">− ₹9,000</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>04 Jul</td><td>Sankarankovil Bypass</td><td><span class="cat-pill">💧 Water</span></td><td>Water tanker</td><td style="text-align:right;" class="amt-neg">− ₹500</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>03 Jul</td><td>Madurai Anna Nagar</td><td><span class="cat-pill">👥 Staff Salary</span></td><td>Part-time helper — June</td><td style="text-align:right;" class="amt-neg">− ₹4,000</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>02 Jul</td><td>Kovilpatti Main</td><td><span class="cat-pill">🔧 Maintenance</span></td><td>Weighing scale repair</td><td style="text-align:right;" class="amt-neg">− ₹850</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>01 Jul</td><td>Kayathar Highway</td><td><span class="cat-pill">📶 Internet/Wifi</span></td><td>Monthly broadband</td><td style="text-align:right;" class="amt-neg">− ₹700</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+            <tr><td>01 Jul</td><td>Tirunelveli Junction</td><td><span class="cat-pill">🧹 Others</span></td><td>Cleaning supplies</td><td style="text-align:right;" class="amt-neg">− ₹350</td><td><button class="btn btn-sm btn-outline">Edit</button></td></tr>
+          </tbody>
+        </table>
+        <div class="impact">
+          <span>Gross Sales (MTD) <b style="color:var(--green);">₹5,86,380</b></span>
+          <span>Purchases (MTD) <b class="amt-neg">− ₹3,10,200</b></span>
+          <span>Utilities (MTD) <b class="amt-neg">− ₹18,650</b></span>
+          <span>Net Profit (MTD) <b>₹2,57,530</b></span>
+        </div>
+      </div>
+
+      <!-- Category breakdown -->
+      <div class="card">
+        <div class="section-title">By Category</div>
+        <div class="cat-row"><div class="lbl"><span class="dot" style="background:var(--gold-1);"></span>Rent</div><div class="val">₹9,000</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:48%;background:var(--gold-1);"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:var(--gold-3);"></span>Electricity</div><div class="val">₹2,450</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:13%;background:var(--gold-3);"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:var(--red);"></span>Staff Salary</div><div class="val">₹4,000</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:21%;background:var(--red);"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:#1F1F1F;"></span>Maintenance</div><div class="val">₹850</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:5%;background:#1F1F1F;"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:var(--green);"></span>Water</div><div class="val">₹500</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:3%;background:var(--green);"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:#8884d8;"></span>Internet/Wifi</div><div class="val">₹700</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:4%;background:#8884d8;"></div></div>
+        <div class="cat-row" style="margin-top:10px;"><div class="lbl"><span class="dot" style="background:#999;"></span>Others</div><div class="val">₹350</div></div>
+        <div class="bar-track"><div class="bar-fill" style="width:2%;background:#999;"></div></div>
+      </div>
+    </div>
+
+    <footer class="note">Sample data only. Each entry here is meant to post to the same ledger Accounts reads from — Net Profit = Sales − Purchases − Utilities. Not wired to any API.</footer>
+  </div>
+
+  <!-- Add Expense bottom sheet -->
+  <div class="overlay" id="addOverlay">
+    <div class="sheet">
+      <h3 style="margin-top:0;">Add Utility Expense</h3>
+      <div class="field">
+        <label>Shop</label>
+        <select><option>Kovilpatti Main</option><option>Tirunelveli Junction</option><option>Sankarankovil Bypass</option><option>Madurai Anna Nagar</option><option>Kayathar Highway</option></select>
+      </div>
+      <div class="field">
+        <label>Category</label>
+        <div class="cat-chip-row">
+          <div class="cat-chip active">⚡ Electricity</div>
+          <div class="cat-chip">🏠 Rent</div>
+          <div class="cat-chip">💧 Water</div>
+          <div class="cat-chip">👥 Staff Salary</div>
+          <div class="cat-chip">🔧 Maintenance</div>
+          <div class="cat-chip">📶 Internet/Wifi</div>
+          <div class="cat-chip">🧹 Others</div>
+        </div>
+      </div>
+      <div class="field">
+        <label>Amount (₹)</label>
+        <input type="number" placeholder="0.00" />
+      </div>
+      <div class="field">
+        <label>Note (optional)</label>
+        <input type="text" placeholder="e.g. EB bill — July" />
+      </div>
+      <div class="field">
+        <label>Date</label>
+        <input type="date" value="2026-07-06" />
+      </div>
+      <div style="display:flex; gap:10px; margin-top:16px;">
+        <button class="btn btn-outline" style="flex:1;" onclick="document.getElementById('addOverlay').classList.remove('open')">Cancel</button>
+        <button class="btn" style="flex:1;" onclick="document.getElementById('addOverlay').classList.remove('open')">Save Expense</button>
+      </div>
+    </div>
+  </div>
+</body>
+</html>
