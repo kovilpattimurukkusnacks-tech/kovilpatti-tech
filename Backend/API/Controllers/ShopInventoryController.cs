@@ -81,6 +81,16 @@ public class ShopInventoryController(IShopInventoryService svc) : ControllerBase
         CancellationToken ct = default)
         => Ok(await svc.ListMovementsAsync(shopId, null, fromDate, toDate, page, pageSize, ct));
 
+    /// GET /api/shop-inventory/tree?shopId=…
+    /// Slim flat list (product + category_id + on_hand + mrp) for the
+    /// dashboard's expandable category-tree browse view. No pagination —
+    /// FE groups + rolls up on the client using /api/categories.
+    [HttpGet("tree")]
+    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
+    public async Task<ActionResult<IReadOnlyList<ShopInventoryTreeItemDto>>> Tree(
+        [FromQuery] Guid? shopId, CancellationToken ct)
+        => Ok(await svc.ListForTreeAsync(shopId, ct));
+
     // ═══════════════ Manual adjustment (Admin only) ═══════════════
 
     /// POST /api/shop-inventory/adjust?shopId=…

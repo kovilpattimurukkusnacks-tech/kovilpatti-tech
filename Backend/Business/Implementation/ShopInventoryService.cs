@@ -79,6 +79,16 @@ public class ShopInventoryService(
         return rows.Select(MapMovement).ToList();
     }
 
+    public async Task<IReadOnlyList<ShopInventoryTreeItemDto>> ListForTreeAsync(
+        Guid? shopId, CancellationToken ct = default)
+    {
+        var scopedShopId = ResolveShopId(shopId);
+        var rows = await repo.ListForTreeAsync(scopedShopId, ct);
+        return rows.Select(r => new ShopInventoryTreeItemDto(
+            r.Product_Id, r.Product_Code, r.Product_Name,
+            r.Category_Id, r.On_Hand, r.Mrp)).ToList();
+    }
+
     // ═══════════════ Manual adjustment ═══════════════
 
     public async Task<ShopInventoryDetailDto> AdjustAsync(

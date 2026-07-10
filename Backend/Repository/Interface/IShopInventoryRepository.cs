@@ -26,6 +26,12 @@ public interface IShopInventoryRepository
     Task<IReadOnlyList<ShopInventoryMovementBucket>> MovementSummaryAsync(
         Guid shopId, DateOnly fromDate, DateOnly toDate, CancellationToken ct = default);
 
+    /// Every product with an inventory row for this shop, slim payload
+    /// (product + category_id + on_hand + mrp). Used by the dashboard
+    /// category-tree browse view.
+    Task<IReadOnlyList<ShopInventoryTreeItem>> ListForTreeAsync(
+        Guid shopId, CancellationToken ct = default);
+
     // ─── Manual adjustment (admin only — enforced in the service layer) ─
     /// Returns the id of the shop_inventory_movements row written.
     /// Raises 23514 (check_violation) if the adjustment would drive

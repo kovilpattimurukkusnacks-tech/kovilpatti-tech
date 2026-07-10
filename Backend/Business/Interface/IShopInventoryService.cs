@@ -23,6 +23,11 @@ public interface IShopInventoryService
         Guid? shopId, Guid? productId, DateOnly? fromDate, DateOnly? toDate,
         int page, int pageSize, CancellationToken ct = default);
 
+    /// Slim flat list of (product, category, on_hand) for the dashboard's
+    /// category-tree browse view. No pagination.
+    Task<IReadOnlyList<ShopInventoryTreeItemDto>> ListForTreeAsync(
+        Guid? shopId, CancellationToken ct = default);
+
     // ─── Manual adjustment ──────────────────────────────
     /// Admin-only. Records a `ManualAdjustment` movement. Returns the
     /// refreshed detail so caches stay in sync.

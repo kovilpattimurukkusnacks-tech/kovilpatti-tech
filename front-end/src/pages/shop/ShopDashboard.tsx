@@ -1,14 +1,16 @@
-import { useNavigate } from 'react-router-dom'
+import { useMemo, useState } from 'react'
 import {
-  AlertTriangle, ArrowDownRight, ArrowUpRight, ClipboardList,
-  ClipboardCheck, Package, Sparkles, TrendingUp, Wallet,
+  AlertTriangle, ArrowDownRight, ArrowUpRight, ChevronDown, ChevronRight,
+  ClipboardCheck, ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
 } from 'lucide-react'
-import { Alert, Box, Button, Chip, Paper, Skeleton } from '@mui/material'
+import { Alert, Box, Chip, Paper, Skeleton } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
-import { useShopDashboard } from '../../hooks/useShopInventory'
+import { useShopDashboard, useShopInventoryTree } from '../../hooks/useShopInventory'
+import { useCategories } from '../../hooks/useCategories'
 import type {
-  MovementType, ShopInventoryMovementDto,
+  MovementType, ShopInventoryMovementDto, ShopInventoryTreeItemDto,
 } from '../../api/shop-inventory/types'
+import type { CategoryDto } from '../../api/categories/types'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 
@@ -19,7 +21,6 @@ import { formatIstDateTime } from '../../utils/formatDate'
  * hasn't built up any activity yet.
  */
 export default function ShopDashboard() {
-  const navigate = useNavigate()
   const { data, isLoading, isError, error } = useShopDashboard()
 
   if (isError) {
@@ -32,6 +33,8 @@ export default function ShopDashboard() {
 
   return (
     <div>
+      {/* Read-only showcase page — no action buttons. Shop user navigates
+          to other flows via the sidebar. Do not add action props here. */}
       <PageHeader
         title="Dashboard"
         subtitle={
@@ -40,18 +43,6 @@ export default function ShopDashboard() {
             : data
               ? `${data.shopName} · ${data.shopCode}`
               : undefined
-        }
-        action={
-          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
-            <Button
-              variant="outlined"
-              startIcon={<ClipboardList className="w-4 h-4" />}
-              onClick={() => navigate('/shop/requests/new')}
-              sx={{ textTransform: 'none', fontWeight: 700 }}
-            >
-              New Request
-            </Button>
-          </Box>
         }
       />
 
@@ -288,6 +279,14 @@ export default function ShopDashboard() {
         </Paper>
       </Box>
 
+      {/* ─── Inventory by category tree ───
+          Expandable browse of stock rolled up through the category tree:
+              Root categories → sub-categories → individual products.
+          Right side shows the rolled-up qty at every level. Data comes from
+          fn_shop_inventory_tree (slim, unpaginated) + the existing categories
+          list; rollups happen client-side in buildInventoryTree(). */}
+      <InventoryByCategorySection />
+
       {/* ─── Recent activity feed ─── */}
       <Paper elevation={0} sx={panelSx}>
         <SectionHeader
@@ -517,4 +516,313 @@ function EmptyState({ message, hint }: { message: string; hint?: string }) {
       {hint && <Box sx={{ mt: 0.5, fontSize: 12, color: '#1F1F1F99' }}>{hint}</Box>}
     </Box>
   )
+}
+
+// ═══════════════ Inventory-by-category tree ═══════════════
+//
+// Fetches two independent lists and joins client-side:
+//   • useCategories()          → full category tree (id, parentId, depth)
+//   • useShopInventoryTree()   → slim (product, category_id, on_hand, mrp)
+//
+// buildInventoryTree() folds them into a nested TreeNode structure with
+// qty rolled up through every node. Empty branches (no products with
+// stock in any descendant) are pruned so the tree isn't cluttered with
+// noise categories that don't apply to this shop yet.
+
+type ProductLine = {
+  productId:   string
+  productCode: string
+  productName: string
+  onHand:      number
+  mrp:         number
+}
+
+type TreeNode = {
+  categoryId:   number
+  name:         string
+  depth:        number
+  children:     TreeNode[]
+  products:     ProductLine[]      // products directly under this category
+  totalQty:     number             // rolled up across the entire subtree
+  productCount: number             // rolled up across the entire subtree
+}
+
+function InventoryByCategorySection() {
+  const catsQuery = useCategories()
+  const invQuery  = useShopInventoryTree()
+
+  const tree = useMemo(
+    () => {
+      const cats = catsQuery.data ?? []
+      const inv  = invQuery.data  ?? []
+      return buildInventoryTree(cats, inv)
+    },
+    [catsQuery.data, invQuery.data],
+  )
+
+  const isLoading = catsQuery.isLoading || invQuery.isLoading
+  const isError   = catsQuery.isError   || invQuery.isError
+
+  return (
+    <Paper elevation={0} sx={panelSx}>
+      <SectionHeader
+        icon={<FolderTree className="w-4 h-4" />}
+        title="Inventory by category"
+        trailing={
+          !isLoading && tree.length > 0 ? (
+            <Chip
+              size="small"
+              label={`${tree.reduce((n, r) => n + r.productCount, 0)} items`}
+              sx={{
+                borderRadius: 999, fontWeight: 700, fontSize: 11,
+                bgcolor: '#FFF8E1', color: '#7C4A00',
+                border: '1px solid rgba(194,138,0,0.35)',
+              }}
+            />
+          ) : undefined
+        }
+      />
+
+      {isError ? (
+        <Alert severity="error" sx={{ mt: 1.5 }}>
+          Failed to load inventory tree.
+        </Alert>
+      ) : isLoading ? (
+        <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+          {Array.from({ length: 4 }, (_, i) => (
+            <Skeleton key={i} variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
+          ))}
+        </Box>
+      ) : tree.length === 0 ? (
+        <EmptyState
+          message="No inventory yet."
+          hint="Once the godown dispatches goods and you confirm receipt, categories with stock will appear here."
+        />
+      ) : (
+        <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {tree.map(node => (
+            <TreeRow key={node.categoryId} node={node} depth={0} />
+          ))}
+        </Box>
+      )}
+    </Paper>
+  )
+}
+
+/**
+ * One recursive row. Renders:
+ *   • Header (indented by depth) with category name + total qty + chevron
+ *   • On expand: child category rows (recursion) + direct products in this
+ *     node (leaf lines at depth+1)
+ * Depth-based padding gives a visual hierarchy without heavy tree lines.
+ */
+function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
+  const [open, setOpen] = useState(false)
+
+  const hasChildren = node.children.length > 0 || node.products.length > 0
+  const indent      = depth * 20        // 20px per level — feels balanced at 3 levels
+  const isRoot      = depth === 0
+
+  // Root nodes get the amber background + stronger border so they read
+  // as top-level buckets. Deeper nodes are quieter cream stripes.
+  const rowSx = isRoot
+    ? {
+        bgcolor: '#FFF8E1',
+        border: '1px solid rgba(194,138,0,0.35)',
+        fontWeight: 800,
+      }
+    : {
+        bgcolor: '#FFFBE6',
+        border: '1px solid rgba(31,31,31,0.08)',
+        fontWeight: 700,
+      }
+
+  return (
+    <>
+      <Box
+        role="button"
+        tabIndex={hasChildren ? 0 : -1}
+        onClick={() => hasChildren && setOpen(o => !o)}
+        onKeyDown={(e) => {
+          if (!hasChildren) return
+          if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setOpen(o => !o) }
+        }}
+        sx={{
+          display: 'flex', alignItems: 'center', gap: 0.75,
+          pl: `${indent + 10}px`, pr: 1.5, py: 1,
+          borderRadius: 1,
+          cursor: hasChildren ? 'pointer' : 'default',
+          userSelect: 'none',
+          transition: 'background-color 120ms',
+          '&:hover': hasChildren ? { bgcolor: '#FFF4B8' } : undefined,
+          ...rowSx,
+        }}
+      >
+        {hasChildren ? (
+          open
+            ? <ChevronDown  className="w-4 h-4 text-[#1F1F1F]" />
+            : <ChevronRight className="w-4 h-4 text-[#1F1F1F]" />
+        ) : (
+          <Box sx={{ width: 16 }} />        // spacer to keep names aligned
+        )}
+        <Box sx={{ flex: 1, minWidth: 0, fontSize: isRoot ? 14 : 13, color: '#1F1F1F' }}>
+          {node.name}
+        </Box>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, flexShrink: 0 }}>
+          <Box sx={{ fontSize: 11.5, color: '#1F1F1F99', fontWeight: 500 }}>
+            {node.productCount} {node.productCount === 1 ? 'item' : 'items'}
+          </Box>
+          <Box
+            sx={{
+              fontSize: isRoot ? 15 : 14,
+              fontWeight: 800,
+              color: node.totalQty > 0 ? '#1F1F1F' : '#1F1F1F55',
+              minWidth: 60, textAlign: 'right',
+            }}
+          >
+            {node.totalQty}
+          </Box>
+        </Box>
+      </Box>
+
+      {open && (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {/* Child categories first — recursion at depth+1 */}
+          {node.children.map(child => (
+            <TreeRow key={`c${child.categoryId}`} node={child} depth={depth + 1} />
+          ))}
+          {/* Then products directly under this category */}
+          {node.products.map(p => (
+            <ProductLeafRow
+              key={`p${p.productId}`}
+              product={p}
+              depth={depth + 1}
+            />
+          ))}
+        </Box>
+      )}
+    </>
+  )
+}
+
+function ProductLeafRow({ product, depth }: { product: ProductLine; depth: number }) {
+  const isOut = product.onHand <= 0
+  const indent = depth * 20
+  return (
+    <Box
+      sx={{
+        display: 'flex', alignItems: 'center', gap: 0.75,
+        pl: `${indent + 30}px`, pr: 1.5, py: 0.75,      // +30 = past the chevron slot
+        borderRadius: 1,
+        bgcolor: isOut ? '#FFEBEE' : '#FFFFFF00',       // transparent — inherits panel bg
+        border: isOut ? '1px dashed rgba(198,40,40,0.3)' : '1px solid rgba(31,31,31,0.04)',
+      }}
+    >
+      <Package className="w-3.5 h-3.5 text-[#1F1F1F]/50" />
+      <Box sx={{ flex: 1, minWidth: 0 }}>
+        <Box sx={{ fontSize: 12.5, fontWeight: 600, color: '#1F1F1F', lineHeight: 1.3 }}>
+          {product.productName}
+        </Box>
+        <Box sx={{ fontSize: 10.5, color: '#1F1F1F99' }}>
+          {product.productCode} · MRP {formatINR(product.mrp)}
+        </Box>
+      </Box>
+      <Box
+        sx={{
+          fontSize: 13,
+          fontWeight: 700,
+          minWidth: 60,
+          textAlign: 'right',
+          color: isOut ? '#C62828' : '#1F1F1F',
+        }}
+      >
+        {product.onHand}
+      </Box>
+    </Box>
+  )
+}
+
+/**
+ * Fold a flat category list + product list into a nested rooted-tree with
+ * qty + productCount rolled up through every node. Categories that end
+ * up with 0 products in their entire subtree are pruned (dead branches
+ * that don't apply to this shop yet). Inactive categories are excluded
+ * upfront so the tree matches what the shop can actually order.
+ */
+function buildInventoryTree(
+  categories: CategoryDto[],
+  products: ShopInventoryTreeItemDto[],
+): TreeNode[] {
+  // Skip inactive categories — same as any other browse UI.
+  const activeCats = categories.filter(c => c.active)
+
+  // productsByCategory[catId] = ProductLine[]
+  const productsByCategory = new Map<number, ProductLine[]>()
+  for (const p of products) {
+    const line: ProductLine = {
+      productId:   p.productId,
+      productCode: p.productCode,
+      productName: p.productName,
+      onHand:      p.onHand,
+      mrp:         p.mrp,
+    }
+    const arr = productsByCategory.get(p.categoryId)
+    if (arr) arr.push(line)
+    else productsByCategory.set(p.categoryId, [line])
+  }
+
+  // Build a node per category with empty children/products, then link up.
+  const nodesById = new Map<number, TreeNode>()
+  for (const c of activeCats) {
+    nodesById.set(c.id, {
+      categoryId:   c.id,
+      name:         c.name,
+      depth:        c.depth,
+      children:     [],
+      products:     (productsByCategory.get(c.id) ?? []).sort(
+        (a, b) => a.productName.localeCompare(b.productName)),
+      totalQty:     0,       // rolled up below
+      productCount: 0,       // rolled up below
+    })
+  }
+
+  // Attach children to parents. Categories whose parent is missing / inactive
+  // are treated as roots — safer than dropping them silently.
+  const roots: TreeNode[] = []
+  for (const c of activeCats) {
+    const node = nodesById.get(c.id)!
+    if (c.parentId != null && nodesById.has(c.parentId)) {
+      nodesById.get(c.parentId)!.children.push(node)
+    } else {
+      roots.push(node)
+    }
+  }
+
+  // Recursive DFS to fill totalQty + productCount. Also prunes dead
+  // branches — a category whose subtree has 0 products is not returned.
+  const walk = (nodes: TreeNode[]): TreeNode[] => {
+    const kept: TreeNode[] = []
+    for (const n of nodes) {
+      // Recurse first — child rollups feed into this node's totals.
+      n.children = walk(n.children)
+
+      const childQty   = n.children.reduce((s, c) => s + c.totalQty, 0)
+      const childCount = n.children.reduce((s, c) => s + c.productCount, 0)
+      const ownQty     = n.products.reduce((s, p) => s + p.onHand, 0)
+      const ownCount   = n.products.length
+
+      n.totalQty     = childQty + ownQty
+      n.productCount = childCount + ownCount
+
+      if (n.productCount > 0) kept.push(n)
+      // else prune — no stock, no children with stock; nothing to show
+    }
+    // Stable sort roots + child rows by name so the tree order is
+    // predictable across renders (server returns tree order but
+    // pruning can shuffle it).
+    kept.sort((a, b) => a.name.localeCompare(b.name))
+    return kept
+  }
+
+  return walk(roots)
 }

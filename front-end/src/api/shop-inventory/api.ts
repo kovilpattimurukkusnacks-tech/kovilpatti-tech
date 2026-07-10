@@ -10,6 +10,7 @@ import type {
   ShopInventoryMovementDto,
   ShopInventoryMovementFilters,
   ShopInventoryRowDto,
+  ShopInventoryTreeItemDto,
   StockTakeDetailDto,
   StockTakeListFilters,
   StockTakeSummaryDto,
@@ -49,6 +50,13 @@ export const shopInventoryApi = {
 
   valuation: (shopId?: string) =>
     apiClient.get<number>(`/api/shop-inventory/valuation${q({ shopId })}`),
+
+  // Slim flat list for the dashboard's expandable category tree.
+  // No pagination — the tree fundamentally shows the whole catalog.
+  tree: (shopId?: string) =>
+    apiClient.get<ShopInventoryTreeItemDto[]>(
+      `/api/shop-inventory/tree${q({ shopId })}`,
+    ),
 
   // Movements — either scoped to one product or across the whole shop
   productMovements: (productId: string, f?: ShopInventoryMovementFilters) =>

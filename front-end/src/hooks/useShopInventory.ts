@@ -23,6 +23,7 @@ export const shopInventoryKeys = {
   lowStock:       (threshold: number, shopId?: string) =>
     ['shop-inventory', 'low-stock', shopId ?? 'self', threshold] as const,
   valuation:      (shopId?: string) => ['shop-inventory', 'valuation', shopId ?? 'self'] as const,
+  tree:           (shopId?: string) => ['shop-inventory', 'tree', shopId ?? 'self'] as const,
   productMovements: (productId: string, f?: ShopInventoryMovementFilters) =>
     ['shop-inventory', 'movements', productId, f ?? {}] as const,
   movements:      (f?: ShopInventoryMovementFilters) =>
@@ -82,6 +83,22 @@ export function useShopInventoryValuation(shopId?: string) {
   return useQuery({
     queryKey: shopInventoryKeys.valuation(shopId),
     queryFn:  () => shopInventoryApi.valuation(shopId),
+  })
+}
+
+/**
+ * Flat list of every (product, category_id, on_hand) for the dashboard's
+ * category-tree browse view. Combined with `useCategories()` client-side
+ * to build the expandable tree with rolled-up qty per node.
+ */
+export function useShopInventoryTree(shopId?: string) {
+  return useQuery({
+    queryKey: shopInventoryKeys.tree(shopId),
+    queryFn:  () => shopInventoryApi.tree(shopId),
+    // Same 60s stale as the dashboard aggregate — they refresh together
+    // on window focus so numbers stay in sync between widgets.
+    refetchOnWindowFocus: true,
+    staleTime: 60_000,
   })
 }
 

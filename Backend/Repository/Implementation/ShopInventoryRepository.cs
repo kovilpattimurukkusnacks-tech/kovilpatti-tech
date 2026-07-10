@@ -97,6 +97,16 @@ public class ShopInventoryRepository(IDbConnectionFactory factory) : IShopInvent
         return rows.ToList();
     }
 
+    public async Task<IReadOnlyList<ShopInventoryTreeItem>> ListForTreeAsync(
+        Guid shopId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_shop_inventory_tree(@p_shop_id)";
+        var rows = await conn.QueryAsync<ShopInventoryTreeItem>(new CommandDefinition(
+            sql, new { p_shop_id = shopId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     // ─── Manual adjustment ──────────────────────────────
 
     public async Task<Guid> ManualAdjustmentAsync(

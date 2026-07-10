@@ -447,6 +447,32 @@ LANGUAGE sql STABLE AS $$
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
 $$;
 
+-- Slim "browse everything" read for the dashboard's category-tree view.
+-- Returns every product with an inventory row for this shop, keyed by
+-- category_id so the FE can group + roll up qty through the category
+-- tree (via the existing categories hook). NO pagination — the tree
+-- fundamentally shows the whole catalog at once. Response is intentionally
+-- narrow (no avg_cost / weight / etc.) so the payload stays small even
+-- when the catalog grows to several hundred SKUs.
+CREATE OR REPLACE FUNCTION fn_shop_inventory_tree(p_shop_id uuid)
+RETURNS TABLE (
+  product_id    uuid,
+  product_code  text,
+  product_name  varchar,
+  category_id   int,
+  on_hand       numeric,
+  mrp           numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT p.id, p.code, p.name, p.category_id, si.on_hand, p.mrp
+  FROM shop_inventory si
+  INNER JOIN products p ON p.id = si.product_id
+  WHERE si.shop_id = p_shop_id
+    AND p.is_deleted = false
+  ORDER BY p.category_id, p.code;
+$$;
+
+
 -- Movement summary bucketed by movement_type for a period.
 CREATE OR REPLACE FUNCTION fn_shop_inventory_movement_summary(
   p_shop_id uuid,

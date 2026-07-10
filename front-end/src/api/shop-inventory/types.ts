@@ -96,6 +96,18 @@ export type StockTakeDetailDto = {
   items: StockTakeItemDto[]
 }
 
+// Slim row for the dashboard's category-tree browse. FE groups by
+// categoryId and rolls up onHand through the categories tree (fetched
+// separately via /api/categories).
+export type ShopInventoryTreeItemDto = {
+  productId: string
+  productCode: string
+  productName: string
+  categoryId: number
+  onHand: number
+  mrp: number
+}
+
 export type ShopDashboardDto = {
   shopId: string
   shopCode: string
