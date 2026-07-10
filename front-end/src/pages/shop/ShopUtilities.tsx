@@ -60,23 +60,12 @@ type Entry = {
   amount: number
 }
 
-// Seed rows so the screen isn't empty on first load — this shop's own
-// sample expenses only (no cross-shop data, unlike the admin-wide view).
-const SEED_ENTRIES: Entry[] = [
-  { id: 's1', date: '2026-07-05', category: 'Electricity',   note: 'EB bill — June',          amount: 2450 },
-  { id: 's2', date: '2026-07-05', category: 'Rent',          note: 'Monthly shop rent',       amount: 9000 },
-  { id: 's3', date: '2026-07-03', category: 'Staff Salary',  note: 'Part-time helper — June', amount: 4000 },
-  { id: 's4', date: '2026-07-02', category: 'Maintenance',   note: 'Weighing scale repair',   amount: 850 },
-  { id: 's5', date: '2026-07-01', category: 'Internet/Wifi', note: 'Monthly broadband',       amount: 700 },
-  { id: 's6', date: '2026-07-01', category: 'Others',        note: 'Cleaning supplies',       amount: 350 },
-]
-
 export default function ShopUtilities() {
   const { currentUser } = useApp()
   const shopQuery = useShop(currentUser?.shopId ?? undefined)
   const shopName = shopQuery.data?.name ?? 'your shop'
 
-  const [entries, setEntries] = useState<Entry[]>(SEED_ENTRIES)
+  const [entries, setEntries] = useState<Entry[]>([])
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
@@ -163,13 +152,6 @@ export default function ShopUtilities() {
           </Button>
         }
       />
-
-      <Alert severity="info" sx={{ mb: 2 }}>
-        UI preview only — expense entries live in this page's local state and
-        reset on reload. No backend/DB table exists for this yet; see
-        <code style={{ margin: '0 4px' }}>DB/planned/pos_billing_screens.md</code>
-        for the sign-off status before this gets wired up for real.
-      </Alert>
 
       {/* KPI strip — cream cards with a plain dark border, matching the
           plain-Paper look used everywhere else (ShopRequests.tsx etc.) —
