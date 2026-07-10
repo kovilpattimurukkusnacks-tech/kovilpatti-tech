@@ -21,6 +21,7 @@ import {
   useInventoryAddItems, useInventoryRemoveItem,
 } from '../../hooks/useStockRequests'
 import { useProducts } from '../../hooks/useProducts'
+import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import { ValidationError } from '../../api/errors'
@@ -30,33 +31,6 @@ import { useCategories } from '../../hooks/useCategories'
 
 // Consolidated into utils/statusChipStyle.ts so a color tweak lands in one place.
 import { STATUS_COLOR, STATUS_CHIP_SX } from '../../utils/statusChipStyle'
-
-// Token-based product-picker filter (10-Jul-2026, client feedback).
-// MUI Autocomplete's default filter treats the whole input as ONE substring
-// against getOptionLabel — so typing "nat.kam" fails to find "Nattu Kambu"
-// because the label has a space between the words, not a dot. Client also
-// reported that mixing code + separator ("1kg lkd") didn't hit.
-//
-// This filter splits the input on ANY non-alphanumeric separator (space, dot,
-// comma, dash, slash) and requires EVERY resulting token to appear as a
-// case-insensitive substring somewhere in the combined "code name" string.
-// So "nat.kam" / "nat kam" / "kambu" / "017 kam" / "nk-25" all find the row.
-//
-// Kept as a pure module-level function so it doesn't re-create per render.
-type PickerProduct = { code: string; name: string }
-function productPickerFilter<T extends PickerProduct>(
-  options: T[],
-  state: { inputValue: string },
-): T[] {
-  const raw = state.inputValue.trim().toLowerCase()
-  if (!raw) return options
-  const tokens = raw.split(/[^a-z0-9]+/).filter(Boolean)
-  if (tokens.length === 0) return options
-  return options.filter(p => {
-    const hay = `${p.code} ${p.name}`.toLowerCase()
-    return tokens.every(t => hay.includes(t))
-  })
-}
 
 export default function InventoryRequestDetail() {
   const { id } = useParams<{ id: string }>()
@@ -87,14 +61,30 @@ export default function InventoryRequestDetail() {
   // Add Products dialog (01-Jul-2026). Opens when inventory / admin wants
   // to append lines to a Pending / Approved order. `addRows` holds the
   // in-progress pick list; committed rows are POSTed together on Save.
+  //
+  // Rows carry code + name snapshots (10-Jul-2026): the picker now fetches
+  // server-side in page-of-20 chunks, so productsQuery no longer holds
+  // every product. When user searches for a different product AFTER
+  // staging one, the staged row still needs its display info — hence the
+  // snapshot instead of looking it up from productsQuery.data each render.
   const [addOpen, setAddOpen] = useState(false)
-  const [addRows, setAddRows] = useState<{ productId: string; requestedQty: number }[]>([])
+  const [addRows, setAddRows] = useState<
+    { productId: string; code: string; name: string; requestedQty: number }[]
+  >([])
   const [addPickerProductId, setAddPickerProductId] = useState<string>('')
   const [addPickerQty, setAddPickerQty] = useState<string>('')
-  // Product catalog for the picker — fetched once when the dialog opens.
-  // Kept simple: no search debounce; the Autocomplete does client-side
-  // filtering off the pre-fetched list, which is fine at this catalog size.
-  const productsQuery = useProducts({ pageSize: 500 })
+  // Server-side search (10-Jul-2026, client feedback). Previously fetched
+  // 500 products once and filtered client-side — silently truncated at 501+
+  // and hammered every page mount even when the Add dialog was never opened.
+  // Now: debounce the picker's typed value 250ms, ask the backend for the
+  // matching top-20 rows (SP does the tokenised match), display them.
+  // Scales to any catalog size + no wasted payload for the common no-Add case.
+  const [pickerSearch, setPickerSearch] = useState('')
+  const debouncedPickerSearch = useDebouncedValue(pickerSearch, 250)
+  const productsQuery = useProducts({
+    search: debouncedPickerSearch.trim() || undefined,
+    pageSize: 20,
+  })
   // True when dispatch qtys have changed since the last successful draft
   // save (or since the seed from a stored draft). Drives the Save as Draft
   // button's disabled state so the user can't redundantly re-save the
@@ -898,7 +888,7 @@ export default function InventoryRequestDetail() {
             variant="outlined"
             size="small"
             startIcon={<Plus className="w-4 h-4" />}
-            onClick={() => { setAddRows([]); setAddPickerProductId(''); setAddPickerQty(''); setAddOpen(true) }}
+            onClick={() => { setAddRows([]); setAddPickerProductId(''); setAddPickerQty(''); setPickerSearch(''); setAddOpen(true) }}
             sx={{
               textTransform: 'none', fontWeight: 700,
               bgcolor: '#FFF8E1', color: '#1F1F1F',
@@ -1366,13 +1356,20 @@ export default function InventoryRequestDetail() {
           {/* Picker row — Autocomplete + qty + Add button.
               Products already in the request OR already staged in
               addRows are filtered out so the dispatcher can't create
-              a duplicate. */}
+              a duplicate. Server-side search — options come pre-filtered
+              by the tokenised SP; we only apply the eligibility check
+              (already-in-request / already-staged) on the returned page. */}
           {(() => {
             const inRequestIds = new Set((request.items ?? []).map(i => i.productId))
             const stagedIds    = new Set(addRows.map(r => r.productId))
             const eligible = (productsQuery.data?.items ?? [])
               .filter(p => !inRequestIds.has(p.id) && !stagedIds.has(p.id))
             const picked = eligible.find(p => p.id === addPickerProductId) ?? null
+            // Show a spinner while the debounce window is still open (user
+            // typed, waiting for the pause) OR while the network request is
+            // in flight. Prevents the "No options" flash between keystroke
+            // and result.
+            const isSearchPending = pickerSearch !== debouncedPickerSearch
             return (
               <Box sx={{ display: 'flex', gap: 1, alignItems: 'flex-start', mb: 2 }}>
                 <Autocomplete
@@ -1381,13 +1378,19 @@ export default function InventoryRequestDetail() {
                   options={eligible}
                   value={picked}
                   onChange={(_e, val) => setAddPickerProductId(val?.id ?? '')}
+                  // Track only USER typing — 'reset' fires on selection or
+                  // clear and would incorrectly overwrite our search state.
+                  onInputChange={(_e, val, reason) => {
+                    if (reason === 'input') setPickerSearch(val)
+                    else if (reason === 'clear') setPickerSearch('')
+                  }}
                   getOptionLabel={(p) => `${p.code} — ${p.name}`}
                   isOptionEqualToValue={(a, b) => a.id === b.id}
-                  loading={productsQuery.isLoading}
-                  // Custom tokenized filter — see productPickerFilter comment
-                  // above the component. Fixes the "nat.kam" / "code with
-                  // separator" complaint (10-Jul-2026).
-                  filterOptions={productPickerFilter}
+                  loading={productsQuery.isLoading || isSearchPending}
+                  // Server did the search + tokenising — don't run MUI's
+                  // built-in substring filter on top (would double-filter
+                  // and hide legitimate matches).
+                  filterOptions={(x) => x}
                   renderInput={(params) => (
                     <TextField {...params} placeholder="Search product…" />
                   )}
@@ -1409,9 +1412,19 @@ export default function InventoryRequestDetail() {
                   onClick={() => {
                     const qty = parseInt(addPickerQty, 10)
                     if (!addPickerProductId || Number.isNaN(qty) || qty <= 0) return
-                    setAddRows(prev => [...prev, { productId: addPickerProductId, requestedQty: qty }])
+                    // Snapshot code + name so the staged-rows table can render
+                    // this row even after user searches for a different product
+                    // and it drops out of productsQuery.data.
+                    if (!picked) return
+                    setAddRows(prev => [...prev, {
+                      productId: picked.id,
+                      code: picked.code,
+                      name: picked.name,
+                      requestedQty: qty,
+                    }])
                     setAddPickerProductId('')
                     setAddPickerQty('')
+                    setPickerSearch('')
                   }}
                   disabled={!addPickerProductId || !addPickerQty || parseInt(addPickerQty, 10) <= 0}
                   sx={{
@@ -1445,12 +1458,11 @@ export default function InventoryRequestDetail() {
                 </TableHead>
                 <TableBody>
                   {addRows.map((row, idx) => {
-                    const p = (productsQuery.data?.items ?? []).find(pp => pp.id === row.productId)
                     return (
                       <TableRow key={row.productId}>
                         <TableCell sx={{ fontSize: 13 }}>
-                          <strong>{p?.name ?? '?'}</strong>
-                          <Box component="span" sx={{ ml: 1, fontSize: 11, color: '#1F1F1F99' }}>{p?.code}</Box>
+                          <strong>{row.name}</strong>
+                          <Box component="span" sx={{ ml: 1, fontSize: 11, color: '#1F1F1F99' }}>{row.code}</Box>
                         </TableCell>
                         <TableCell align="right" sx={{ fontSize: 13, fontWeight: 700 }}>{row.requestedQty}</TableCell>
                         <TableCell align="center">
@@ -1490,9 +1502,17 @@ export default function InventoryRequestDetail() {
             onClick={async () => {
               if (addRows.length === 0) return
               try {
+                // Strip UI-only snapshot fields (code, name) — the API only
+                // expects productId + requestedQty. Leaving extras would
+                // travel over the wire and may 400 on strict validators.
                 await addItemsMutation.mutateAsync({
                   id: request.id,
-                  req: { items: addRows },
+                  req: {
+                    items: addRows.map(r => ({
+                      productId: r.productId,
+                      requestedQty: r.requestedQty,
+                    })),
+                  },
                 })
                 setAddOpen(false)
               } catch { /* surfaced in Alert above */ }
