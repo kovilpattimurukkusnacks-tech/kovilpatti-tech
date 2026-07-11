@@ -1285,11 +1285,15 @@ BEGIN
         USING ERRCODE = 'unique_violation';
     END IF;
 
+    -- draft_dispatched_qty seeded with the typed qty (11-Jul-2026): the
+    -- godown adds a product because they intend to SHIP that many — making
+    -- them retype the same number in the Disp Qty column was double entry.
+    -- Shop-added lines still start blank; only inv-added rows pre-fill.
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit, added_by
+      weight_value, weight_unit, added_by, draft_dispatched_qty
     ) VALUES (
-      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory'
+      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory', v_qty
     );
   END LOOP;
 

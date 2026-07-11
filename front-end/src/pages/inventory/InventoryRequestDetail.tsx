@@ -1505,7 +1505,7 @@ export default function InventoryRequestDetail() {
                 // Strip UI-only snapshot fields (code, name) — the API only
                 // expects productId + requestedQty. Leaving extras would
                 // travel over the wire and may 400 on strict validators.
-                await addItemsMutation.mutateAsync({
+                const updated = await addItemsMutation.mutateAsync({
                   id: request.id,
                   req: {
                     items: addRows.map(r => ({
@@ -1513,6 +1513,22 @@ export default function InventoryRequestDetail() {
                       requestedQty: r.requestedQty,
                     })),
                   },
+                })
+                // The SP seeds draft_dispatched_qty = requested_qty on
+                // inv-added rows (11-Jul-2026) so the godown doesn't retype
+                // the qty in the Disp Qty column. The dispatchQtys seed
+                // effect only re-runs on id/status change, so merge the new
+                // lines' draft values in here. isDraftDirty stays as-is —
+                // the value is already persisted server-side.
+                const addedProductIds = new Set(addRows.map(r => r.productId))
+                setDispatchQtys(prev => {
+                  const m = new Map(prev)
+                  for (const it of updated.items ?? []) {
+                    if (addedProductIds.has(it.productId) && it.draftDispatchedQty != null && !m.has(it.id)) {
+                      m.set(it.id, it.draftDispatchedQty)
+                    }
+                  }
+                  return m
                 })
                 setAddOpen(false)
               } catch { /* surfaced in Alert above */ }
