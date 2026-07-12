@@ -789,17 +789,20 @@ BEGIN
     v_qty   := (v_item->>'requested_qty')::int;
     v_price := (v_item->>'unit_price')::numeric(10,2);
 
-    -- Snapshot weight from the current product master.
+    -- Snapshot weight + purchase price from the current product master.
+    -- purchase_price_snapshot freezes the cost basis exactly like
+    -- unit_price freezes MRP — accounts cost math never re-reads products.
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit
+      weight_value, weight_unit, purchase_price_snapshot
     )
     SELECT v_id,
            p.id,
            v_qty,
            v_price,
            p.weight_value,
-           p.weight_unit
+           p.weight_unit,
+           p.purchase_price
     FROM   products p
     WHERE  p.id = (v_item->>'product_id')::uuid;
 
@@ -917,9 +920,9 @@ BEGIN
 
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit
+      weight_value, weight_unit, purchase_price_snapshot
     )
-    SELECT v_id, p.id, v_qty, v_price, p.weight_value, p.weight_unit
+    SELECT v_id, p.id, v_qty, v_price, p.weight_value, p.weight_unit, p.purchase_price
     FROM   products p
     WHERE  p.id = (v_item->>'product_id')::uuid;
 
@@ -1074,14 +1077,15 @@ BEGIN
 
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit
+      weight_value, weight_unit, purchase_price_snapshot
     )
     SELECT p_id,
            p.id,
            v_qty,
            v_price,
            p.weight_value,
-           p.weight_unit
+           p.weight_unit,
+           p.purchase_price
     FROM   products p
     WHERE  p.id = (v_item->>'product_id')::uuid;
 
@@ -1239,6 +1243,7 @@ DECLARE
   v_pid     uuid;
   v_qty     int;
   v_price   numeric(10,2);
+  v_pp      numeric(10,2);
   v_wv      numeric(10,3);
   v_wu      varchar(5);
 BEGIN
@@ -1265,9 +1270,9 @@ BEGIN
       RAISE EXCEPTION 'requested_qty must be positive (got %)', v_qty;
     END IF;
 
-    -- Snapshot price + weight from the current products row.
-    SELECT mrp, weight_value, weight_unit
-    INTO v_price, v_wv, v_wu
+    -- Snapshot price + weight + purchase price from the current products row.
+    SELECT mrp, weight_value, weight_unit, purchase_price
+    INTO v_price, v_wv, v_wu, v_pp
     FROM products
     WHERE id = v_pid AND is_deleted = false;
 
@@ -1291,9 +1296,10 @@ BEGIN
     -- Shop-added lines still start blank; only inv-added rows pre-fill.
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit, added_by, draft_dispatched_qty
+      weight_value, weight_unit, added_by, draft_dispatched_qty,
+      purchase_price_snapshot
     ) VALUES (
-      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory', v_qty
+      p_id, v_pid, v_qty, v_price, v_wv, v_wu, 'Inventory', v_qty, v_pp
     );
   END LOOP;
 
@@ -1760,7 +1766,7 @@ BEGIN
 
     INSERT INTO stock_request_items (
       request_id, product_id, requested_qty, unit_price,
-      weight_value, weight_unit, return_weight_g
+      weight_value, weight_unit, return_weight_g, purchase_price_snapshot
     )
     SELECT v_id,
            p.id,
@@ -1768,7 +1774,8 @@ BEGIN
            v_price,
            p.weight_value,
            p.weight_unit,
-           v_ret_wg
+           v_ret_wg,
+           p.purchase_price
     FROM   products p
     WHERE  p.id = (v_item->>'product_id')::uuid;
 

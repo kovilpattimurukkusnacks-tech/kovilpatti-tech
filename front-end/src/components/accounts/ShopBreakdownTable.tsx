@@ -52,7 +52,10 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
       showIn: ['all', 'dispatched'] },
     { field: 'returnedQty',        headerName: 'Returned Qty', type: 'number', width: 115,
       showIn: ['all', 'returns'] },
-    // Amounts.
+    // Amounts. Purchased (at Cost) leads the money columns per the client
+    // ask (12-Jul-2026) — cost before the retail figures.
+    { field: 'purchaseAmount',   headerName: 'Purchased (Cost)', type: 'number', width: 150,
+      valueFormatter: fmt, showIn: ['all', 'dispatched'] },
     { field: 'requestedAmount',  headerName: 'Requested (MRP)',  type: 'number', width: 150,
       valueFormatter: fmt, showIn: ['all', 'requested'] },
     { field: 'dispatchedAmount', headerName: 'Dispatched (MRP)', type: 'number', width: 155,

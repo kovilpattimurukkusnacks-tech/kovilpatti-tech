@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-// LayoutDashboard kept for future Dashboard menu re-enable
-// import { LayoutDashboard, Package, Warehouse, LogOut } from 'lucide-react'
-import { Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt } from 'lucide-react'
+import { LayoutDashboard, Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
 const navItems = [
-  // Hidden for now — uncomment to re-enable Dashboard
-  // { to: '/admin', label: 'Dashboard', icon: LayoutDashboard, end: true },
+  // This-month movement chart (12-Jul-2026) — see AdminDashboard.tsx.
+  { to: '/admin/dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/admin/products', label: 'Products', icon: Package },
   { to: '/admin/requests', label: 'Stock Requests', icon: ClipboardList },
   // Accounts dashboard (Phase 3). Read-only stock-movement value at MRP,
