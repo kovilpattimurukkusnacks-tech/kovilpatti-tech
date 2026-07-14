@@ -154,10 +154,17 @@ export default function InventoryRequestDetail() {
   // The qty-input table is editable in either pre-finalisation mode.
   const canEditQty  = canDispatch || canAccept
   const stats = useMemo(() => {
-    let dispatchTotal  = 0
-    let requestedTotal = 0
-    let shortLines     = 0
+    let dispatchTotal     = 0
+    let dispatchTotalShop = 0
+    let requestedTotal    = 0
+    let shortLines        = 0
     for (const it of items) {
+      // Inv-added lines aren't part of the shop's ask (11-Jul-2026): the
+      // godown typed that qty themselves, so they're excluded from the
+      // Requested total, from short-line counting, AND from the short/over
+      // footer comparison (dispatchTotalShop). Their value still shows in
+      // the displayed dispatchTotal — that's the real shipment value.
+      const isInvLine = it.addedBy === 'Inventory'
       // dispatchTotal sums ONLY typed-in qtys (not a `?? requestedQty`
       // fallback) so Pending-state (nothing typed yet) shows ₹0, not the
       // requested total. On Approved the seed populates every entry so
@@ -165,11 +172,14 @@ export default function InventoryRequestDetail() {
       const typed = dispatchQtys.get(it.id)
       if (typed != null) {
         dispatchTotal += typed * it.unitPrice
-        if (typed < it.requestedQty) shortLines++
+        if (!isInvLine) {
+          dispatchTotalShop += typed * it.unitPrice
+          if (typed < it.requestedQty) shortLines++
+        }
       }
-      requestedTotal += it.requestedQty * it.unitPrice
+      if (!isInvLine) requestedTotal += it.requestedQty * it.unitPrice
     }
-    return { dispatchTotal, requestedTotal, shortLines }
+    return { dispatchTotal, dispatchTotalShop, requestedTotal, shortLines }
   }, [items, dispatchQtys])
 
   // Inventory user must enter a number on every line before dispatching (0
@@ -478,7 +488,14 @@ export default function InventoryRequestDetail() {
   // Card renderer for one category-group — same JSX used by both columns
   // of the 2-col grid. Closes over dispatchQtys / canEditQty / setItemQty
   // / formatINR / DispatchedCell from the outer scope.
-  const renderCatGroup = (catGroup: typeof grouped[number]) => (
+  const renderCatGroup = (catGroup: typeof grouped[number]) => {
+    // Whole card is godown-added lines → no shop ask anywhere in it, so
+    // the Req Qty column is dropped entirely, header included
+    // (11-Jul-2026). Mixed cards keep the header; their inv rows span
+    // into the column instead (colSpan on the product cell).
+    const hideReqCol = catGroup.weightGroups.every(wg => wg.items.every(it => it.addedBy === 'Inventory'))
+    const colCount = hideReqCol ? 4 : 5
+    return (
     <Paper
       key={catGroup.category}
       elevation={0}
@@ -507,7 +524,9 @@ export default function InventoryRequestDetail() {
           <TableHead>
             <TableRow sx={{ bgcolor: '#FFFBE6' }}>
               <TableCell sx={{ py: 0.75, pl: 3, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Product</TableCell>
-              <TableCell align="right"  sx={{ py: 0.75, width: 90,  fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              {!hideReqCol && (
+                <TableCell align="right" sx={{ py: 0.75, width: 90, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Req Qty</TableCell>
+              )}
               <TableCell align="center" sx={{ py: 0.75, width: 130, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Disp Qty</TableCell>
               <TableCell align="right"  sx={{ py: 0.75, width: 100, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>MRP</TableCell>
               <TableCell align="right"  sx={{ py: 0.75, width: 110, fontSize: 10.5, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99', borderBottom: '1px solid rgba(31,31,31,0.15)' }}>Net Amt</TableCell>
@@ -518,7 +537,7 @@ export default function InventoryRequestDetail() {
               <Fragment key={`${catGroup.category}__${wg.label}`}>
                 <TableRow>
                   <TableCell
-                    colSpan={5}
+                    colSpan={colCount}
                     sx={{
                       bgcolor: '#FFF8DC',
                       borderLeft: '4px solid #FCD835',
@@ -547,11 +566,15 @@ export default function InventoryRequestDetail() {
                   // border on the TextField) — but the row tint + total
                   // colour apply whether or not the user can still edit, so
                   // the variance reads the same once the request is locked.
-                  const isShort = canEditQty && currentDispatch < item.requestedQty
-                  const isOver  = canEditQty && currentDispatch > item.requestedQty
+                  // Inv-added lines have no shop ask to vary against — the
+                  // godown typed the qty themselves, so short/over variance
+                  // never applies and Req Qty renders as a dash (11-Jul-2026).
+                  const isInvLine = item.addedBy === 'Inventory'
+                  const isShort = !isInvLine && canEditQty && currentDispatch < item.requestedQty
+                  const isOver  = !isInvLine && canEditQty && currentDispatch > item.requestedQty
                   const dispatched = item.dispatchedQty
-                  const persistedShort = dispatched != null && dispatched < item.requestedQty
-                  const persistedOver  = dispatched != null && dispatched > item.requestedQty
+                  const persistedShort = !isInvLine && dispatched != null && dispatched < item.requestedQty
+                  const persistedOver  = !isInvLine && dispatched != null && dispatched > item.requestedQty
                   const rowShort = isShort || persistedShort
                   const rowOver  = isOver  || persistedOver
                   const rowBg = rowShort ? 'rgba(198,40,40,0.06)'
@@ -560,7 +583,12 @@ export default function InventoryRequestDetail() {
                   const totalColor = rowShort ? '#C62828' : rowOver ? '#E65100' : '#1F1F1F'
                   return (
                     <TableRow key={item.id} hover sx={{ bgcolor: rowBg, '& > td': { verticalAlign: 'top' } }}>
-                      <TableCell sx={{ pl: 3, py: 1 }}>
+                      {/* Inv-added rows in MIXED cards: product cell spans the
+                          Req Qty column — no shop ask exists, so the column
+                          disappears for this row and the name gets the space.
+                          All-inv cards have no Req column at all (hideReqCol),
+                          so no span is needed there. */}
+                      <TableCell colSpan={!hideReqCol && isInvLine ? 2 : 1} sx={{ pl: 3, py: 1 }}>
                         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, fontWeight: 600, fontSize: 14 }}>
                           <span>{item.productName}</span>
                           {item.addedBy === 'Inventory' && <InvBadge />}
@@ -595,7 +623,9 @@ export default function InventoryRequestDetail() {
                           )}
                         </Box>
                       </TableCell>
-                      <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
+                      {!isInvLine && (
+                        <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
+                      )}
                       <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
                         {canEditQty ? (
                           <TextField
@@ -687,7 +717,13 @@ export default function InventoryRequestDetail() {
                             }}
                           />
                         ) : (
-                          <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
+                          <DispatchedCell
+                            qty={item.dispatchedQty}
+                            // Inv lines: pass dispatched as "requested" so the
+                            // cell never paints short/over — no shop ask exists.
+                            requested={isInvLine ? (item.dispatchedQty ?? item.requestedQty) : item.requestedQty}
+                            received={item.receivedQty}
+                          />
                         )}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1, width: 100 }}>{formatINR(item.unitPrice)}</TableCell>
@@ -701,7 +737,8 @@ export default function InventoryRequestDetail() {
         </Table>
       </TableContainer>
     </Paper>
-  )
+    )
+  }
 
   return (
     // pb leaves room for one of two fixed bottom bars + breathing space
@@ -1114,14 +1151,17 @@ export default function InventoryRequestDetail() {
                     (dispatchTotal > 0). Resting state (nothing typed →
                     dispatchTotal = 0) suppresses the label so it doesn't
                     read as "everything's short" on a fresh screen. */}
-                {stats.dispatchTotal > 0 && stats.dispatchTotal < stats.requestedTotal && (
+                {/* Variance compares SHOP lines only — inv-added lines have
+                    no ask to vary against, and counting them made every
+                    add read as "over" (11-Jul-2026). */}
+                {stats.dispatchTotalShop > 0 && stats.dispatchTotalShop < stats.requestedTotal && (
                   <Box component="span" sx={{ ml: 0.75, color: '#C62828', fontSize: 10 }}>
-                    · short {formatINR(stats.requestedTotal - stats.dispatchTotal)}
+                    · short {formatINR(stats.requestedTotal - stats.dispatchTotalShop)}
                   </Box>
                 )}
-                {stats.dispatchTotal > stats.requestedTotal && (
+                {stats.dispatchTotalShop > stats.requestedTotal && (
                   <Box component="span" sx={{ ml: 0.75, color: '#E65100', fontSize: 10 }}>
-                    · over {formatINR(stats.dispatchTotal - stats.requestedTotal)}
+                    · over {formatINR(stats.dispatchTotalShop - stats.requestedTotal)}
                   </Box>
                 )}
               </Box>
@@ -1505,7 +1545,7 @@ export default function InventoryRequestDetail() {
                 // Strip UI-only snapshot fields (code, name) — the API only
                 // expects productId + requestedQty. Leaving extras would
                 // travel over the wire and may 400 on strict validators.
-                await addItemsMutation.mutateAsync({
+                const updated = await addItemsMutation.mutateAsync({
                   id: request.id,
                   req: {
                     items: addRows.map(r => ({
@@ -1513,6 +1553,22 @@ export default function InventoryRequestDetail() {
                       requestedQty: r.requestedQty,
                     })),
                   },
+                })
+                // The SP seeds draft_dispatched_qty = requested_qty on
+                // inv-added rows (11-Jul-2026) so the godown doesn't retype
+                // the qty in the Disp Qty column. The dispatchQtys seed
+                // effect only re-runs on id/status change, so merge the new
+                // lines' draft values in here. isDraftDirty stays as-is —
+                // the value is already persisted server-side.
+                const addedProductIds = new Set(addRows.map(r => r.productId))
+                setDispatchQtys(prev => {
+                  const m = new Map(prev)
+                  for (const it of updated.items ?? []) {
+                    if (addedProductIds.has(it.productId) && it.draftDispatchedQty != null && !m.has(it.id)) {
+                      m.set(it.id, it.draftDispatchedQty)
+                    }
+                  }
+                  return m
                 })
                 setAddOpen(false)
               } catch { /* surfaced in Alert above */ }
