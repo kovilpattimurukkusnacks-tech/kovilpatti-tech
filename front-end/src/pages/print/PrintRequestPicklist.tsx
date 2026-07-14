@@ -29,12 +29,17 @@ const MAX_COLUMNS = 3
 // re-tune when fonts/padding change — the measurement pass just sees it.
 //
 // Chrome lays print out at CSS-px scale (96dpi), so mm→px is exact math.
-// KEEP THESE IN SYNC with @page in print.css (A4, margin 8mm 16mm 18mm).
+// KEEP THESE IN SYNC with @page in print.css (A4, margin 16mm 16mm 18mm 16mm).
+// 10-Jul-2026 — was stale at (297 − 8 − 18) after @page top was bumped
+// from 8mm → 12mm → 16mm across two client feedback rounds on banner
+// clipping. The picklist packer was thinking the page held ~15px more
+// than it actually did; content silently overflowed into the top-margin
+// band on pages 2+. Fixed by resyncing to the current @page top.
 const MM_TO_PX = 96 / 25.4
-// 297mm tall minus 8mm top / 18mm bottom margins → 271mm ≈ 1024px content
+// 297mm tall minus 16mm top / 18mm bottom margins → 263mm ≈ 994px content
 // height. 12px shaved as a safety buffer for sub-pixel rounding across a
 // column of stacked cards.
-const PAGE_CONTENT_HEIGHT_PX = Math.floor((297 - 8 - 18) * MM_TO_PX) - 12
+const PAGE_CONTENT_HEIGHT_PX = Math.floor((297 - 16 - 18) * MM_TO_PX) - 12
 // 210mm wide minus 16mm side margins, minus 2mm slack so a sub-pixel
 // rounding overflow can never trigger Chrome's shrink-to-fit scaling.
 // BOTH the measurement pass and the final page render pin their column

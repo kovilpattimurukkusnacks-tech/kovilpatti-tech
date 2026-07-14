@@ -1,13 +1,18 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { ClipboardList, LogOut, Store } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, Store, Wallet } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useShop } from '../hooks/useShops'
 import './Sidebar.css'
 
-// Shop user has a much smaller nav than admin. Single section for now;
-// Phase 3+ can add browse catalog / invoices / etc.
+// Shop user has a much smaller nav than admin. Dashboard sits at the top —
+// it's the post-login landing page (10-Jul-2026, see the shop-landing memory).
 const navItems = [
-  { to: '/shop/requests', label: 'Stock Requests', icon: ClipboardList },
+  { to: '/shop/dashboard', label: 'Dashboard',    icon: LayoutDashboard },
+  { to: '/shop/requests',  label: 'Stock Requests', icon: ClipboardList },
+  // Utilities — UI-preview page for this shop's operating expenses
+  // (electricity, rent, staff, etc.). No backend yet; see
+  // DB/planned/pos_billing_screens.md.
+  { to: '/shop/utilities', label: 'Utilities',    icon: Wallet },
 ]
 
 type Props = { onNavigate?: () => void }
