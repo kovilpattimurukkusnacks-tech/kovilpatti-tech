@@ -41,4 +41,4 @@ Desktop.ini
 # Canonical schema lives under DB/phaseN/, and upgrade migrations live under
 # DB/migrations/ (both tracked). Anything that should travel with a git pull
 # (UAT / prod / new dev machine) goes there, NOT here.
-DB/One shot scripts/
+

@@ -1585,6 +1585,7 @@ RETURNS boolean
 LANGUAGE plpgsql AS $$
 DECLARE
   v_flipped boolean;
+  v_receipt record;   -- 10-Jul-2026: per-line receipt loop for shop_inventory wiring
 BEGIN
   UPDATE stock_requests
   SET status      = 'Received',
@@ -1639,6 +1640,43 @@ BEGIN
     WHERE  it.request_id = p_id
       AND  (e.value->>'received_qty') IS NOT NULL
       AND  it.received_qty IS DISTINCT FROM it.dispatched_qty;
+  END IF;
+
+  -- Phase 4 wiring (10-Jul-2026): every confirmed receipt updates the
+  -- shop's on-hand ledger. Only fires on a real Dispatched→Received
+  -- flip (v_flipped) — a duplicate call after the flip finds status
+  -- != 'Dispatched' → v_flipped=false → skips this block, so we can't
+  -- double-post inventory movements. Qty falls back to dispatched_qty
+  -- when the shop didn't send an items payload (silent full-receipt).
+  -- Rows where the shop reported 0 received are skipped — would fail
+  -- shop_inventory_movements' qty_delta <> 0 constraint.
+  -- See fn_shop_inventory_apply_movement (phase4) for row-locking,
+  -- avg_cost recompute, and negative-guard details.
+  IF v_flipped THEN
+    FOR v_receipt IN
+      SELECT sri.product_id,
+             COALESCE(sri.received_qty, sri.dispatched_qty, 0)::numeric AS qty,
+             COALESCE(p.purchase_price, 0)::numeric                     AS unit_cost,
+             sr.shop_id,
+             sr.code AS request_code
+      FROM stock_request_items sri
+      INNER JOIN stock_requests sr ON sr.id = sri.request_id
+      INNER JOIN products       p  ON p.id = sri.product_id
+      WHERE sri.request_id = p_id
+        AND COALESCE(sri.received_qty, sri.dispatched_qty, 0) > 0
+    LOOP
+      PERFORM fn_shop_inventory_apply_movement(
+        v_receipt.shop_id,
+        v_receipt.product_id,
+        'Receipt',
+        v_receipt.qty,
+        v_receipt.unit_cost,
+        'StockRequest',
+        p_id,
+        'Received via ' || v_receipt.request_code,
+        p_user_id
+      );
+    END LOOP;
   END IF;
 
   RETURN v_flipped;

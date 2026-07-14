@@ -16,6 +16,7 @@ import Shops from './pages/Shops'
 import Staff from './pages/Staff'
 import InventoryRequests from './pages/inventory/InventoryRequests'
 import InventoryRequestDetail from './pages/inventory/InventoryRequestDetail'
+import ShopDashboard from './pages/shop/ShopDashboard'
 import ShopRequests from './pages/shop/ShopRequests'
 import ShopRequestNew from './pages/shop/ShopRequestNew'
 import ShopRequestDetail from './pages/shop/ShopRequestDetail'
@@ -24,6 +25,7 @@ import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminAccounts from './pages/admin/AdminAccounts'
 import AdminDashboard from './pages/admin/AdminDashboard'
+import ShopUtilities from './pages/shop/ShopUtilities'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
 import PrintCumulative from './pages/print/PrintCumulative'
@@ -79,11 +81,15 @@ const router = createBrowserRouter(
       </Route>
 
       <Route path="/shop" element={<RoleGate allow="ShopUser"><ShopLayout /></RoleGate>}>
-        <Route index element={<Navigate to="requests" replace />} />
+        {/* Post-login landing = dashboard (see project_kovilpatti_shop_landing
+            memory). Stock requests remain accessible via sidebar. */}
+        <Route index element={<Navigate to="dashboard" replace />} />
+        <Route path="dashboard" element={<ShopDashboard />} />
         <Route path="requests" element={<ShopRequests />} />
         <Route path="requests/new" element={<ShopRequestNew />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
         <Route path="requests/:id" element={<ShopRequestDetail />} />
+        <Route path="utilities" element={<ShopUtilities />} />
       </Route>
 
       <Route path="/inventory" element={<RoleGate allow="Inventory"><InventoryLayout /></RoleGate>}>

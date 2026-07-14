@@ -1,0 +1,64 @@
+-- ─────────────────────────────────────────────────────────────────────────
+-- Phase 3 — Accounts rollup: Backorder → Order semantics (one-shot)
+-- 02-Jul-2026
+--
+-- Prerequisite: phase2_backorder_schema.sql (adds 'Backorder' enum value).
+--
+-- What this script does
+-- ─────────────────────
+-- Extends the accounts SPs so a Backorder request contributes to its
+-- shop / inventory / category rollups on the child's `received_at` timestamp
+-- — same treatment as a plain Order. Without this, Backorders leak revenue
+-- that the parent Order lost when the items were carved off.
+--
+-- Concretely, every `r.request_type = 'Order'` filter in the accounts SPs
+-- becomes `r.request_type IN ('Order', 'Backorder')`. Semantics chosen with:
+--   • Returns (`request_type = 'Return'`) stay separate — a Backorder is
+--     forward-flow revenue, not a reversal.
+--   • The Backorder's shop_id / inventory_id are inherited from its parent
+--     at Move-to-back-order time, so no lineage traversal is needed here —
+--     the row already has the correct attribution keys.
+--   • Backorder + parent Order together sum to the original combined total
+--     (parent's total_amount was reduced by the carve; child's total_amount
+--     is exactly the moved items). Accounts arrives at the correct final
+--     revenue in two events: parent on parent's received_at, child on
+--     child's received_at.
+--
+-- How to run
+-- ──────────
+-- Re-apply the entire updated DB/phase3/phase3_procedures.sql file. The
+-- SP bodies are large and duplicating them here would rot vs. source; the
+-- file itself is now the canonical definition (all 24 `= 'Order'` uses
+-- became `IN ('Order', 'Backorder')` in the same edit that produced this
+-- script).
+--
+--   psql -U <user> -d <db> -f DB/phase3/phase3_procedures.sql
+--
+-- All accounts SPs in that file are CREATE OR REPLACE, so re-running is
+-- idempotent — no DROP needed since the RETURNS TABLE shapes are unchanged.
+--
+-- Backward compat
+-- ───────────────
+-- • Zero impact on installs that have never used Backorders — the extended
+--   filter falls back to Order-only behaviour when no Backorder rows exist.
+-- • FE / BE need no changes for this rollup — Accounts DTO / KPI cards
+--   already render whatever the SP returns; the numbers just get bigger
+--   once Backorders start settling.
+--
+-- Verification
+-- ────────────
+-- After running, spot-check with a receipted Backorder:
+--   1. Move some items off a parent Order → new Backorder created.
+--   2. Dispatch + receive the Backorder.
+--   3. Open Admin Accounts for that shop's date range → Dispatched should
+--      include both the parent's remainder AND the child's amount, and
+--      Net = Dispatched − Returns should equal the original order intent.
+-- ─────────────────────────────────────────────────────────────────────────
+
+-- No SP redefinitions below — see file header. Placed here so the one-shot
+-- script folder has a marker for the change, keeping the upgrade log
+-- consistent with the other one-shots.
+
+DO $$ BEGIN
+  RAISE NOTICE 'phase3_accounts_backorder_rollup — re-run DB/phase3/phase3_procedures.sql to apply.';
+END $$;
