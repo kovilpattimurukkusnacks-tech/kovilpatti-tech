@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Admin Dashboard — Mockup</title>
+<style>
+  :root{
+    --gold-1:#C28A00; --gold-2:#E6B800; --gold-3:#FFD700; --gold-4:#FFF1A6;
+    --cream:#FFFBE6; --yellow:#FCD835; --red:#C62828; --green:#2E7D32; --dark:#1F1F1F;
+    --gold-gradient: linear-gradient(90deg, var(--gold-1) 0%, var(--gold-2) 35%, var(--gold-3) 65%, var(--gold-4) 100%);
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0; background:#F3EEDD; color:var(--dark);
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+  }
+  .brandfont{ font-family:"Arial Narrow",Arial,sans-serif; font-weight:800; letter-spacing:0.5px; text-transform:uppercase; }
+  .mock-ribbon{
+    position:sticky; top:0; z-index:50; background:var(--dark); color:var(--gold-3);
+    text-align:center; font-size:11px; font-weight:700; letter-spacing:1px; padding:5px 8px; text-transform:uppercase;
+  }
+  .app{ max-width:1280px; margin:0 auto; padding:16px 16px 40px; }
+  header.topbar{
+    display:flex; align-items:center; justify-content:space-between; gap:12px; flex-wrap:wrap;
+    padding:14px 18px; margin-bottom:16px; background:var(--dark); border-radius:14px; color:#fff;
+  }
+  header.topbar .brand{ display:flex; align-items:center; gap:10px; }
+  header.topbar .brand .mark{
+    width:38px; height:38px; border-radius:9px; background:var(--gold-gradient);
+    display:flex; align-items:center; justify-content:center; font-weight:900; color:var(--dark); font-size:15px;
+  }
+  header.topbar .brand h1{ font-size:16px; margin:0; }
+  header.topbar .brand .sub{ font-size:11.5px; color:#ffffffaa; margin-top:1px; }
+  .chip{
+    display:inline-flex; align-items:center; gap:6px; padding:6px 11px; border-radius:999px;
+    font-size:12px; font-weight:700; background:#ffffff14; border:1px solid #ffffff2a; color:#fff;
+  }
+  select.range-select{
+    background:#ffffff14; border:1px solid #ffffff2a; color:#fff; border-radius:999px;
+    font-size:12px; font-weight:700; padding:6px 11px;
+  }
+
+  .card{
+    background:#fff; border:2px solid var(--dark); border-radius:14px;
+    box-shadow:6px 6px 0 0 var(--yellow); padding:16px;
+  }
+  .kpi-grid{ display:grid; grid-template-columns:repeat(4,1fr); gap:14px; margin-bottom:16px; }
+  .kpi{ }
+  .kpi .lbl{ font-size:11.5px; font-weight:700; text-transform:uppercase; letter-spacing:0.06em; color:#1F1F1F99; }
+  .kpi .val{ font-size:26px; font-weight:900; margin-top:4px; }
+  .kpi .delta{ font-size:12px; font-weight:700; margin-top:4px; }
+  .delta.up{ color:var(--green); } .delta.down{ color:var(--red); }
+
+  .row2{ display:grid; grid-template-columns:1.6fr 1fr; gap:16px; margin-bottom:16px; }
+  .row2b{ display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-bottom:16px; }
+
+  .section-title{
+    font-size:13px; font-weight:800; text-transform:uppercase; letter-spacing:0.05em;
+    padding-bottom:10px; margin-bottom:12px; border-bottom:2px solid var(--dark);
+    display:flex; justify-content:space-between; align-items:center;
+  }
+  .section-title .tag{ font-size:11px; font-weight:700; background:var(--yellow); border:1px solid var(--dark); border-radius:999px; padding:2px 9px; }
+
+  table.simple{ width:100%; border-collapse:collapse; font-size:12.5px; }
+  table.simple th{ text-align:left; font-size:10.5px; text-transform:uppercase; letter-spacing:0.05em; color:#1F1F1F99; padding:6px 8px; border-bottom:2px solid var(--dark); }
+  table.simple td{ padding:8px; border-bottom:1px solid #1F1F1F1c; }
+  table.simple tr:last-child td{ border-bottom:none; }
+  .pill{ display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:700; }
+  .pill.low{ background:#FCE4E4; color:var(--red); }
+  .pill.out{ background:var(--dark); color:#fff; }
+  .pill.ok{ background:#E8F5E9; color:var(--green); }
+  .bar-track{ background:#1F1F1F14; border-radius:6px; height:8px; overflow:hidden; }
+  .bar-fill{ height:100%; background:var(--gold-gradient); border-radius:6px; }
+
+  .chart-wrap{ display:flex; align-items:flex-end; gap:10px; height:180px; padding:6px 4px 0; }
+  .chart-col{ flex:1; display:flex; flex-direction:column; align-items:center; gap:6px; }
+  .chart-bar{ width:100%; max-width:34px; border-radius:6px 6px 2px 2px; background:var(--gold-gradient); position:relative; }
+  .chart-bar .amt{ position:absolute; top:-18px; left:50%; transform:translateX(-50%); font-size:10px; font-weight:800; white-space:nowrap; }
+  .chart-day{ font-size:10.5px; font-weight:700; color:#1F1F1F99; }
+
+  .shop-row{ display:flex; align-items:center; justify-content:space-between; padding:10px 0; border-bottom:1px solid #1F1F1F1c; }
+  .shop-row:last-child{ border-bottom:none; }
+  .shop-row .name{ font-weight:800; font-size:13px; }
+  .shop-row .code{ font-size:11px; color:#1F1F1F99; font-weight:600; }
+  .shop-row .amt{ font-weight:900; font-size:14px; text-align:right; }
+  .shop-row .sub{ font-size:11px; color:#1F1F1F99; text-align:right; }
+
+  .badge-rank{
+    width:22px; height:22px; border-radius:50%; background:var(--dark); color:var(--gold-3);
+    display:inline-flex; align-items:center; justify-content:center; font-size:11px; font-weight:800; margin-right:8px;
+  }
+
+  footer.note{ text-align:center; font-size:11px; color:#1F1F1F77; margin-top:20px; }
+  @media (max-width:900px){
+    .kpi-grid{ grid-template-columns:repeat(2,1fr); }
+    .row2, .row2b{ grid-template-columns:1fr; }
+  }
+</style>
+</head>
+<body>
+  <div class="mock-ribbon">⚠ Mockup only — sample data, not live · illustrates dashboard once POS billing ships</div>
+  <div class="app">
+    <header class="topbar">
+      <div class="brand">
+        <div class="mark">KM</div>
+        <div>
+          <h1 class="brandfont">Kovilpatti Murukku &amp; Snacks</h1>
+          <div class="sub">Admin Dashboard · All Shops</div>
+        </div>
+      </div>
+      <div style="display:flex; gap:10px; align-items:center;">
+        <select class="range-select">
+          <option>Today</option>
+          <option selected>This Week</option>
+          <option>This Month</option>
+        </select>
+        <span class="chip">📅 06 Jul 2026</span>
+        <span class="chip">🟢 5 Shops Active</span>
+        <a href="utilities-mock.html" class="chip" style="text-decoration:none; background:var(--yellow); color:var(--dark); border-color:var(--dark);">🧾 Utilities</a>
+      </div>
+    </header>
+
+    <!-- KPI cards -->
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="lbl">Sales Today (All Shops)</div>
+        <div class="val">₹86,420</div>
+        <div class="delta up">▲ 12.4% vs yesterday</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Bills Today</div>
+        <div class="val">312</div>
+        <div class="delta up">▲ 18 bills vs yesterday</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Avg. Bill Value</div>
+        <div class="val">₹277</div>
+        <div class="delta down">▼ 3.1% vs last week avg</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Low / Out of Stock Items</div>
+        <div class="val">9</div>
+        <div class="delta down">▲ 4 new since yesterday</div>
+      </div>
+    </div>
+
+    <!-- New: Utilities + Net profit strip -->
+    <div class="kpi-grid">
+      <div class="card kpi">
+        <div class="lbl">Purchases (MTD)</div>
+        <div class="val" style="color:var(--red);">− ₹3,10,200</div>
+        <div class="delta down">▼ from Godown dispatches</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Utilities / Expenses (MTD) <a href="utilities-mock.html" style="font-size:10px;font-weight:700;color:var(--gold-1);text-decoration:none;">↗ view</a></div>
+        <div class="val" style="color:var(--red);">− ₹18,650</div>
+        <div class="delta up">▲ 6.2% vs last month</div>
+      </div>
+      <div class="card kpi">
+        <div class="lbl">Gross Sales (MTD)</div>
+        <div class="val" style="color:var(--green);">₹5,86,380</div>
+        <div class="delta up">▲ 9.8% vs last month</div>
+      </div>
+      <div class="card kpi" style="border-color:var(--dark); box-shadow:6px 6px 0 0 var(--gold-3);">
+        <div class="lbl">Net Profit (MTD)</div>
+        <div class="val">₹2,57,530</div>
+        <div class="delta down">Sales − Purchases − Utilities</div>
+      </div>
+    </div>
+
+    <!-- Revenue chart + shop leaderboard -->
+    <div class="row2">
+      <div class="card">
+        <div class="section-title">Revenue Trend (This Week) <span class="tag">All Shops</span></div>
+        <div class="chart-wrap">
+          <div class="chart-col"><div class="chart-bar" style="height:58%;"><span class="amt">₹61k</span></div><div class="chart-day">Mon</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:66%;"><span class="amt">₹69k</span></div><div class="chart-day">Tue</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:52%;"><span class="amt">₹55k</span></div><div class="chart-day">Wed</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:74%;"><span class="amt">₹78k</span></div><div class="chart-day">Thu</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:81%;"><span class="amt">₹85k</span></div><div class="chart-day">Fri</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:95%;"><span class="amt">₹1.0L</span></div><div class="chart-day">Sat</div></div>
+          <div class="chart-col"><div class="chart-bar" style="height:82%; background:var(--dark);"><span class="amt">₹86k</span></div><div class="chart-day">Today</div></div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="section-title">Top Performing Shops</div>
+        <div class="shop-row">
+          <div><span class="badge-rank">1</span><span class="name">Kovilpatti Main</span><div class="code" style="margin-left:30px;">SHP001</div></div>
+          <div><div class="amt">₹24,180</div><div class="sub">98 bills</div></div>
+        </div>
+        <div class="shop-row">
+          <div><span class="badge-rank">2</span><span class="name">Tirunelveli Junction</span><div class="code" style="margin-left:30px;">SHP003</div></div>
+          <div><div class="amt">₹19,760</div><div class="sub">76 bills</div></div>
+        </div>
+        <div class="shop-row">
+          <div><span class="badge-rank">3</span><span class="name">Sankarankovil Bypass</span><div class="code" style="margin-left:30px;">SHP002</div></div>
+          <div><div class="amt">₹16,340</div><div class="sub">61 bills</div></div>
+        </div>
+        <div class="shop-row">
+          <div><span class="badge-rank">4</span><span class="name">Madurai Anna Nagar</span><div class="code" style="margin-left:30px;">SHP004</div></div>
+          <div><div class="amt">₹15,020</div><div class="sub">54 bills</div></div>
+        </div>
+        <div class="shop-row">
+          <div><span class="badge-rank">5</span><span class="name">Kayathar Highway</span><div class="code" style="margin-left:30px;">SHP005</div></div>
+          <div><div class="amt">₹11,120</div><div class="sub">23 bills</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Top products + low stock -->
+    <div class="row2b">
+      <div class="card">
+        <div class="section-title">Top Selling Products (This Week) <span class="tag">Qty</span></div>
+        <table class="simple">
+          <thead><tr><th>#</th><th>Product</th><th>Sold</th><th>Revenue</th><th>Trend</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td>Kara Sev (200 g)</td><td>612 pkt</td><td>₹36,720</td><td style="color:var(--green);font-weight:700;">▲ 8%</td></tr>
+            <tr><td>2</td><td>Murukku Twist (500 g)</td><td>340 pkt</td><td>₹40,800</td><td style="color:var(--green);font-weight:700;">▲ 14%</td></tr>
+            <tr><td>3</td><td>Mixture (200 g)</td><td>488 pkt</td><td>₹26,840</td><td style="color:var(--red);font-weight:700;">▼ 3%</td></tr>
+            <tr><td>4</td><td>Britannia Biscuits</td><td>790 pkt</td><td>₹23,700</td><td style="color:var(--green);font-weight:700;">▲ 5%</td></tr>
+            <tr><td>5</td><td>Banana Chips (250 g)</td><td>265 pkt</td><td>₹18,550</td><td style="color:var(--green);font-weight:700;">▲ 2%</td></tr>
+            <tr><td>6</td><td>Ribbon Pakoda (200 g)</td><td>198 pkt</td><td>₹11,880</td><td style="color:#1F1F1F99;font-weight:700;">— flat</td></tr>
+            <tr><td>7</td><td>Boondi (loose, /250g)</td><td>140 scoops</td><td>₹7,000</td><td style="color:var(--green);font-weight:700;">▲ 6%</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="card">
+        <div class="section-title">Low / Out of Stock <span class="tag">Across Shops</span></div>
+        <table class="simple">
+          <thead><tr><th>Product</th><th>Shop</th><th>On hand</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td>Banana Chips (250 g)</td><td>SHP001 · Kovilpatti Main</td><td>0</td><td><span class="pill out">Out</span></td></tr>
+            <tr><td>Mixture (200 g)</td><td>SHP003 · Tirunelveli Junction</td><td>3</td><td><span class="pill low">Low</span></td></tr>
+            <tr><td>Murukku Twist (500 g)</td><td>SHP002 · Sankarankovil Bypass</td><td>5</td><td><span class="pill low">Low</span></td></tr>
+            <tr><td>Britannia Biscuits</td><td>SHP004 · Madurai Anna Nagar</td><td>0</td><td><span class="pill out">Out</span></td></tr>
+            <tr><td>Kara Sev (200 g)</td><td>SHP005 · Kayathar Highway</td><td>6</td><td><span class="pill low">Low</span></td></tr>
+            <tr><td>Ribbon Pakoda (200 g)</td><td>SHP001 · Kovilpatti Main</td><td>4</td><td><span class="pill low">Low</span></td></tr>
+            <tr><td>Mango Pickle (loose)</td><td>SHP003 · Tirunelveli Junction</td><td>—</td><td><span class="pill ok">Restock soon</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Recent POS sales -->
+    <div class="card" style="margin-bottom:16px;">
+      <div class="section-title">Recent POS Bills <span class="tag">Live Feed (sample)</span></div>
+      <table class="simple">
+        <thead><tr><th>Bill No.</th><th>Shop</th><th>Items</th><th>Amount</th><th>GST</th><th>Time</th></tr></thead>
+        <tbody>
+          <tr><td>POS0482</td><td>Kovilpatti Main</td><td>4</td><td>₹340.00</td><td>₹16.20</td><td>2 min ago</td></tr>
+          <tr><td>POS0481</td><td>Tirunelveli Junction</td><td>2</td><td>₹115.00</td><td>₹5.50</td><td>6 min ago</td></tr>
+          <tr><td>POS0480</td><td>Sankarankovil Bypass</td><td>7</td><td>₹612.00</td><td>₹29.20</td><td>11 min ago</td></tr>
+          <tr><td>POS0479</td><td>Madurai Anna Nagar</td><td>3</td><td>₹210.00</td><td>₹10.00</td><td>18 min ago</td></tr>
+          <tr><td>POS0478</td><td>Kovilpatti Main</td><td>5</td><td>₹455.00</td><td>₹21.70</td><td>24 min ago</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Shop-wise comparison -->
+    <div class="card">
+      <div class="section-title">Shop-wise Performance <span class="tag">This Week</span></div>
+      <table class="simple">
+        <thead><tr><th>Shop</th><th>Revenue</th><th>Bills</th><th>Avg. Bill</th><th>Stock Health</th></tr></thead>
+        <tbody>
+          <tr>
+            <td>Kovilpatti Main (SHP001)</td><td>₹1,68,900</td><td>612</td><td>₹276</td>
+            <td style="width:160px;"><div class="bar-track"><div class="bar-fill" style="width:88%;"></div></div></td>
+          </tr>
+          <tr>
+            <td>Tirunelveli Junction (SHP003)</td><td>₹1,42,300</td><td>498</td><td>₹286</td>
+            <td style="width:160px;"><div class="bar-track"><div class="bar-fill" style="width:74%;"></div></div></td>
+          </tr>
+          <tr>
+            <td>Sankarankovil Bypass (SHP002)</td><td>₹1,10,050</td><td>402</td><td>₹274</td>
+            <td style="width:160px;"><div class="bar-track"><div class="bar-fill" style="width:66%;"></div></div></td>
+          </tr>
+          <tr>
+            <td>Madurai Anna Nagar (SHP004)</td><td>₹96,720</td><td>355</td><td>₹272</td>
+            <td style="width:160px;"><div class="bar-track"><div class="bar-fill" style="width:58%;"></div></div></td>
+          </tr>
+          <tr>
+            <td>Kayathar Highway (SHP005)</td><td>₹58,410</td><td>187</td><td>₹312</td>
+            <td style="width:160px;"><div class="bar-track"><div class="bar-fill" style="width:41%;"></div></div></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <footer class="note">Sample data only — inspired by common retail POS dashboard patterns (sales KPIs, revenue trend, top products, low-stock alerts, shop leaderboard). Not wired to any API.</footer>
+  </div>
+</body>
+</html>

@@ -472,11 +472,21 @@
      pinned print-column width, a long root label (its cell couldn't
      shrink) starved the name cell into a 1-2 word column that wrapped 5+
      lines tall. Plain inline flow instead: eyebrow and name read as one
-     run of text and wrap like a sentence. */
+     run of text and wrap like a sentence.
+
+     10-Jul-2026 — padding bumped from `2px 6px` → `5px 6px 3px` (top,
+     side, bottom). Client reported the banner text getting clipped at
+     the top of new pages ("adi vangudhu"): 2px top padding + tight
+     letter-spacing + 8mm @page top margin left effectively zero
+     breathing room, so browsers were rendering the top few pixels of
+     the glyphs above the printable area on the second/third/etc. page.
+     5px top gives the top ascenders room even at the very edge of the
+     printable band. Text is still visually the same weight — only the
+     block grew ~3px vertically per banner. */
   background: #FFF8DC;
   border-left: 3px solid #FCD835;
   border-bottom: 1px solid #1F1F1F;
-  padding: 2px 6px;
+  padding: 5px 6px 3px;
   font-weight: 700;
   font-size: 10px;
   text-transform: uppercase;
@@ -710,11 +720,14 @@
      * ~6-10mm non-printable strip at the paper edge, and 12mm was letting
      * the last row on a page get clipped ("words look erased" on the
      * printed cumulative). Do not shrink this again.
-     * Top trimmed 12mm -> 8mm (07-Jul-2026, reclaim page-count on large
-     * picklists) — top edge was never implicated in the clipping report,
-     * so this is lower-risk than touching the bottom. Sides trimmed
-     * 18mm -> 16mm for the same reason; only a couple mm, kept well clear
-     * of any printer's non-printable zone. */
-    margin: 8mm 16mm 18mm 16mm;
+     * Top history — 12mm → 8mm (07-Jul-2026, reclaim page-count) → 12mm
+     * (10-Jul-2026 client report: banner text clipping) → 16mm
+     * (10-Jul-2026 second pass, client said category banner still sits too
+     * close to the paper edge on page 2+). Bottom-aligning with the 18mm
+     * bottom keeps the page visually balanced. Cost is ~4mm less content
+     * per sheet — barely visible on a dense picklist.
+     * Sides trimmed 18mm → 16mm same reasoning: only a couple mm, well
+     * clear of any printer's non-printable zone. */
+    margin: 16mm 16mm 18mm 16mm;
   }
 }

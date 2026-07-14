@@ -48,6 +48,12 @@ public static class DependencyInjection
         // Phase 3 — accounts reporting (read-only)
         services.AddScoped<IAccountsRepository, AccountsRepository>();
 
+        // Phase 4 — shop utility / operating expenses
+        services.AddScoped<IShopUtilityExpenseRepository, ShopUtilityExpenseRepository>();
+
+        // Phase 4 — shop inventory + stock-take
+        services.AddScoped<IShopInventoryRepository, ShopInventoryRepository>();
+
         return services;
     }
 }
