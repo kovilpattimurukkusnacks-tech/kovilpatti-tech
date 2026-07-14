@@ -54,6 +54,9 @@ public static class DependencyInjection
         // Phase 4 — shop inventory + stock-take
         services.AddScoped<IShopInventoryRepository, ShopInventoryRepository>();
 
+        // Phase 4 — POS billing
+        services.AddScoped<IBillRepository, BillRepository>();
+
         return services;
     }
 }

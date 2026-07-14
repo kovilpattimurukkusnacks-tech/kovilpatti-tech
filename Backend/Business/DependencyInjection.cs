@@ -59,6 +59,9 @@ public static class DependencyInjection
         services.AddScoped<IShopInventoryService, ShopInventoryService>();
         services.AddScoped<IShopDashboardService, ShopDashboardService>();
 
+        // Phase 4 — POS billing
+        services.AddScoped<IBillService, BillService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");
