@@ -24,6 +24,7 @@ import AdminRequests from './pages/admin/AdminRequests'
 import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminAccounts from './pages/admin/AdminAccounts'
+import AdminDashboard from './pages/admin/AdminDashboard'
 import ShopUtilities from './pages/shop/ShopUtilities'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
@@ -74,6 +75,7 @@ const router = createBrowserRouter(
         <Route path="requests/new" element={<ShopRequestNew />} />
         <Route path="requests/:id" element={<AdminRequestDetail />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
+        <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="accounts" element={<AdminAccounts />} />
         <Route path="settings" element={<AdminSettings />} />
       </Route>

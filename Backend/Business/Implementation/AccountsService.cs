@@ -25,7 +25,8 @@ public class AccountsService(
             e.Dispatched_Amount, e.Dispatched_Request_Count,
             e.Returns_Amount,    e.Returns_Request_Count,
             e.Net_Amount,        e.Active_Shop_Count,
-            e.Adjustments_Amount, e.Adjustments_Count);
+            e.Adjustments_Amount, e.Adjustments_Count,
+            e.Purchase_Amount);
     }
 
     public async Task<IReadOnlyList<AccountsTrendBucketDto>> GetTrendAsync(AccountsFilters filters, CancellationToken ct = default)
@@ -36,7 +37,8 @@ public class AccountsService(
             filters.From!.Value, filters.To!.Value, grouping,
             filters.ShopIds, filters.InventoryIds, filters.CategoryIds, ct);
         return rows.Select(r => new AccountsTrendBucketDto(
-            r.Bucket_Start, r.Dispatched_Amount, r.Returns_Amount, r.Net_Amount)).ToList();
+            r.Bucket_Start, r.Dispatched_Amount, r.Returns_Amount, r.Net_Amount,
+            r.Purchase_Amount, r.Shortfall_Amount)).ToList();
     }
 
     public async Task<IReadOnlyList<AccountsShopRowDto>> GetByShopAsync(AccountsFilters filters, CancellationToken ct = default)
