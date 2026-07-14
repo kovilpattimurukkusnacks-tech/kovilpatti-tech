@@ -68,7 +68,7 @@ export default function AdminAccounts() {
     // View / lens (19-Jun-2026, client #13). Defaults to 'all'.
     const viewRaw = params.get('view')
     const view: AccountsView =
-      viewRaw === 'requested' || viewRaw === 'dispatched' || viewRaw === 'returns'
+      viewRaw === 'requested' || viewRaw === 'dispatched' || viewRaw === 'returns' || viewRaw === 'purchased'
         ? viewRaw
         : 'all'
     return {
@@ -233,10 +233,12 @@ export default function AdminAccounts() {
         />
 
         {/* Adjustments log: hidden ONLY in Requested view (pre-finalization,
-            no audits exist yet). Shown in All / Dispatched / Returns since
-            qty edits can happen on either an Order's dispatched_qty OR a
-            Return's accepted_qty after the request is finalized — both
-            flow into the same stock_request_qty_audits table. */}
+            no audits exist yet). Shown in All / Dispatched / Returns /
+            Purchased since qty edits can happen on either an Order's
+            dispatched_qty OR a Return's accepted_qty after the request is
+            finalized — both flow into the same stock_request_qty_audits
+            table. Under Purchased view they're especially relevant since
+            an edit up/down changes the row's Profit/Loss result. */}
         {filters.view !== 'requested' && (
           <AdjustmentsLogTable
             rows={adjustments.data}
@@ -269,6 +271,9 @@ function ViewTabs({ current, onChange }: {
     { key: 'requested',   label: 'Requested' },
     { key: 'dispatched',  label: 'Dispatched' },
     { key: 'returns',     label: 'Returns' },
+    // 12-Jul-2026 (client req) — cost-basis lens. Same rows as dispatched
+    // but pivots the amount column to purchase_price_snapshot.
+    { key: 'purchased',   label: 'Purchased' },
   ]
   return (
     <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>

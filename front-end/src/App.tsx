@@ -61,8 +61,9 @@ const router = createBrowserRouter(
       <Route path="/admin/login" element={<Navigate to="/" replace />} />
 
       <Route path="/admin" element={<RoleGate allow="Admin"><Layout /></RoleGate>}>
-        {/* Default landing inside /admin redirects to Products. */}
-        <Route index element={<Navigate to="products" replace />} />
+        {/* Default landing inside /admin redirects to Dashboard (12-Jul-2026
+            client req — matches the ShopUser landing pattern). */}
+        <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="products" element={<Products />} />
         <Route path="categories" element={<Categories />} />
         <Route path="create-account/inventory" element={<Inventories />} />

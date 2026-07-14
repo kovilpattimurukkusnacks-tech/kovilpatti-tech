@@ -29,7 +29,11 @@ export type AccountsTopProductsLimit = 10 | 25 | 50
  * dims). Category + top-products SPs got additive per-dim aggregates so
  * FE can pick the right field at render time.
  */
-export type AccountsView = 'all' | 'requested' | 'dispatched' | 'returns'
+// 12-Jul-2026 (client req) — 'purchased' added as a cost-basis lens.
+// Same data slice as 'dispatched' but pivots the amount column from MRP
+// (revenue) to purchase_price_snapshot (cost) so the client can see the
+// tenant's investment side by shop / category alongside the P&L pair.
+export type AccountsView = 'all' | 'requested' | 'dispatched' | 'returns' | 'purchased'
 
 /** Shared query-string filters for every Accounts endpoint. */
 export type AccountsFilters = {

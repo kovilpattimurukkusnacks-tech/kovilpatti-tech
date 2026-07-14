@@ -34,41 +34,69 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
   // handing to DataGrid so each view shows only its dimensional columns
   // (19-Jun-2026, client #13).
   type ShopCol = GridColDef<AccountsShopRowDto> & { showIn: ReadonlyArray<AccountsView> }
-  const ALL: ReadonlyArray<AccountsView> = ['all', 'requested', 'dispatched', 'returns']
+  const ALL: ReadonlyArray<AccountsView> = ['all', 'requested', 'dispatched', 'returns', 'purchased']
   const fmt = (v: unknown) => formatINR(v as number)
 
   const allColumns: ShopCol[] = [
     { field: 'shopCode',  headerName: 'Code',  width: 90,  showIn: ALL },
     { field: 'shopName',  headerName: 'Shop',  flex: 1, minWidth: 160, showIn: ALL },
-    // Counts: Orders count belongs to requested + dispatched views; Returns count to returns.
+    // Counts: Orders count belongs to requested / dispatched / purchased.
     { field: 'orderRequestCount',  headerName: 'Orders',   type: 'number', width: 85,
-      showIn: ['all', 'requested', 'dispatched'] },
+      showIn: ['all', 'requested', 'dispatched', 'purchased'] },
     { field: 'returnRequestCount', headerName: 'Returns',  type: 'number', width: 85,
       showIn: ['all', 'returns'] },
-    // Quantities: each goes with its own dimension.
+    // Quantities: physical qty travels with dispatched/purchased (same physical
+    // units — the only thing that differs is the amount column's basis).
     { field: 'requestedQty',       headerName: 'Req Qty',      type: 'number', width: 95,
       showIn: ['all', 'requested'] },
     { field: 'dispatchedQty',      headerName: 'Disp Qty',     type: 'number', width: 95,
-      showIn: ['all', 'dispatched'] },
+      showIn: ['all', 'dispatched', 'purchased'] },
     { field: 'returnedQty',        headerName: 'Returned Qty', type: 'number', width: 115,
       showIn: ['all', 'returns'] },
     // Amounts. Purchased (at Cost) leads the money columns per the client
     // ask (12-Jul-2026) — cost before the retail figures.
     { field: 'purchaseAmount',   headerName: 'Purchased (Cost)', type: 'number', width: 150,
-      valueFormatter: fmt, showIn: ['all', 'dispatched'] },
+      valueFormatter: fmt, showIn: ['all', 'dispatched', 'purchased'] },
     { field: 'requestedAmount',  headerName: 'Requested (MRP)',  type: 'number', width: 150,
       valueFormatter: fmt, showIn: ['all', 'requested'] },
+    // Dispatched (MRP) shows in 'purchased' too — the revenue side of the
+    // P&L pair. Client needs to see both cost + expected revenue to make
+    // sense of the profit/loss column at the end.
     { field: 'dispatchedAmount', headerName: 'Dispatched (MRP)', type: 'number', width: 155,
-      valueFormatter: fmt, showIn: ['all', 'dispatched'] },
+      valueFormatter: fmt, showIn: ['all', 'dispatched', 'purchased'] },
     { field: 'returnsAmount',    headerName: 'Returns (MRP)',    type: 'number', width: 135,
       valueFormatter: fmt, cellClassName: 'returns-cell',
       showIn: ['all', 'returns'] },
-    // Adjustments + Net + cost-side metrics only make sense on dispatched.
+    // Adjustments (MRP) — visible in 'purchased' too since qty edits
+    // already flow into both Dispatched (MRP) and Purchased (Cost),
+    // and client wants full context for the P&L number.
     { field: 'adjustmentsAmount', headerName: 'Adjustments (MRP)', type: 'number', width: 160,
-      valueFormatter: fmt, showIn: ['all', 'dispatched'] },
+      valueFormatter: fmt, showIn: ['all', 'dispatched', 'purchased'] },
+    // Net (MRP) — visible on 'all' + 'purchased' (needed to explain the
+    // Profit/Loss column: P&L = Net − Purchased).
     { field: 'netAmount', headerName: 'Net (MRP)', type: 'number', width: 140,
       valueFormatter: fmt, cellClassName: 'net-cell',
-      showIn: ['all'] },
+      showIn: ['all', 'purchased'] },
+    // Profit / Loss column (12-Jul-2026 client req) — SP returns the pair as
+    // two mutually-exclusive columns (exactly one is non-zero per row). We
+    // display it as ONE column: green +₹ when profit, red −₹ when loss.
+    // Value = profit − loss so DataGrid can sort numerically end-to-end
+    // (positive = profit, negative = loss, zero = break-even).
+    //
+    // Shown on 'all' + 'purchased' (both include cost + revenue, so P&L
+    // reconciles). Hidden on the pure-dimension lenses ('requested' /
+    // 'dispatched' / 'returns' single-side) which don't have both halves.
+    { field: 'profitLoss', headerName: 'Profit / Loss', type: 'number', width: 145,
+      showIn: ['all', 'purchased'],
+      valueGetter: (_v, row) => (row.profit ?? 0) - (row.loss ?? 0),
+      renderCell: ({ row }) => {
+        const p = row.profit ?? 0
+        const l = row.loss ?? 0
+        if (p > 0) return <span style={{ color: '#2E7D32', fontWeight: 700 }}>+{formatINR(p)}</span>
+        if (l > 0) return <span style={{ color: '#C62828', fontWeight: 700 }}>−{formatINR(l)}</span>
+        return <span style={{ color: '#1F1F1F66' }}>—</span>
+      },
+    },
   ]
   const columns = allColumns.filter(c => c.showIn.includes(view))
 
@@ -123,7 +151,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
               q.set('from',   filters.from)
               q.set('to',     filters.to)
               if (view === 'returns')                            q.set('preset', 'return')
-              else if (view === 'requested' || view === 'dispatched') q.set('preset', 'received')
+              else if (view === 'requested' || view === 'dispatched' || view === 'purchased') q.set('preset', 'received')
               navigate(`/admin/requests?${q.toString()}`)
             }}
             sx={{

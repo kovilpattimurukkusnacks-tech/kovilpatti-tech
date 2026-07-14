@@ -83,6 +83,11 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
     requested:  ['requested'],
     dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
+    // Purchased lens (12-Jul-2026 client req) — Purchased + Net pair so
+    // the KPI strip shows "cost invested" alongside the "revenue at MRP"
+    // it turns into. Profit/Loss shows up per-shop and per-category in
+    // the tables below.
+    purchased:  ['purchased', 'net'],
   }
   const cards = allCards.filter(c => dimsByView[view].includes(c.dim))
 

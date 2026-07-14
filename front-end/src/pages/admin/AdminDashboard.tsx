@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useSearchParams } from 'react-router-dom'
-import { Alert, Box, Button, Stack } from '@mui/material'
+import { Alert, Box, Stack } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import ProfitLossChart from '../../components/accounts/ProfitLossChart'
 import MovementChart from '../../components/accounts/MovementChart'
 import AccountsFilterBar from '../../components/accounts/AccountsFilterBar'
+import DashboardHero from '../../components/dashboard/DashboardHero'
+import ProfitByShopChart from '../../components/dashboard/ProfitByShopChart'
+import ProfitByCategoryDonut from '../../components/dashboard/ProfitByCategoryDonut'
 import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import { dateRangeLabel } from '../../components/DateRangeFilter'
 import { useAccountsTrend } from '../../hooks/useAccounts'
@@ -76,10 +79,6 @@ export default function AdminDashboard() {
     }, { replace: true })
   }, [setParams])
 
-  const setGrouping = useCallback((g: AccountsGrouping) => {
-    setFilters({ ...filters, grouping: g })
-  }, [filters, setFilters])
-
   const trend = useAccountsTrend(filters)
 
   // Collapsed-panel pills: date range + one pill per selected shop (by name).
@@ -103,8 +102,6 @@ export default function AdminDashboard() {
       />
 
       <Stack spacing={2} sx={{ mt: 2 }}>
-        <GroupingTabs current={filters.grouping ?? 'day'} onChange={setGrouping} />
-
         <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
           <AccountsFilterBar filters={filters} activePresetKey={activePresetKey} onChange={setFilters} />
         </FilterPanel>
@@ -115,51 +112,33 @@ export default function AdminDashboard() {
           </Alert>
         )}
 
+        {/* Executive KPI strip — Revenue / Cost / Profit / Margin with
+            inline sparklines. Reads from the same trend payload as the
+            charts below, so no extra API call. 12-Jul-2026 client req. */}
+        <DashboardHero data={trend.data} loading={trend.isLoading} />
+
         {/* All rupee values side by side, like the Accounts screen. */}
         <MovementChart data={trend.data} loading={trend.isLoading} grouping={filters.grouping ?? 'day'} />
 
         {/* The bottom line: green up = profit, red down = loss. */}
         <ProfitLossChart data={trend.data} loading={trend.isLoading} grouping={filters.grouping ?? 'day'} />
+
+        {/* Advanced breakdowns — two columns side by side:
+              LEFT: horizontal bars of profit per shop (sorted by impact).
+              RIGHT: category profit donut (where the money comes from). */}
+        <Box
+          sx={{
+            display: 'grid',
+            gridTemplateColumns: { xs: '1fr', lg: '3fr 2fr' },
+            gap: 2,
+          }}
+        >
+          <ProfitByShopChart filters={filters} />
+          <ProfitByCategoryDonut filters={filters} />
+        </Box>
       </Stack>
     </Box>
   )
 }
 
 
-// Per day / Per week / Per month — same pill styling as the Accounts page's
-// view tabs so the whole admin area has one active-button look.
-function GroupingTabs({ current, onChange }: {
-  current: AccountsGrouping
-  onChange: (g: AccountsGrouping) => void
-}) {
-  const options: { key: AccountsGrouping; label: string }[] = [
-    { key: 'day',   label: 'Per day' },
-    { key: 'week',  label: 'Per week' },
-    { key: 'month', label: 'Per month' },
-  ]
-  return (
-    <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', alignItems: 'center' }}>
-      {options.map(o => {
-        const active = current === o.key
-        return (
-          <Button
-            key={o.key}
-            size="small"
-            disableElevation
-            variant={active ? 'contained' : 'outlined'}
-            onClick={() => onChange(o.key)}
-            sx={{
-              textTransform: 'none',
-              fontWeight: 700,
-              borderRadius: 999,
-              px: 2,
-              ...(active ? {} : { bgcolor: '#FFFBE6', color: '#1F1F1F', borderColor: 'rgba(31,31,31,0.25)' }),
-            }}
-          >
-            {o.label}
-          </Button>
-        )
-      })}
-    </Box>
-  )
-}
