@@ -29,6 +29,7 @@ type FormMode =
 
 type FormValues = {
   code: string         // blank → BE keeps existing on edit, auto-generates on create
+  barcode: string      // blank → null (no barcode / cleared); scannable POS code
   name: string
   categoryId: number
   type: string
@@ -131,6 +132,9 @@ export default function Products() {
       ? {}                                          // omit when blank
       : { gst: Number(trimmedGst) }
     const common = {
+      // Barcode always sent: blank → null clears it on edit (unlike code,
+      // where blank means "keep existing").
+      barcode: values.barcode.trim() || null,
       name: values.name,
       categoryId: values.categoryId,
       type: values.type,
@@ -420,6 +424,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
 }) {
   const isEdit = !!product
   const [code, setCode] = useState('')
+  const [barcode, setBarcode] = useState('')
   const [name, setName] = useState('')
   const [categoryId, setCategoryId] = useState<number | ''>('')
   const [type, setType] = useState('pack')
@@ -459,6 +464,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     // On Edit, prefill with the current code so the admin sees what's there
     // and can change it. On Create, leave blank — BE auto-generates if so.
     setCode(product?.code ?? '')
+    setBarcode(product?.barcode ?? '')
     setName(product?.name ?? '')
     setCategoryId(product?.categoryId ?? (categories[0]?.id ?? ''))
     setType(product?.type ?? 'pack')
@@ -527,6 +533,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     try {
       await onSave({
         code: code.trim(),
+        barcode: barcode.trim(),
         name: name.trim(),
         categoryId,
         type: type.trim(),
@@ -582,6 +589,22 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
               helperText={isEdit ? 'Blank = keep current' : 'Blank = auto-generate (P001…)'}
             />
           </Box>
+
+          {/* Barcode (14-Jul-2026, POS billing) — the scannable string. For
+              branded packs: click into the field and scan the pack once to
+              capture the manufacturer's barcode. In-house/loose items can
+              stay blank — the POS falls back to the product Code. */}
+          <TextField
+            label="Barcode"
+            value={barcode}
+            onChange={e => setBarcode(e.target.value)}
+            size="small"
+            fullWidth
+            disabled={submitting}
+            slotProps={{ htmlInput: { maxLength: 64 } }}
+            helperText="Click here and scan the pack to capture it. Blank = billing scans use the product Code."
+          />
+
 
           {/* Row 2 — Category, full width.
               Nested taxonomy (client #1) — the breadcrumb path can be long

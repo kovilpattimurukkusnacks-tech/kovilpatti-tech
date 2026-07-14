@@ -76,6 +76,7 @@ public class ProductService(
         var product = new Product
         {
             Code             = code,
+            Barcode          = NormalizeBarcode(request.Barcode),
             Name             = name,
             CategoryId       = request.CategoryId,
             Type             = type,
@@ -87,7 +88,20 @@ public class ProductService(
             Active           = request.Active,
         };
 
-        var newId = await products.CreateAsync(product, userId, ct);
+        Guid newId;
+        try
+        {
+            newId = await products.CreateAsync(product, userId, ct);
+        }
+        catch (Npgsql.PostgresException ex) when (
+            ex.SqlState == "23505" && ex.ConstraintName == "uq_products_barcode_active")
+        {
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure(nameof(request.Barcode),
+                    $"Barcode '{product.Barcode}' is already used by another product.")
+            });
+        }
         return await GetAsync(newId, ct);
     }
 
@@ -132,6 +146,7 @@ public class ProductService(
         {
             Id               = id,
             Code             = code,
+            Barcode          = NormalizeBarcode(request.Barcode),
             Name             = name,
             CategoryId       = request.CategoryId,
             Type             = type,
@@ -145,7 +160,20 @@ public class ProductService(
             Active           = request.Active,
         };
 
-        var ok = await products.UpdateAsync(updated, userId, ct);
+        bool ok;
+        try
+        {
+            ok = await products.UpdateAsync(updated, userId, ct);
+        }
+        catch (Npgsql.PostgresException ex) when (
+            ex.SqlState == "23505" && ex.ConstraintName == "uq_products_barcode_active")
+        {
+            throw new ValidationException(new[]
+            {
+                new ValidationFailure(nameof(request.Barcode),
+                    $"Barcode '{updated.Barcode}' is already used by another product.")
+            });
+        }
         if (!ok) throw new NotFoundException($"Product '{id}' not found.");
 
         return await GetAsync(id, ct);
@@ -362,6 +390,10 @@ public class ProductService(
         return new ImportProductsResult(rawRows.Count, inserted.Count, skipped, []);
     }
 
+    // Blank/whitespace → null so the partial-unique index never sees ''.
+    private static string? NormalizeBarcode(string? raw)
+        => string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
+
     private static bool TryParseDecimal(string? raw, out decimal value)
     {
         value = 0;
@@ -446,6 +478,7 @@ public class ProductService(
         return new ProductDto(
             Id:               p.Id,
             Code:             p.Code,
+            Barcode:          p.Barcode,
             Name:             p.Name,
             CategoryId:       p.CategoryId,
             CategoryName:     p.CategoryName,

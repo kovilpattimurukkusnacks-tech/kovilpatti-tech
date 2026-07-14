@@ -3,6 +3,7 @@
 export type ProductDto = {
   id: string                          // UUID
   code: string                        // e.g. P001 (auto-generated)
+  barcode: string | null              // scannable code for POS billing
   name: string
   categoryId: number
   categoryName: string
@@ -17,6 +18,7 @@ export type ProductDto = {
 
 export type CreateProductRequest = {
   code?: string                       // optional — BE auto-generates if blank
+  barcode?: string | null             // optional scannable code (POS billing)
   name: string
   categoryId: number
   type: string
@@ -30,6 +32,7 @@ export type CreateProductRequest = {
 
 export type UpdateProductRequest = {
   code?: string                       // optional — omit/blank → BE keeps existing code
+  barcode?: string | null             // blank/null clears; non-blank sets (POS billing)
   name: string
   categoryId: number
   type: string

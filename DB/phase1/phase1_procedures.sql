@@ -316,6 +316,10 @@ DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, 
 DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
 DROP FUNCTION IF EXISTS fn_product_get(uuid);
 
+-- 14-Jul-2026 — barcode added (POS billing scan). RETURN-shape change →
+-- drop-first, same pattern as phase1_pagination.sql.
+DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
+
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search      varchar DEFAULT NULL,
   p_category_id int     DEFAULT NULL
@@ -323,6 +327,7 @@ CREATE OR REPLACE FUNCTION fn_product_list(
 RETURNS TABLE (
   id                 uuid,
   code               varchar,
+  barcode            varchar,
   name               varchar,
   category_id        int,
   category_name      varchar,
@@ -335,7 +340,7 @@ RETURNS TABLE (
   active             boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
+  SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
          p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
@@ -358,10 +363,13 @@ LANGUAGE sql STABLE AS $$
   ORDER BY p.code;
 $$;
 
+DROP FUNCTION IF EXISTS fn_product_get(uuid);
+
 CREATE OR REPLACE FUNCTION fn_product_get(p_id uuid)
 RETURNS TABLE (
   id                 uuid,
   code               varchar,
+  barcode            varchar,
   name               varchar,
   category_id        int,
   category_name      varchar,
@@ -374,7 +382,7 @@ RETURNS TABLE (
   active             boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
+  SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
          p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
@@ -411,6 +419,10 @@ BEGIN
 END;
 $$;
 
+-- p_barcode added 14-Jul-2026 (POS billing scan). Old 11-arg signature
+-- dropped so positional calls can't hit an ambiguous overload.
+DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
+
 CREATE OR REPLACE FUNCTION fn_product_create(
   p_code               varchar,
   p_name               varchar,
@@ -422,23 +434,26 @@ CREATE OR REPLACE FUNCTION fn_product_create(
   p_purchase_price     numeric,
   p_gst                numeric,
   p_active             boolean,
-  p_user_id            uuid
+  p_user_id            uuid,
+  p_barcode            varchar DEFAULT NULL
 )
 RETURNS uuid
 LANGUAGE plpgsql AS $$
 DECLARE
   v_id uuid;
 BEGIN
-  INSERT INTO products (code, name, category_id, type,
+  INSERT INTO products (code, barcode, name, category_id, type,
                         weight_value, weight_unit, mrp, purchase_price,
                         gst, active, created_by, updated_by)
-  VALUES (p_code, p_name, p_category_id, p_type,
+  VALUES (p_code, NULLIF(btrim(p_barcode), ''), p_name, p_category_id, p_type,
           p_weight_value, p_weight_unit, p_mrp, p_purchase_price,
           p_gst, p_active, p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
+
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
 
 CREATE OR REPLACE FUNCTION fn_product_update(
   p_id                 uuid,
@@ -452,7 +467,8 @@ CREATE OR REPLACE FUNCTION fn_product_update(
   p_purchase_price     numeric,
   p_gst                numeric,
   p_active             boolean,
-  p_user_id            uuid
+  p_user_id            uuid,
+  p_barcode            varchar DEFAULT NULL
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
@@ -461,8 +477,11 @@ BEGIN
   -- by the UNIQUE constraint on products.code — service does a pre-check
   -- against OTHER rows for a clean error; this insert/update still trips
   -- the constraint if a concurrent writer collides.
+  -- Barcode uniqueness rides the partial index uq_products_barcode_active
+  -- (phase4_billing_init.sql); service maps 23505 to a friendly error.
   UPDATE products
   SET code               = p_code,
+      barcode            = NULLIF(btrim(p_barcode), ''),
       name               = p_name,
       category_id        = p_category_id,
       type               = p_type,
