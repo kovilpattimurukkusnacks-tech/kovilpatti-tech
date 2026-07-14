@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Banknote, Minus, Plus, ReceiptText, ScanBarcode, Smartphone, Trash2, XCircle } from 'lucide-react'
+import { Banknote, History, Minus, Plus, ReceiptText, ScanBarcode, Smartphone, Trash2, XCircle } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent,
   DialogTitle, IconButton, InputAdornment, Paper,
@@ -26,6 +26,10 @@ type BillLine = {
 }
 
 export default function ShopBilling() {
+  // 'pos' = the billing counter; 'history' = recent bills full-screen.
+  // A toggle (not a below-the-grid section) so saved bills are one tap
+  // away instead of a long scroll past the product grid.
+  const [view, setView] = useState<'pos' | 'history'>('pos')
   const [scan, setScan] = useState('')
   const [lines, setLines] = useState<BillLine[]>([])
   const [paymentMode, setPaymentMode] = useState<PaymentMode>('Cash')
@@ -121,9 +125,24 @@ export default function ShopBilling() {
     <div>
       <PageHeader
         title="Billing"
-        subtitle="Scan a barcode or tap a product to add it to the bill"
+        subtitle={view === 'pos'
+          ? 'Scan a barcode or tap a product to add it to the bill'
+          : 'Bills saved by your shop — cancel puts items back in stock'}
+        action={
+          <Button
+            variant={view === 'history' ? 'contained' : 'outlined'}
+            startIcon={view === 'history' ? <ReceiptText className="w-4 h-4" /> : <History className="w-4 h-4" />}
+            onClick={() => setView(v => (v === 'pos' ? 'history' : 'pos'))}
+            sx={{ textTransform: 'none', fontWeight: 700 }}
+          >
+            {view === 'pos' ? 'Recent Bills' : 'Back to Billing'}
+          </Button>
+        }
       />
 
+      {view === 'history' ? (
+        <RecentBills />
+      ) : (
       <Box
         sx={{
           display: 'grid',
@@ -352,8 +371,7 @@ export default function ShopBilling() {
           </Box>
         </Paper>
       </Box>
-
-      <RecentBills />
+      )}
     </div>
   )
 }
@@ -389,10 +407,7 @@ function RecentBills() {
   }
 
   return (
-    <Box sx={{ mt: 3 }}>
-      <Box sx={{ fontSize: 13, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, mb: 1.5 }}>
-        Recent Bills
-      </Box>
+    <Box>
       <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
         <TableContainer>
           <Table size="small">
