@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   AlertTriangle, ArrowUpRight, ChevronDown, ChevronRight,
   ClipboardCheck, ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
@@ -7,7 +7,10 @@ import { Alert, Box, Chip, Paper, Skeleton } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { useShopDashboard, useShopInventoryTree } from '../../hooks/useShopInventory'
 import { useCategories } from '../../hooks/useCategories'
-import type { ShopInventoryTreeItemDto } from '../../api/shop-inventory/types'
+import type {
+  ShopInventoryLowStockDto,
+  ShopInventoryTreeItemDto,
+} from '../../api/shop-inventory/types'
 import type { CategoryDto } from '../../api/categories/types'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -169,69 +172,9 @@ export default function ShopDashboard() {
               <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
             </Box>
           ) : (data?.lowStock.length ?? 0) === 0 ? (
-            <EmptyState
-              message="No items are below the reorder threshold. 🎉"
-            />
+            <EmptyState message="No items are below the reorder threshold. 🎉" />
           ) : (
-            <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
-              {data!.lowStock.map(item => {
-                const isOut = item.onHand <= 0
-                return (
-                  <Box
-                    key={item.productId}
-                    sx={{
-                      display: 'flex', alignItems: 'center', gap: 1,
-                      px: 1.5, py: 1,
-                      borderRadius: 1,
-                      bgcolor: isOut ? '#FFEBEE' : '#FFF8E1',
-                      border: `1px solid ${isOut ? 'rgba(198,40,40,0.35)' : 'rgba(194,138,0,0.35)'}`,
-                    }}
-                  >
-                    <Box sx={{ flex: 1, minWidth: 0 }}>
-                      {/* Breadcrumb in bold above the product name so the
-                          shop user immediately sees WHERE the low item
-                          sits (root category > sub-category). Falls back
-                          to leaf name if path is null, then hides
-                          entirely if both are gone. */}
-                      {(item.categoryPath || item.categoryName) && (
-                        <Box
-                          sx={{
-                            fontSize: 10.5, fontWeight: 800,
-                            color: '#7C4A00',
-                            textTransform: 'uppercase', letterSpacing: 0.4,
-                            lineHeight: 1.3, mb: 0.25,
-                          }}
-                        >
-                          {item.categoryPath ?? item.categoryName}
-                        </Box>
-                      )}
-                      <Box sx={{ fontWeight: 700, fontSize: 13.5, color: '#1F1F1F' }}>
-                        {item.productName}
-                      </Box>
-                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                        {item.productCode} · MRP {formatINR(item.mrp)}
-                      </Box>
-                    </Box>
-                    <Chip
-                      size="small"
-                      label={isOut ? 'OUT' : `${item.onHand} left`}
-                      sx={{
-                        borderRadius: 999, fontWeight: 800, fontSize: 11,
-                        bgcolor: isOut ? '#C62828' : '#FFF3E0',
-                        color: isOut ? '#FFFFFF' : '#7C4A00',
-                        border: isOut ? 'none' : '1px solid rgba(194,138,0,0.45)',
-                      }}
-                    />
-                  </Box>
-                )
-              })}
-              {(data?.lowStockCount ?? 0) > data!.lowStock.length && (
-                <Box sx={{ fontSize: 12, color: '#1F1F1F99', textAlign: 'center', pt: 0.5 }}>
-                  + {data!.lowStockCount - data!.lowStock.length} more —
-                  view the full inventory to see all.
-                </Box>
-              )}
-            </Box>
+            <LowStockByCategory items={data!.lowStock} />
           )}
         </Paper>
 
@@ -431,6 +374,240 @@ function EmptyState({ message, hint }: { message: string; hint?: string }) {
     <Box sx={{ mt: 1.5, py: 3, textAlign: 'center' }}>
       <Box sx={{ fontSize: 13, fontWeight: 700, color: '#1F1F1F' }}>{message}</Box>
       {hint && <Box sx={{ mt: 0.5, fontSize: 12, color: '#1F1F1F99' }}>{hint}</Box>}
+    </Box>
+  )
+}
+
+// ═══════════════ Low-stock by category ═══════════════
+//
+// Groups low-stock items by category breadcrumb path. Each group renders
+// as a collapsible row (like the inventory tree lower down). Sorting:
+//   • Groups by min(onHand) ascending → the category with the OOS items
+//     always sits on top so the shop owner sees critical stuff first.
+//   • Products within a group by onHand ascending → same principle at
+//     the leaf level.
+// Auto-expands only the first (most urgent) group; keeps the page
+// scannable even when the shop has 200 low-stock items across 30 categories.
+
+type LowStockGroup = {
+  key: string                         // dedupe key = root category name
+  rootName: string                    // group header label — always the root
+  minOnHand: number                   // urgency signal used for sort + header chip color
+  hasOutOfStock: boolean              // any product with onHand ≤ 0
+  items: ShopInventoryLowStockDto[]
+}
+
+// "1KG SNACKS > SPECIAL RS.340" → "1KG SNACKS"
+// Preserves the leaf name as a fallback if there's no breadcrumb at all
+// (e.g., a product whose category has since been deleted).
+function rootCategoryOf(path: string | null, leafName: string | null): string {
+  if (path && path.length > 0) return path.split(' > ')[0]!
+  return leafName ?? 'Uncategorized'
+}
+
+// "1KG SNACKS > SPECIAL RS.340" → "SPECIAL RS.340"
+// null when the product sits directly under a root category (no sub-level).
+function subCategoryOf(path: string | null): string | null {
+  if (!path) return null
+  const parts = path.split(' > ')
+  if (parts.length <= 1) return null
+  return parts.slice(1).join(' > ')
+}
+
+function groupLowStockByCategory(items: ShopInventoryLowStockDto[]): LowStockGroup[] {
+  // Groups are keyed by root category — 10-Jul-2026 client feedback: two
+  // sub-categories under the same root ("Special Rs.340" and "Chips 300"
+  // both under "1KG Snacks") were showing as separate groups. Consolidate
+  // by root so the header count is meaningful; sub-category still
+  // surfaces on each product row for context.
+  const byKey = new Map<string, LowStockGroup>()
+  for (const it of items) {
+    const key = rootCategoryOf(it.categoryPath, it.categoryName)
+    let g = byKey.get(key)
+    if (!g) {
+      g = {
+        key,
+        rootName:      key,
+        minOnHand:     it.onHand,
+        hasOutOfStock: it.onHand <= 0,
+        items:         [],
+      }
+      byKey.set(key, g)
+    }
+    if (it.onHand < g.minOnHand) g.minOnHand = it.onHand
+    if (it.onHand <= 0)          g.hasOutOfStock = true
+    g.items.push(it)
+  }
+  // Sort items inside each group by (subcategory, on_hand asc, name) — items
+  // from the same sub-category stay clumped so the eye can follow the
+  // sub-category label as a section header when scanning.
+  for (const g of byKey.values()) {
+    g.items.sort((a, b) => {
+      const subA = subCategoryOf(a.categoryPath) ?? ''
+      const subB = subCategoryOf(b.categoryPath) ?? ''
+      return subA.localeCompare(subB)
+          || a.onHand - b.onHand
+          || a.productName.localeCompare(b.productName)
+    })
+  }
+  return Array.from(byKey.values()).sort((a, b) =>
+    // Groups with any OOS items win; then by min(on_hand) asc; then by
+    // items count desc (more low items = more attention needed).
+    Number(b.hasOutOfStock) - Number(a.hasOutOfStock)
+    || a.minOnHand - b.minOnHand
+    || b.items.length - a.items.length,
+  )
+}
+
+function LowStockByCategory({ items }: { items: ShopInventoryLowStockDto[] }) {
+  const groups = useMemo(() => groupLowStockByCategory(items), [items])
+
+  // First (most urgent) group starts open — every subsequent group is
+  // collapsed by default. Rerender when the groups list changes.
+  const firstKey = groups[0]?.key
+  const [openKeys, setOpenKeys] = useState<Set<string>>(
+    () => (firstKey ? new Set([firstKey]) : new Set()),
+  )
+  // Reset open state if the group set changes materially (e.g. new data
+  // after refetch flipped which category is most-urgent). Keeps the
+  // "top group open" invariant without preserving stale state.
+  const groupKeysSig = groups.map(g => g.key).join('|')
+  useEffect(() => {
+    if (firstKey) setOpenKeys(new Set([firstKey]))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupKeysSig])
+
+  const toggle = (key: string) =>
+    setOpenKeys(prev => {
+      const next = new Set(prev)
+      if (next.has(key)) next.delete(key); else next.add(key)
+      return next
+    })
+
+  return (
+    <Box sx={{ mt: 1, display: 'flex', flexDirection: 'column', gap: 0.75 }}>
+      {groups.map(g => {
+        const open = openKeys.has(g.key)
+        const oosCount = g.items.filter(it => it.onHand <= 0).length
+        return (
+          <Box key={g.key} sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+            {/* Group header — the collapsible row */}
+            <Box
+              role="button"
+              tabIndex={0}
+              onClick={() => toggle(g.key)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); toggle(g.key) }
+              }}
+              sx={{
+                display: 'flex', alignItems: 'center', gap: 0.75,
+                px: 1.5, py: 1,
+                borderRadius: 1,
+                cursor: 'pointer', userSelect: 'none',
+                bgcolor: g.hasOutOfStock ? '#FFEBEE' : '#FFF8E1',
+                border: `1px solid ${g.hasOutOfStock ? 'rgba(198,40,40,0.35)' : 'rgba(194,138,0,0.35)'}`,
+                transition: 'background-color 120ms',
+                '&:hover': { bgcolor: g.hasOutOfStock ? '#FFCDD2' : '#FFF4B8' },
+              }}
+            >
+              {open
+                ? <ChevronDown  className="w-4 h-4 text-[#1F1F1F]" />
+                : <ChevronRight className="w-4 h-4 text-[#1F1F1F]" />}
+              <Box
+                sx={{
+                  flex: 1, minWidth: 0,
+                  fontSize: 12.5, fontWeight: 800,
+                  color: '#C62828',                              // low-stock urgency red
+                  textTransform: 'uppercase', letterSpacing: 0.4,
+                  overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
+                }}
+              >
+                {g.rootName}
+              </Box>
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, flexShrink: 0 }}>
+                {oosCount > 0 && (
+                  <Chip
+                    size="small"
+                    label={`${oosCount} OUT`}
+                    sx={{
+                      borderRadius: 999, fontWeight: 800, fontSize: 10,
+                      height: 20,
+                      bgcolor: '#C62828', color: '#FFFFFF', border: 'none',
+                    }}
+                  />
+                )}
+                <Chip
+                  size="small"
+                  label={`${g.items.length} ${g.items.length === 1 ? 'item' : 'items'}`}
+                  sx={{
+                    borderRadius: 999, fontWeight: 700, fontSize: 10,
+                    height: 20,
+                    bgcolor: '#FFF3E0', color: '#7C4A00',
+                    border: '1px solid rgba(194,138,0,0.45)',
+                  }}
+                />
+              </Box>
+            </Box>
+
+            {/* Expanded — the individual products */}
+            {open && (
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, pl: 1 }}>
+                {g.items.map(item => {
+                  const isOut  = item.onHand <= 0
+                  const subCat = subCategoryOf(item.categoryPath)
+                  return (
+                    <Box
+                      key={item.productId}
+                      sx={{
+                        display: 'flex', alignItems: 'center', gap: 1,
+                        px: 1.5, py: 0.75,
+                        borderRadius: 1,
+                        bgcolor: isOut ? '#FFEBEE' : '#FFFBE6',
+                        border: `1px solid ${isOut ? 'rgba(198,40,40,0.35)' : 'rgba(31,31,31,0.08)'}`,
+                      }}
+                    >
+                      <Box sx={{ flex: 1, minWidth: 0 }}>
+                        {/* Sub-category label above the product name — kept
+                            visible even though the parent group is now the
+                            root category. Skips when the product sits
+                            directly under a root (no sub-level to show). */}
+                        {subCat && (
+                          <Box
+                            sx={{
+                              fontSize: 10, fontWeight: 800,
+                              color: '#C62828',                    // matches group header
+                              textTransform: 'uppercase', letterSpacing: 0.4,
+                              lineHeight: 1.3, mb: 0.25,
+                            }}
+                          >
+                            {subCat}
+                          </Box>
+                        )}
+                        <Box sx={{ fontWeight: 700, fontSize: 13, color: '#1F1F1F' }}>
+                          {item.productName}
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {item.productCode} · MRP {formatINR(item.mrp)}
+                        </Box>
+                      </Box>
+                      <Chip
+                        size="small"
+                        label={isOut ? 'OUT' : `${item.onHand} left`}
+                        sx={{
+                          borderRadius: 999, fontWeight: 800, fontSize: 11,
+                          bgcolor: isOut ? '#C62828' : '#FFF3E0',
+                          color: isOut ? '#FFFFFF' : '#7C4A00',
+                          border: isOut ? 'none' : '1px solid rgba(194,138,0,0.45)',
+                        }}
+                      />
+                    </Box>
+                  )
+                })}
+              </Box>
+            )}
+          </Box>
+        )
+      })}
     </Box>
   )
 }

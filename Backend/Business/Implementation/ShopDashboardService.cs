@@ -18,7 +18,9 @@ public class ShopDashboardService(
 ) : IShopDashboardService
 {
     private static readonly TimeSpan IstOffset = TimeSpan.FromMinutes(330);
-    private const int LowStockTopN         = 5;   // Top-N urgent items to show on the card
+    // Low-stock items are grouped by category on the FE (10-Jul-2026),
+    // so we return the full list — grouping keeps the UI compact even
+    // when hundreds of items are below threshold.
     private const int RecentMovementsCount = 10;  // Ledger feed row count
     private const decimal LowStockThreshold = 5m; // Same default as fn_shop_inventory_low_stock
 
@@ -66,11 +68,11 @@ public class ShopDashboardService(
         var receiptBucket    = todayBuckets.FirstOrDefault(b => b.Movement_Type == "Receipt");
         var adjustmentBucket = todayBuckets.FirstOrDefault(b => b.Movement_Type == "Adjustment");
 
-        // Map low-stock top-N (category + breadcrumb travel with each row so
-        // the dashboard shows "1KG Snacks > Chips 300" in bold above the
-        // product name — client asked 10-Jul-2026).
+        // Map every low-stock row — no top-N truncation. FE groups by
+        // category (breadcrumb path) into collapsible sections so even
+        // hundreds of items stay compact. category_name + full breadcrumb
+        // path travel with each row for that grouping.
         var lowStockDtos = lowStock
-            .Take(LowStockTopN)
             .Select(l => new ShopInventoryLowStockDto(
                 l.Product_Id, l.Product_Code, l.Product_Name, l.On_Hand, l.Mrp,
                 l.Category_Id, l.Category_Name, l.Category_Path))
