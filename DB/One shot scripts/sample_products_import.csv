@@ -1,0 +1,51 @@
+﻿name,category,type,weight_value,weight_unit,mrp,purchase_price,active
+Kuchi Murukku Red,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Lakkadi,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Ellu Sweet Diamond,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Corn Mixture,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Dal Mixture,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Kara Boondhi,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Kara Sev,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Masala Thattai,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Verkadalai Thattai,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Plain Mixture,Mixture 1Kg ₹260,pack,1,kg,260,195,yes
+Kerala Mixture,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Ragi Mixture,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Pepper Sev,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Ellu Pakoda,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Sweet Rolls,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Andhra Murukku,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Poondu Murukku Red,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Poondu Murukku White,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Butter Murukku White,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Thenkuzhal Murukku,Mixture 1Kg ₹300,pack,1,kg,300,225,yes
+Karasev 250g,250g Items,pack,250,g,95,68,yes
+Pepper Sev 250g,250g Items,pack,250,g,100,72,yes
+Aval Mixture,250g Items,pack,250,g,90,64,yes
+Omapodi,250g Items,pack,250,g,95,68,yes
+Nellai Mixture,250g Items,pack,250,g,100,72,yes
+Mullu Murukku Red,200g Items,pack,200,g,70,52,yes
+Mullu Murukku White,200g Items,pack,200,g,70,52,yes
+Spril Murukku,200g Items,pack,200,g,70,52,yes
+Kai Murukku White,200g Items,pack,200,g,70,52,yes
+Arumbu Murukku,200g Items,pack,200,g,75,56,yes
+Uppukadalai,Container Items,jar,140,g,30,22,yes
+Navathaniyam,Container Items,jar,140,g,35,26,yes
+Kadalai Paruppu,Container Items,jar,140,g,35,26,yes
+Pacha Pattani,Container Items,jar,140,g,35,26,yes
+Manja Pattani,Container Items,jar,140,g,35,26,yes
+Kadalai Mittai,Sweets & Candy,pack,200,g,60,44,yes
+Black Ellu Burfy,Sweets & Candy,pack,150,g,75,56,yes
+Inji Mittai Black,Sweets & Candy,jar,100,g,40,30,yes
+Palkova,Sweets & Candy,pack,100,g,60,44,yes
+Milk Halwa,Sweets & Candy,pack,250,g,120,88,yes
+Butter Round,Biscuits > Big Biscuit,pack,100,g,40,30,yes
+Butter Square,Biscuits > Big Biscuit,pack,100,g,40,30,yes
+Nei Biscuit,Biscuits > Big Biscuit,pack,100,g,45,32,yes
+Coconut Biscuit,Biscuits > Big Biscuit,pack,100,g,55,40,yes
+Manapparai Biscuit,Biscuits > Small Biscuit,pack,50,g,20,14,yes
+Butter Mini,Biscuits > Small Biscuit,pack,50,g,20,14,yes
+Nei Mini,Biscuits > Small Biscuit,pack,50,g,25,18,yes
+Vanilla Slice,Cake & Rusk,pack,100,g,30,22,yes
+Pineapple Slice,Cake & Rusk,pack,100,g,30,22,yes
+Cashew Rusk,Cake & Rusk,pack,100,g,50,36,yes
