@@ -51,7 +51,9 @@ LANGUAGE sql STABLE AS $$
           OR p.name    ILIKE '%' || p_search || '%'
           OR p.code    ILIKE '%' || p_search || '%'
           OR p.barcode ILIKE '%' || p_search || '%')
-  ORDER  BY p.name
+  -- In-stock products first, out-of-stock at the end (client req
+  -- 14-Jul-2026); alphabetical within each group.
+  ORDER  BY (COALESCE(si.on_hand, 0) > 0) DESC, p.name
   LIMIT  p_limit;
 $$;
 
