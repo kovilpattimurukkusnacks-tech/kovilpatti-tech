@@ -55,6 +55,15 @@ LANGUAGE sql STABLE AS $$
   LIMIT 1;
 $$;
 
+-- Return type changes from uuid → TABLE below, which CREATE OR REPLACE
+-- can't do in place — drop the old signature first (idempotent / safe to
+-- re-run: DROP IF EXISTS is a no-op once this has already been applied).
+DROP FUNCTION IF EXISTS fn_shop_utility_expense_create(uuid, varchar, numeric, varchar, date, uuid);
+
+-- Returns the full created row directly (via RETURNING) instead of just the
+-- new id — the BE previously had to make a SECOND round trip (a follow-up
+-- fn_shop_utility_expense_get call) just to build the response DTO. One
+-- fewer network hop per Add Expense click.
 CREATE OR REPLACE FUNCTION fn_shop_utility_expense_create(
   p_shop_id      uuid,
   p_category     varchar,
@@ -63,20 +72,27 @@ CREATE OR REPLACE FUNCTION fn_shop_utility_expense_create(
   p_expense_date date,
   p_user_id      uuid
 )
-RETURNS uuid
-LANGUAGE plpgsql AS $$
-DECLARE
-  v_id uuid;
-BEGIN
+RETURNS TABLE (
+  id           uuid,
+  shop_id      uuid,
+  category     varchar,
+  amount       numeric,
+  note         varchar,
+  expense_date date,
+  created_at   timestamptz,
+  updated_at   timestamptz
+)
+LANGUAGE sql AS $$
   INSERT INTO shop_utility_expenses
     (shop_id, category, amount, note, expense_date, created_by, updated_by)
   VALUES
     (p_shop_id, p_category, p_amount, p_note, p_expense_date, p_user_id, p_user_id)
-  RETURNING id INTO v_id;
-
-  RETURN v_id;
-END;
+  RETURNING id, shop_id, category, amount, note, expense_date, created_at, updated_at;
 $$;
+
+-- Same round-trip-elimination as _create above — return type changes from
+-- boolean → TABLE, so drop the old signature first.
+DROP FUNCTION IF EXISTS fn_shop_utility_expense_update(uuid, varchar, numeric, varchar, date, uuid);
 
 CREATE OR REPLACE FUNCTION fn_shop_utility_expense_update(
   p_id           uuid,
@@ -86,9 +102,17 @@ CREATE OR REPLACE FUNCTION fn_shop_utility_expense_update(
   p_expense_date date,
   p_user_id      uuid
 )
-RETURNS boolean
-LANGUAGE plpgsql AS $$
-BEGIN
+RETURNS TABLE (
+  id           uuid,
+  shop_id      uuid,
+  category     varchar,
+  amount       numeric,
+  note         varchar,
+  expense_date date,
+  created_at   timestamptz,
+  updated_at   timestamptz
+)
+LANGUAGE sql AS $$
   UPDATE shop_utility_expenses
   SET category     = p_category,
       amount       = p_amount,
@@ -96,10 +120,8 @@ BEGIN
       expense_date = p_expense_date,
       updated_by   = p_user_id,
       updated_at   = now()
-  WHERE id = p_id AND is_deleted = false;
-
-  RETURN FOUND;
-END;
+  WHERE id = p_id AND is_deleted = false
+  RETURNING id, shop_id, category, amount, note, expense_date, created_at, updated_at;
 $$;
 
 CREATE OR REPLACE FUNCTION fn_shop_utility_expense_soft_delete(p_id uuid, p_user_id uuid)
