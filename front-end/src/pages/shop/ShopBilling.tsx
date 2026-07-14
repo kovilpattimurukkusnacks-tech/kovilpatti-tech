@@ -8,7 +8,7 @@ import {
 import PageHeader from '../../components/PageHeader'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
-import { useBillingProducts, useBills, useCreateBill, useCancelBill } from '../../hooks/useBills'
+import { useBillingProducts, useBills, useBill, useCreateBill, useCancelBill } from '../../hooks/useBills'
 import { useDebouncedValue } from '../../hooks/useDebouncedValue'
 import type { BillingProductDto, PaymentMode } from '../../api/bills/types'
 
@@ -390,6 +390,8 @@ function RecentBills() {
   const [cancelTarget, setCancelTarget] = useState<{ id: string; code: string } | null>(null)
   const [reason, setReason] = useState('')
   const [cancelError, setCancelError] = useState<string | null>(null)
+  // Row click → bill detail dialog with the line items.
+  const [detailId, setDetailId] = useState<string | null>(null)
 
   const rows = list.data?.items ?? []
   const total = list.data?.total ?? 0
@@ -431,7 +433,12 @@ function RecentBills() {
                 </TableRow>
               )}
               {rows.map(b => (
-                <TableRow key={b.id} sx={{ bgcolor: '#FFFBE6' }}>
+                <TableRow
+                  key={b.id}
+                  hover
+                  onClick={() => setDetailId(b.id)}
+                  sx={{ bgcolor: '#FFFBE6', cursor: 'pointer' }}
+                >
                   <TableCell sx={{ fontWeight: 700 }}>{b.code}</TableCell>
                   <TableCell>{formatIstDateTime(b.createdAt)}</TableCell>
                   <TableCell align="center">{b.totalQty}</TableCell>
@@ -447,7 +454,7 @@ function RecentBills() {
                         : { borderColor: '#2E7D32', color: '#2E7D32', fontWeight: 700 }}
                     />
                   </TableCell>
-                  <TableCell align="center">
+                  <TableCell align="center" onClick={e => e.stopPropagation()}>
                     {b.status === 'Issued' && (
                       <Button
                         size="small"
@@ -475,6 +482,8 @@ function RecentBills() {
           rowsPerPageOptions={[10, 25, 50]}
         />
       </Paper>
+
+      <BillDetailDialog billId={detailId} onClose={() => setDetailId(null)} />
 
       {/* Cancel-with-reason dialog. Cancelling reverses the stock decrement. */}
       <Dialog open={!!cancelTarget} onClose={() => setCancelTarget(null)} maxWidth="xs" fullWidth>
@@ -510,6 +519,91 @@ function RecentBills() {
         </DialogActions>
       </Dialog>
     </Box>
+  )
+}
+
+// Bill detail — line items, totals, and the cancellation trail if any.
+// Read-only by design: an issued bill is a financial record; fixing a
+// mistake = Cancel (stock returns) + make a new bill.
+function BillDetailDialog({ billId, onClose }: { billId: string | null; onClose: () => void }) {
+  const bill = useBill(billId ?? undefined)
+  const b = bill.data
+
+  return (
+    <Dialog open={!!billId} onClose={onClose} maxWidth="sm" fullWidth>
+      <DialogTitle sx={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: 1 }}>
+        <ReceiptText className="w-5 h-5" />
+        {b ? `Bill ${b.code}` : 'Bill'}
+        {b && (
+          <Chip
+            label={b.status}
+            size="small"
+            sx={b.status === 'Cancelled'
+              ? { bgcolor: '#C62828', color: '#FFFFFF', fontWeight: 700, ml: 1 }
+              : { bgcolor: '#E8F5E9', color: '#2E7D32', fontWeight: 700, ml: 1 }}
+          />
+        )}
+      </DialogTitle>
+      <DialogContent dividers>
+        {bill.isLoading && <Box sx={{ textAlign: 'center', py: 3 }}><CircularProgress size={24} /></Box>}
+        {bill.isError && (
+          <Alert severity="error">
+            {bill.error instanceof Error ? bill.error.message : 'Failed to load the bill.'}
+          </Alert>
+        )}
+        {b && (
+          <>
+            <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
+              {formatIstDateTime(b.createdAt)}
+              {b.createdByName ? ` · billed by ${b.createdByName}` : ''} · {b.paymentMode}
+            </Box>
+            {b.status === 'Cancelled' && (
+              <Alert severity="warning" sx={{ mb: 1.5 }}>
+                Cancelled {b.cancelledAt ? formatIstDateTime(b.cancelledAt) : ''}
+                {b.cancelledByName ? ` by ${b.cancelledByName}` : ''}
+                {b.cancelReason ? ` — ${b.cancelReason}` : ''}
+              </Alert>
+            )}
+            <Table size="small">
+              <TableHead>
+                <TableRow>
+                  <TableCell sx={HEAD_SX}>Item</TableCell>
+                  <TableCell sx={HEAD_SX} align="center">Qty</TableCell>
+                  <TableCell sx={HEAD_SX} align="right">Price</TableCell>
+                  <TableCell sx={HEAD_SX} align="right">Total</TableCell>
+                </TableRow>
+              </TableHead>
+              <TableBody>
+                {b.items.map(i => (
+                  <TableRow key={i.id}>
+                    <TableCell>
+                      <Box sx={{ fontWeight: 600, fontSize: 13 }}>{i.productName}</Box>
+                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                        {i.weightValue != null ? `${i.weightValue} ${i.weightUnit ?? ''} · ` : ''}{i.productCode}
+                      </Box>
+                    </TableCell>
+                    <TableCell align="center">{i.qty}</TableCell>
+                    <TableCell align="right">{formatINR(i.unitPrice)}</TableCell>
+                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatINR(i.lineTotal)}</TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: 2 }}>
+              <Box sx={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>
+                Grand Total
+              </Box>
+              <Box sx={{ fontSize: 20, fontWeight: 800 }}>{formatINR(b.totalAmount)}</Box>
+            </Box>
+          </>
+        )}
+      </DialogContent>
+      <DialogActions sx={{ px: 3, pb: 2 }}>
+        <Button onClick={onClose} variant="contained" sx={{ textTransform: 'none', fontWeight: 700 }}>
+          Close
+        </Button>
+      </DialogActions>
+    </Dialog>
   )
 }
 
