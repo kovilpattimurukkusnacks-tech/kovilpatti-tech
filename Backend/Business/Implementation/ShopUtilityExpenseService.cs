@@ -39,11 +39,8 @@ public class ShopUtilityExpenseService(
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
-        var newId = await expenses.CreateAsync(
+        var created = await expenses.CreateAsync(
             shopId, request.Category.Trim(), request.Amount, Normalize(request.Note), request.ExpenseDate, userId, ct);
-
-        var created = await expenses.GetAsync(newId, ct)
-            ?? throw new NotFoundException($"Expense '{newId}' not found immediately after creation.");
         return MapToDto(created);
     }
 
@@ -60,12 +57,9 @@ public class ShopUtilityExpenseService(
             ?? throw new NotFoundException($"Expense '{id}' not found.");
         EnsureShopScope(existing, shopId);
 
-        var ok = await expenses.UpdateAsync(
-            id, request.Category.Trim(), request.Amount, Normalize(request.Note), request.ExpenseDate, userId, ct);
-        if (!ok) throw new NotFoundException($"Expense '{id}' not found.");
-
-        var updated = await expenses.GetAsync(id, ct)
-            ?? throw new NotFoundException($"Expense '{id}' not found after update.");
+        var updated = await expenses.UpdateAsync(
+            id, request.Category.Trim(), request.Amount, Normalize(request.Note), request.ExpenseDate, userId, ct)
+            ?? throw new NotFoundException($"Expense '{id}' not found.");
         return MapToDto(updated);
     }
 

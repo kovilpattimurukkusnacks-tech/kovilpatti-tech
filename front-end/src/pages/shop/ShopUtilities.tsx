@@ -12,6 +12,12 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import PageHeader from '../../components/PageHeader'
 import { useApp } from '../../context/AppContext'
 import { useShop } from '../../hooks/useShops'
+import {
+  useShopUtilityExpenses, useCreateShopUtilityExpense,
+  useUpdateShopUtilityExpense, useDeleteShopUtilityExpense,
+} from '../../hooks/useShopUtilityExpenses'
+import type { ShopUtilityExpenseDto } from '../../api/shop-utility-expenses/types'
+import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { GOLD_GRADIENT } from '../../theme'
 
@@ -52,20 +58,17 @@ function fmtDate(ymd: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-type Entry = {
-  id: string
-  date: string        // yyyy-mm-dd
-  category: Category
-  note: string
-  amount: number
-}
-
 export default function ShopUtilities() {
   const { currentUser } = useApp()
   const shopQuery = useShop(currentUser?.shopId ?? undefined)
   const shopName = shopQuery.data?.name ?? 'your shop'
 
-  const [entries, setEntries] = useState<Entry[]>([])
+  const expensesQuery = useShopUtilityExpenses()
+  const entries = useMemo(() => expensesQuery.data ?? [], [expensesQuery.data])
+  const createMutation = useCreateShopUtilityExpense()
+  const updateMutation = useUpdateShopUtilityExpense()
+  const deleteMutation = useDeleteShopUtilityExpense()
+
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
 
@@ -98,21 +101,21 @@ export default function ShopUtilities() {
     setDialogOpen(true)
   }
 
-  function openEdit(entry: Entry) {
+  function openEdit(entry: ShopUtilityExpenseDto) {
     setEditingId(entry.id)
     setFormCategory(entry.category)
     setFormAmount(String(entry.amount))
-    setFormNote(entry.note)
-    setFormDate(entry.date)
+    setFormNote(entry.note ?? '')
+    setFormDate(entry.expenseDate)
     setFormErr(null)
     setDialogOpen(true)
   }
 
   function handleDelete(id: string) {
-    setEntries(prev => prev.filter(e => e.id !== id))
+    deleteMutation.mutate(id)
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!formCategory.trim()) {
       setFormErr('Pick or type a category.')
       return
@@ -122,18 +125,25 @@ export default function ShopUtilities() {
       setFormErr('Enter a valid amount greater than zero.')
       return
     }
-    if (editingId) {
-      setEntries(prev => prev.map(e => e.id === editingId
-        ? { ...e, category: formCategory, note: formNote, amount, date: formDate }
-        : e))
-    } else {
-      setEntries(prev => [
-        { id: crypto.randomUUID(), category: formCategory, note: formNote, amount, date: formDate },
-        ...prev,
-      ])
+    setFormErr(null)
+    const req = { category: formCategory.trim(), amount, note: formNote.trim() || undefined, expenseDate: formDate }
+    try {
+      if (editingId) {
+        await updateMutation.mutateAsync({ id: editingId, req })
+      } else {
+        await createMutation.mutateAsync(req)
+      }
+      setDialogOpen(false)
+    } catch (err) {
+      setFormErr(
+        err instanceof ValidationError ? err.flatten()
+          : err instanceof Error ? err.message
+          : 'Failed to save expense.',
+      )
     }
-    setDialogOpen(false)
   }
+
+  const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
     <div>
@@ -152,6 +162,12 @@ export default function ShopUtilities() {
           </Button>
         }
       />
+
+      {expensesQuery.isError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Failed to load utility expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
+        </Alert>
+      )}
 
       {/* KPI strip — cream cards with a plain dark border, matching the
           plain-Paper look used everywhere else (ShopRequests.tsx etc.) —
@@ -192,7 +208,9 @@ export default function ShopUtilities() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {entries.length === 0 ? (
+                {expensesQuery.isLoading ? (
+                  <TableRow><TableCell colSpan={5} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>Loading…</TableCell></TableRow>
+                ) : entries.length === 0 ? (
                   <TableRow><TableCell colSpan={5} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>No entries.</TableCell></TableRow>
                 ) : entries.map(e => {
                   return (
@@ -222,7 +240,7 @@ export default function ShopUtilities() {
                           the same left edge every row); Amount stays right-aligned
                           (currency convention). */}
                       <TableCell sx={{ whiteSpace: 'nowrap', fontSize: 12.5, color: '#1F1F1F99', fontWeight: 600 }}>
-                        {fmtDate(e.date)}
+                        {fmtDate(e.expenseDate)}
                       </TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap', fontSize: 12.5, color: '#C62828', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         − {formatINR(e.amount)}
@@ -330,11 +348,11 @@ export default function ShopUtilities() {
           {formErr && <Alert severity="error">{formErr}</Alert>}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setDialogOpen(false)} variant="outlined" sx={{ textTransform: 'none', fontWeight: 600 }}>
+          <Button onClick={() => setDialogOpen(false)} variant="outlined" disabled={isSaving} sx={{ textTransform: 'none', fontWeight: 600 }}>
             Cancel
           </Button>
-          <Button onClick={handleSave} variant="contained" color="primary" sx={{ textTransform: 'none', fontWeight: 700 }}>
-            {editingId ? 'Save Changes' : 'Save Expense'}
+          <Button onClick={handleSave} variant="contained" color="primary" disabled={isSaving} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            {isSaving ? 'Saving…' : editingId ? 'Save Changes' : 'Save Expense'}
           </Button>
         </DialogActions>
       </Dialog>
