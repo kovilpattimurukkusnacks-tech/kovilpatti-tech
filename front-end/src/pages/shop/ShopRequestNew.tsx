@@ -314,7 +314,7 @@ export default function ShopRequestNew() {
       if ('addedBy' in it && it.addedBy === 'Inventory') continue
       const stub: ProductDto = {
         id: it.productId,
-        code: it.productCode,
+        code: it.productCode,        barcode: null,
         name: it.productName,
         mrp: it.unitPrice,
         // Carry weight forward from the snapshotted item so seeded rows
@@ -750,7 +750,7 @@ export default function ShopRequestNew() {
       const map = new Map<string, CartLine>()
       for (const it of parsed.items) {
         const stub: ProductDto = {
-          id: it.productId, code: it.code, name: it.name, mrp: it.mrp,
+          id: it.productId, code: it.code, barcode: null, name: it.name, mrp: it.mrp,
           weightValue: it.weightValue, weightUnit: it.weightUnit,
           // categoryId: real value when the snapshot was written by the
           // 03-Jul-2026+ code; 0 for legacy snapshots (derive-from-cart

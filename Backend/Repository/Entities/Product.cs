@@ -4,6 +4,9 @@ public class Product
 {
     public Guid Id { get; set; }
     public string Code { get; set; } = default!;
+    // Scannable code for POS billing (real EAN/UPC or in-house label). Null
+    // for products that aren't barcoded (jar/loose items).
+    public string? Barcode { get; set; }
     public string Name { get; set; } = default!;
     public int CategoryId { get; set; }
     public string CategoryName { get; set; } = default!;

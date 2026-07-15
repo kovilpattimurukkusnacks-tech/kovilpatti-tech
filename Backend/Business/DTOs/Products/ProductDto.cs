@@ -3,6 +3,8 @@ namespace KovilpattiSnacks.Business.DTOs.Products;
 public record ProductDto(
     Guid Id,
     string Code,
+    // Scannable code for POS billing. Null when not barcoded.
+    string? Barcode,
     string Name,
     int CategoryId,
     string CategoryName,

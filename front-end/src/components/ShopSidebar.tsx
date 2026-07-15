@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { ClipboardList, LayoutDashboard, LogOut, Store, Wallet } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, ReceiptText, Store, Wallet } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useShop } from '../hooks/useShops'
 import './Sidebar.css'
@@ -9,6 +9,8 @@ import './Sidebar.css'
 const navItems = [
   { to: '/shop/dashboard', label: 'Dashboard',    icon: LayoutDashboard },
   { to: '/shop/requests',  label: 'Stock Requests', icon: ClipboardList },
+  // Phase 4 — POS billing (issue + cancel, stock-decrementing).
+  { to: '/shop/billing',   label: 'Billing',      icon: ReceiptText },
   // Utilities — UI-preview page for this shop's operating expenses
   // (electricity, rent, staff, etc.). No backend yet; see
   // DB/planned/pos_billing_screens.md.
