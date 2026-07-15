@@ -24,6 +24,7 @@ import AdminRequests from './pages/admin/AdminRequests'
 import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminAccounts from './pages/admin/AdminAccounts'
+import AdminDashboard from './pages/admin/AdminDashboard'
 import ShopUtilities from './pages/shop/ShopUtilities'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
@@ -60,8 +61,9 @@ const router = createBrowserRouter(
       <Route path="/admin/login" element={<Navigate to="/" replace />} />
 
       <Route path="/admin" element={<RoleGate allow="Admin"><Layout /></RoleGate>}>
-        {/* Default landing inside /admin redirects to Products. */}
-        <Route index element={<Navigate to="products" replace />} />
+        {/* Default landing inside /admin redirects to Dashboard (12-Jul-2026
+            client req — matches the ShopUser landing pattern). */}
+        <Route index element={<Navigate to="dashboard" replace />} />
         <Route path="products" element={<Products />} />
         <Route path="categories" element={<Categories />} />
         <Route path="create-account/inventory" element={<Inventories />} />
@@ -74,6 +76,7 @@ const router = createBrowserRouter(
         <Route path="requests/new" element={<ShopRequestNew />} />
         <Route path="requests/:id" element={<AdminRequestDetail />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
+        <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="accounts" element={<AdminAccounts />} />
         <Route path="settings" element={<AdminSettings />} />
       </Route>

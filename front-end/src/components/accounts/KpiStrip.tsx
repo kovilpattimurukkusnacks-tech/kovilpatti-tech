@@ -1,5 +1,5 @@
 import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
-import { ArrowDownLeft, ArrowUpRight, ClipboardList, TrendingUp } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ClipboardList, ShoppingCart, TrendingUp } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import type { AccountsSummaryDto, AccountsView } from '../../api/accounts/types'
@@ -30,6 +30,17 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
   // 'all' shows everything; each dim view shows ONLY its own card so the
   // strip clearly reframes around that dimension (lens-mode).
   const allCards = [
+    {
+      // Purchased (at Cost) — net dispatched cost at purchase_price_snapshot
+      // (12-Jul-2026, client ask). Sits FIRST so the owner reads cost before
+      // the retail figures.
+      dim: 'purchased' as const,
+      label: 'Purchased (at Cost)',
+      value: data?.purchaseAmount,
+      secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
+      icon: <ShoppingCart size={18} />,
+      accent: undefined as 'net' | 'returns' | undefined,
+    },
     {
       dim: 'requested' as const,
       label: 'Requested (at MRP)',
@@ -68,10 +79,15 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
   // composite (Dispatched − Returns) — surfacing it inside a single-dim view
   // would be misleading.
   const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
-    all:        ['requested', 'dispatched', 'returns', 'net'],
+    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net'],
     requested:  ['requested'],
-    dispatched: ['dispatched'],
+    dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
+    // Purchased lens (12-Jul-2026 client req) — Purchased + Net pair so
+    // the KPI strip shows "cost invested" alongside the "revenue at MRP"
+    // it turns into. Profit/Loss shows up per-shop and per-category in
+    // the tables below.
+    purchased:  ['purchased', 'net'],
   }
   const cards = allCards.filter(c => dimsByView[view].includes(c.dim))
 
@@ -80,7 +96,7 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
   // (Requested / Dispatched / Returns single-dim views), the strip is
   // width-capped AND centered with mx:'auto' so it sits in the middle of
   // the page instead of clinging to the left edge.
-  const cols = Math.min(cards.length, 4)
+  const cols = Math.min(cards.length, 5)
   return (
     <Box
       sx={{

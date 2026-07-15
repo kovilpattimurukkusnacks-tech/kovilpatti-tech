@@ -60,7 +60,10 @@ RETURNS TABLE (
   net_amount               numeric,
   active_shop_count        bigint,
   adjustments_amount       numeric,
-  adjustments_count        bigint
+  adjustments_count        bigint,
+  -- 12-Jul-2026: Purchased (at Cost) KPI — net dispatched cost at the
+  -- line's purchase_price_snapshot (Orders Σ cost − Returns Σ cost).
+  purchase_amount          numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -154,7 +157,13 @@ LANGUAGE sql STABLE AS $$
       COALESCE(SUM(CASE WHEN f.request_type = 'Order'
                         THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
-                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount
+                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount,
+      -- Cost side at the line's frozen purchase_price_snapshot (COALESCE to
+      -- 0 when the product had no purchase price at insert).
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'
+                        THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS dispatched_cost,
+      COALESCE(SUM(CASE WHEN f.request_type = 'Return'
+                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS returns_cost
     FROM finalised f
     JOIN stock_request_items it ON it.request_id = f.id
     LEFT JOIN products        p ON p.id          = it.product_id
@@ -175,7 +184,9 @@ LANGUAGE sql STABLE AS $$
     (SELECT s.dispatched_amount - s.returns_amount FROM item_sums s)::numeric(14,2)                          AS net_amount,
     COALESCE(COUNT(DISTINCT f.shop_id), 0)::bigint                                                           AS active_shop_count,
     (SELECT COALESCE(SUM(delta_amount), 0)::numeric(14,2) FROM adjustments)                                  AS adjustments_amount,
-    (SELECT COALESCE(COUNT(*), 0)::bigint                FROM adjustments)                                   AS adjustments_count
+    (SELECT COALESCE(COUNT(*), 0)::bigint                FROM adjustments)                                   AS adjustments_count,
+    -- Purchased (at Cost) = net dispatched cost.
+    (SELECT s.dispatched_cost - s.returns_cost FROM item_sums s)::numeric(14,2)                              AS purchase_amount
   FROM finalised f;
 $$;
 
@@ -199,7 +210,14 @@ RETURNS TABLE (
   bucket_start       date,
   dispatched_amount  numeric,
   returns_amount     numeric,
-  net_amount         numeric
+  net_amount         numeric,
+  -- 12-Jul-2026: Purchased (at Cost) per bucket — net dispatched cost at
+  -- the line's purchase_price_snapshot (Orders cost − Returns cost).
+  purchase_amount    numeric,
+  -- 12-Jul-2026 (client): MRP value the shops asked for but did NOT get —
+  -- per-line GREATEST(requested − sent, 0) × unit_price over Orders, so an
+  -- over-dispatch on one line can't cancel a shortage on another.
+  shortfall_amount   numeric
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -233,7 +251,28 @@ LANGUAGE sql STABLE AS $$
     SELECT r.id, r.request_type, r.total_amount,
            (date_trunc(p_grouping,
               (COALESCE(r.received_at, r.accepted_at) AT TIME ZONE 'Asia/Kolkata')
-           ))::date AS bucket_start
+           ))::date AS bucket_start,
+           -- Per-request cost at the line's frozen purchase_price_snapshot,
+           -- same qty COALESCE chains as fn_accounts_summary (Orders use the
+           -- received→dispatched→requested chain; Returns reuse
+           -- dispatched_qty as accepted-qty).
+           (SELECT COALESCE(SUM(
+              CASE WHEN r.request_type = 'Order'
+                   THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
+                   ELSE COALESCE(it.dispatched_qty, it.requested_qty)
+              END * COALESCE(it.purchase_price_snapshot, 0)), 0)
+            FROM stock_request_items it
+            WHERE it.request_id = r.id) AS cost_amount,
+           -- Undelivered ask (Orders only): what the shop requested minus
+           -- what actually went (received → dispatched → requested chain),
+           -- floored at 0 per line, valued at the MRP snapshot.
+           (SELECT COALESCE(SUM(
+              GREATEST(it.requested_qty
+                       - COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty), 0)
+              * it.unit_price), 0)
+            FROM stock_request_items it
+            WHERE it.request_id = r.id
+              AND r.request_type = 'Order') AS shortfall_amount
     FROM stock_requests r, range g
     WHERE r.is_deleted = false
       AND (
@@ -270,7 +309,12 @@ LANGUAGE sql STABLE AS $$
     (
       COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.total_amount END), 0)
     - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.total_amount END), 0)
-    )::numeric(14,2) AS net_amount
+    )::numeric(14,2) AS net_amount,
+    (
+      COALESCE(SUM(CASE WHEN f.request_type = 'Order'  THEN f.cost_amount END), 0)
+    - COALESCE(SUM(CASE WHEN f.request_type = 'Return' THEN f.cost_amount END), 0)
+    )::numeric(14,2) AS purchase_amount,
+    COALESCE(SUM(CASE WHEN f.request_type = 'Order' THEN f.shortfall_amount END), 0)::numeric(14,2) AS shortfall_amount
   FROM series s
   LEFT JOIN finalised f ON f.bucket_start = s.bucket_start
   GROUP BY s.bucket_start
@@ -400,12 +444,12 @@ LANGUAGE sql STABLE AS $$
            SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty))::bigint                      AS dispatched_qty,
            SUM(it.requested_qty * it.unit_price)                                                            AS requested_amount,
            SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price)              AS dispatched_amount,
-           -- Cost side of dispatched goods at current products.purchase_price.
-           -- COALESCE handles products with no purchase_price set yet (treat
-           -- as 0 cost so the row still totals). Documented limitation: this
-           -- value can shift retroactively if the admin later edits a
-           -- product's purchase_price — acceptable for now per client #12.
-           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS dispatched_cost
+           -- Cost side of dispatched goods at the line's frozen
+           -- purchase_price_snapshot (12-Jul-2026 — replaces the live
+           -- products.purchase_price so a later price edit can't shift
+           -- historical figures). COALESCE handles lines whose product had
+           -- no purchase price at insert (treat as 0 cost).
+           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)) AS dispatched_cost
     FROM order_rows o
     JOIN stock_request_items it ON it.request_id = o.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -422,7 +466,7 @@ LANGUAGE sql STABLE AS $$
            SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)                 AS returns_amount,
            -- Cost recovered when stock comes back via a Return — subtracted
            -- from dispatched_cost in the final SELECT to get net cost.
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)) AS returns_cost
+           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)) AS returns_cost
     FROM return_rows rr
     JOIN stock_request_items it ON it.request_id = rr.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -600,9 +644,11 @@ LANGUAGE sql STABLE AS $$
            THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
            ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
       END                                                                                     AS signed_amount,
+      -- Cost priced at the line's frozen purchase_price_snapshot
+      -- (12-Jul-2026 — replaces the live products.purchase_price).
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(p.purchase_price, 0)
+           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)
+           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)
       END                                                                                     AS signed_cost,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
       CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,

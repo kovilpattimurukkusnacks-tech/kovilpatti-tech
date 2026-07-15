@@ -279,6 +279,11 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
   -- flight. Cleared by fn_request_dispatch when the dispatch is finalised.
   draft_dispatched_qty int,
   unit_price      numeric(10,2) NOT NULL,                               -- snapshot of products.mrp at submit
+  -- Snapshot of products.purchase_price at insert (12-Jul-2026, cost basis).
+  -- NULL when the product had no purchase price — accounts math COALESCEs
+  -- to 0. Never re-read from products, so a later price edit can't shift
+  -- historical accounts figures.
+  purchase_price_snapshot numeric(10,2),
   -- Snapshot of the product's pack size at request time so the audit/history
   -- view doesn't silently change if the product's master record is later edited.
   weight_value    numeric(10,3),
