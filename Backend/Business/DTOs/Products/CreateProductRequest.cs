@@ -26,5 +26,7 @@ public record CreateProductRequest(
     decimal PurchasePrice,
     // Optional. Hidden in the FE form for now — defaults to null.
     decimal? Gst = null,
-    bool Active = true
+    bool Active = true,
+    // Optional scannable code for POS billing (14-Jul-2026). Blank → null.
+    string? Barcode = null
 ) : IProductPayload;

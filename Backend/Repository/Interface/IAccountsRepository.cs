@@ -43,4 +43,12 @@ public interface IAccountsRepository
     Task<AccountsInTransit> GetInTransitAsync(
         Guid[]? shopIds, Guid[]? inventoryIds,
         CancellationToken ct = default);
+
+    /// Per-shop-per-category operating expenses from shop_utility_expenses.
+    /// Filter surface is narrower than the other reports — utilities aren't
+    /// tied to godowns or product categories (see the SP header comment).
+    Task<IReadOnlyList<AccountsUtilityRow>> GetUtilitiesAsync(
+        DateOnly from, DateOnly to,
+        Guid[]? shopIds,
+        CancellationToken ct = default);
 }

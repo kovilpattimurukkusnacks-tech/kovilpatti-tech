@@ -17,4 +17,5 @@ public interface IAccountsService
     Task<IReadOnlyList<AccountsProductRowDto>>      GetTopProductsAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<IReadOnlyList<AccountsAdjustmentRowDto>>   GetAdjustmentsAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<AccountsInTransitDto>                      GetInTransitAsync(AccountsFilters filters, CancellationToken ct = default);
+    Task<IReadOnlyList<AccountsUtilityRowDto>>      GetUtilitiesAsync(AccountsFilters filters, CancellationToken ct = default);
 }

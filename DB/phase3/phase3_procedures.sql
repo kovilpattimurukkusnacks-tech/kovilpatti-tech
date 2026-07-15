@@ -971,6 +971,64 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 
+-- ============================================================
+-- 8. fn_accounts_utilities_breakdown
+--    Per-shop-per-category operating expenses (Rent / Electricity / Water /
+--    Staff Salary / …) logged via the Shop Utilities screen. Powers the
+--    Net Profit KPI + Utilities columns in the admin Accounts view.
+--
+--    Filter surface deliberately narrower than the other fn_accounts_*
+--    reports:
+--    • p_shop_ids applies (utilities are per-shop).
+--    • p_inv_ids  — utilities aren't tied to a godown → not a parameter.
+--    • p_cat_ids  — refers to *product* categories on the other reports;
+--      the utility taxonomy (Rent/Water/…) is different and free-text.
+--      Applying the product-category filter would meaninglessly zero out
+--      utilities → not a parameter.
+--
+--    Date semantics: expense_date is a plain `date` (IST calendar day). No
+--    IST-to-UTC conversion needed — the FE picks IST dates, we compare
+--    directly. Range is inclusive on both ends [p_from, p_to] to match the
+--    plain-date semantics (unlike the timestamptz half-open range used by
+--    fn_accounts_summary).
+--
+--    Row shape: one row per (shop, category) with a total + count. Shops
+--    with zero utilities in the range are absent (FE assumes 0). Empty
+--    result set is normal — return_query no-op works.
+-- ============================================================
+CREATE OR REPLACE FUNCTION fn_accounts_utilities_breakdown(
+  p_from     date,
+  p_to       date,
+  p_shop_ids uuid[]  DEFAULT NULL
+)
+RETURNS TABLE (
+  shop_id       uuid,
+  shop_code     varchar,
+  shop_name     varchar,
+  category      varchar,
+  amount        numeric,
+  expense_count bigint
+)
+LANGUAGE sql STABLE AS $$
+  SELECT
+    e.shop_id,
+    s.code                            AS shop_code,
+    s.name                            AS shop_name,
+    e.category,
+    SUM(e.amount)::numeric(14,2)      AS amount,
+    COUNT(*)::bigint                  AS expense_count
+  FROM shop_utility_expenses e
+  JOIN shops s ON s.id = e.shop_id
+  WHERE e.is_deleted   = false
+    AND s.is_deleted   = false
+    AND e.expense_date >= p_from
+    AND e.expense_date <= p_to
+    AND (p_shop_ids IS NULL OR cardinality(p_shop_ids) = 0 OR e.shop_id = ANY(p_shop_ids))
+  GROUP BY e.shop_id, s.code, s.name, e.category
+  ORDER BY s.name, e.category;
+$$;
+
+
 COMMIT;
 
 -- ============================================================
@@ -983,4 +1041,5 @@ COMMIT;
 -- SELECT * FROM fn_accounts_top_products('2026-05-01','2026-05-31', NULL, NULL, NULL, 10);
 -- SELECT * FROM fn_accounts_adjustments('2026-05-01','2026-05-31', NULL, NULL, NULL);
 -- SELECT * FROM fn_accounts_in_transit (NULL, NULL);
+-- SELECT * FROM fn_accounts_utilities_breakdown('2026-07-01','2026-07-31', NULL);
 -- ============================================================

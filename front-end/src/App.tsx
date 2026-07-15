@@ -20,6 +20,7 @@ import ShopDashboard from './pages/shop/ShopDashboard'
 import ShopRequests from './pages/shop/ShopRequests'
 import ShopRequestNew from './pages/shop/ShopRequestNew'
 import ShopRequestDetail from './pages/shop/ShopRequestDetail'
+import ShopBilling from './pages/shop/ShopBilling'
 import AdminRequests from './pages/admin/AdminRequests'
 import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
@@ -90,7 +91,12 @@ const router = createBrowserRouter(
         <Route path="requests/new" element={<ShopRequestNew />} />
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
         <Route path="requests/:id" element={<ShopRequestDetail />} />
-        <Route path="utilities" element={<ShopUtilities />} />
+        {/* Phase 4 — POS billing (issue + cancel, stock-decrementing). */}
+        <Route path="billing" element={<ShopBilling />} />
+        {/* Renamed from "utilities" → "expenses" on 15-Jul-2026 (client
+            rename of the feature). Component name kept for internal
+            stability — only the URL surface changed. */}
+        <Route path="expenses" element={<ShopUtilities />} />
       </Route>
 
       <Route path="/inventory" element={<RoleGate allow="Inventory"><InventoryLayout /></RoleGate>}>

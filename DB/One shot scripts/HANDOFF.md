@@ -92,6 +92,7 @@ All Phase 1 + Phase 2 features (nested categories, Returns, qty audits, etc.) ar
 - `phase1_drop_variant_uniqueness.sql` — drops `uq_products_variant_active` + `fn_product_variant_exists`.
 - `phase2_returns_migration.sql` — adds `request_type` enum, `'Accepted'` status, `source_request_id`, etc.
 - `phase2_qty_audit_migration.sql` — adds `stock_request_qty_audits` table.
+- `phase3_accounts_utilities.sql` (15-Jul-2026) — adds `fn_accounts_utilities_breakdown` for the Net Profit KPI + Utilities columns on admin Dashboard / Accounts. Requires phase 4 tables (`shop_utility_expenses`) — the script guards for that and errors out clearly if phase 4 hasn't been applied.
 
 **Optional dev seeds** (also in `One shot scripts/`):
 - `phase1_seed_bulk.sql` — 500 inventories + 1000 shops + 2000 products. The big bulk seed.

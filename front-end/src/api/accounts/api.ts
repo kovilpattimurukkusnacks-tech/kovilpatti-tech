@@ -10,6 +10,7 @@ import type {
   AccountsShopRowDto,
   AccountsSummaryDto,
   AccountsTrendBucketDto,
+  AccountsUtilityRowDto,
 } from './types'
 
 /** Build a query-string from AccountsFilters. Arrays go as comma-separated
@@ -38,6 +39,7 @@ export const accountsApi = {
   topProducts: (f: AccountsFilters) => apiClient.get<AccountsProductRowDto[]>       (`/api/accounts/top-products${toQuery(f)}`),
   adjustments: (f: AccountsFilters) => apiClient.get<AccountsAdjustmentRowDto[]>    (`/api/accounts/adjustments${toQuery(f)}`),
   inTransit:   (f: AccountsFilters) => apiClient.get<AccountsInTransitDto>          (`/api/accounts/in-transit${toQuery(f)}`),
+  utilities:   (f: AccountsFilters) => apiClient.get<AccountsUtilityRowDto[]>       (`/api/accounts/utilities${toQuery(f)}`),
 }
 
 // ──────── XLSX exports ────────

@@ -26,6 +26,7 @@ DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
 -- 06-Jul-2026 — is_vendor_procured removed (Special Request rework). Same
 -- return-shape drop pattern as above — PG blocks RETURN-shape changes on
 -- CREATE OR REPLACE, so drop first.
+-- 14-Jul-2026 — barcode added (POS billing scan); same drop-first dance.
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
@@ -38,6 +39,7 @@ CREATE OR REPLACE FUNCTION fn_product_list_paged(
 RETURNS TABLE (
   id                 uuid,
   code               varchar,
+  barcode            varchar,
   name               varchar,
   category_id        int,
   category_name      varchar,
@@ -50,7 +52,7 @@ RETURNS TABLE (
   active             boolean
 )
 LANGUAGE sql STABLE AS $$
-  SELECT p.id, p.code, p.name, p.category_id, c.name AS category_name,
+  SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
          p.mrp, p.purchase_price, p.gst, p.active
   FROM products p
