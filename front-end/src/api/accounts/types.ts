@@ -196,3 +196,18 @@ export type AccountsInTransitDto = {
   /** Sum of total_amount over the Special-only subset. */
   specialAmount:       number
 }
+
+/** One row per (shop, utility category) in the selected date range. Powers
+ *  the Net Profit KPI + Utilities columns (15-Jul-2026). Shops with zero
+ *  utilities in range are absent — treat missing shops as ₹0. */
+export type AccountsUtilityRowDto = {
+  shopId:       string
+  shopCode:     string
+  shopName:     string
+  /** Free text: Electricity / Rent / Water / Staff Salary / Maintenance /
+   *  Internet/Wifi / Others (FE autocomplete suggestions). Anything else
+   *  falls back to a generic icon in the UI. */
+  category:     string
+  amount:       number
+  expenseCount: number
+}

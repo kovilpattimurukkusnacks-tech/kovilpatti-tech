@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { accountsApi } from '../api/accounts/api'
-import type { AccountsFilters } from '../api/accounts/types'
+import type { AccountsFilters, AccountsUtilityRowDto } from '../api/accounts/types'
 
 /**
  * TanStack Query hooks for the Accounts dashboard. All queries are
@@ -23,6 +23,7 @@ export const accountsKeys = {
   topProducts: (f: AccountsFilters) => ['accounts', 'top-products', f] as const,
   adjustments: (f: AccountsFilters) => ['accounts', 'adjustments',  f] as const,
   inTransit:   (f: AccountsFilters) => ['accounts', 'in-transit',   f] as const,
+  utilities:   (f: AccountsFilters) => ['accounts', 'utilities',    f] as const,
 }
 
 export function useAccountsSummary(filters: AccountsFilters) {
@@ -81,4 +82,38 @@ export function useAccountsInTransit(filters: AccountsFilters) {
     queryFn:  () => accountsApi.inTransit(filters),
     staleTime: STALE_TIME,
   })
+}
+
+/** Per-shop-per-category operating expenses (Rent / Electricity / Salary /
+ *  …) — used to derive Net Profit (Gross Profit − Utilities) on the admin
+ *  Dashboard + Accounts. 15-Jul-2026 client req. */
+export function useAccountsUtilities(filters: AccountsFilters) {
+  return useQuery({
+    queryKey: accountsKeys.utilities(filters),
+    queryFn:  () => accountsApi.utilities(filters),
+    staleTime: STALE_TIME,
+  })
+}
+
+// ══════════════════ Helper selectors ══════════════════
+//
+// Utility rows come in as one-per-(shop, category) — the callers usually
+// want either the grand total (dashboard KPI) or a per-shop rollup (table
+// column). Colocated with the hook so every consumer sums the same way.
+
+/** Grand total across every (shop, category) row. Handles empty / undefined. */
+export function totalUtilities(rows: AccountsUtilityRowDto[] | undefined): number {
+  return (rows ?? []).reduce((sum, r) => sum + r.amount, 0)
+}
+
+/** Per-shop rollup: shopId → total utility amount for that shop. Absent
+ *  shops implicitly map to 0 — callers should use `map.get(id) ?? 0`. */
+export function utilitiesByShop(
+  rows: AccountsUtilityRowDto[] | undefined,
+): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const r of rows ?? []) {
+    out.set(r.shopId, (out.get(r.shopId) ?? 0) + r.amount)
+  }
+  return out
 }

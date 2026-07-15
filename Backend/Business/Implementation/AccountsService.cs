@@ -113,6 +113,20 @@ public class AccountsService(
             e.Special_Count, e.Special_Amount);
     }
 
+    public async Task<IReadOnlyList<AccountsUtilityRowDto>> GetUtilitiesAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Utilities use only From/To/ShopIds — inventory and product-category
+        // filters are meaningless here (see the SP header). The Guard call
+        // still validates From/To and re-checks the Admin role.
+        Guard(filters);
+        var rows = await accounts.GetUtilitiesAsync(
+            filters.From!.Value, filters.To!.Value,
+            filters.ShopIds, ct);
+        return rows.Select(r => new AccountsUtilityRowDto(
+            r.Shop_Id, r.Shop_Code, r.Shop_Name,
+            r.Category, r.Amount, r.Expense_Count)).ToList();
+    }
+
     // ──────── helpers ────────
 
     private void Guard(AccountsFilters filters)

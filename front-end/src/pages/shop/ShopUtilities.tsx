@@ -182,7 +182,7 @@ export default function ShopUtilities() {
   return (
     <div>
       <PageHeader
-        title="Utilities"
+        title="Shop Expenses"
         subtitle={`Track ${shopName}'s operating expenses — electricity, rent, staff, and more.`}
         action={
           <Button
@@ -216,7 +216,7 @@ export default function ShopUtilities() {
 
       {expensesQuery.isError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Failed to load utility expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
+          Failed to load shop expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
         </Alert>
       )}
 
@@ -231,7 +231,7 @@ export default function ShopUtilities() {
           mb: 3,
         }}
       >
-        <KpiCard label="Total Utilities" value={formatINR(total)} />
+        <KpiCard label="Total Shop Expenses" value={formatINR(total)} />
         <KpiCard label="Entries Logged" value={String(entries.length)} sub={shopName} />
         <KpiCard
           label="Largest Category"
@@ -351,7 +351,7 @@ export default function ShopUtilities() {
 
       {/* Add / Edit dialog */}
       <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
-        <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Utility Expense</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Shop Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {/* Free-typing category — pick a suggestion or type a new one.
               No fixed chip list; unrecognised text just falls back to the

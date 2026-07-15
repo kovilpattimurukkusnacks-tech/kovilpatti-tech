@@ -19,6 +19,7 @@ import {
   useAccountsByShop,
   useAccountsInTransit,
   useAccountsSummary,
+  useAccountsUtilities,
   useAccountsTopProducts,
 } from '../../hooks/useAccounts'
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
@@ -173,11 +174,17 @@ export default function AdminAccounts() {
   const byCategory  = useAccountsByCategory(filters)
   const topProducts = useAccountsTopProducts(filters)
   const adjustments = useAccountsAdjustments(nonCategoryFilters)
+  // Shop expenses (15-Jul-2026) — drives the Net Profit KPI, the Shop
+  // Expenses card + tooltip, and the Shop Expenses column in the by-shop
+  // table. Uses the same non-category filter set (utility categories are
+  // a separate taxonomy from product categories).
+  const utilities   = useAccountsUtilities(nonCategoryFilters)
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
   const firstError = summary.error || inTransit.error || byShop.error
                    || byCategory.error || topProducts.error || adjustments.error
+                   || utilities.error
 
   return (
     <Box sx={{ p: 3 }}>
@@ -203,7 +210,12 @@ export default function AdminAccounts() {
           </Alert>
         )}
 
-        <KpiStrip data={summary.data} loading={summary.isLoading} view={filters.view} />
+        <KpiStrip
+          data={summary.data}
+          loading={summary.isLoading || utilities.isLoading}
+          view={filters.view}
+          utilityRows={utilities.data}
+        />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).
             Doesn't apply when the user is focused on Returns view — hide. */}
@@ -215,6 +227,7 @@ export default function AdminAccounts() {
           rows={byShop.data}
           loading={byShop.isLoading}
           filters={filters}
+          utilityRows={utilities.data}
         />
 
         <CategoryAndProductsTable
