@@ -10,7 +10,7 @@ import ProfitByShopChart from '../../components/dashboard/ProfitByShopChart'
 import ProfitByCategoryDonut from '../../components/dashboard/ProfitByCategoryDonut'
 import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import { dateRangeLabel } from '../../components/DateRangeFilter'
-import { useAccountsTrend } from '../../hooks/useAccounts'
+import { useAccountsTrend, useAccountsUtilities } from '../../hooks/useAccounts'
 import { useShops } from '../../hooks/useShops'
 import { istToday } from '../../utils/istDate'
 import type { AccountsFilters, AccountsGrouping } from '../../api/accounts/types'
@@ -79,7 +79,8 @@ export default function AdminDashboard() {
     }, { replace: true })
   }, [setParams])
 
-  const trend = useAccountsTrend(filters)
+  const trend     = useAccountsTrend(filters)
+  const utilities = useAccountsUtilities(filters)
 
   // Collapsed-panel pills: date range + one pill per selected shop (by name).
   const activePills: FilterPill[] = [
@@ -115,7 +116,11 @@ export default function AdminDashboard() {
         {/* Executive KPI strip — Revenue / Cost / Profit / Margin with
             inline sparklines. Reads from the same trend payload as the
             charts below, so no extra API call. 12-Jul-2026 client req. */}
-        <DashboardHero data={trend.data} loading={trend.isLoading} />
+        <DashboardHero
+          data={trend.data}
+          utilities={utilities.data}
+          loading={trend.isLoading || utilities.isLoading}
+        />
 
         {/* All rupee values side by side, like the Accounts screen. */}
         <MovementChart data={trend.data} loading={trend.isLoading} grouping={filters.grouping ?? 'day'} />

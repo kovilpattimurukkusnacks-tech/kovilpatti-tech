@@ -1,52 +1,55 @@
 import { useMemo } from 'react'
-import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
+import { Box, Card, CardContent, Skeleton, Tooltip, Typography } from '@mui/material'
 import { SparkLineChart } from '@mui/x-charts/SparkLineChart'
-import { ArrowDownRight, ArrowUpRight, IndianRupee, Percent, ShoppingCart, TrendingUp } from 'lucide-react'
-import type { AccountsTrendBucketDto } from '../../api/accounts/types'
+import {
+  ArrowDownRight, ArrowUpRight, Info,
+  IndianRupee, Percent, Receipt, ShoppingCart, TrendingUp, Wallet,
+} from 'lucide-react'
+import type { AccountsTrendBucketDto, AccountsUtilityRowDto } from '../../api/accounts/types'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import { LOSS_RED, PROFIT_GREEN } from '../accounts/ProfitLossChart'
+import { totalUtilities } from '../../hooks/useAccounts'
 
 type Props = {
   data: AccountsTrendBucketDto[] | undefined
+  utilities: AccountsUtilityRowDto[] | undefined
   loading: boolean
 }
 
 /**
- * Executive-style KPI hero strip (12-Jul-2026, client req: "advanced &
- * professional"). Four cards side-by-side across the top of the admin
- * dashboard — Revenue, Cost, Profit (or Loss), Margin % — each with an
- * inline sparkline traced from the trend data already loaded for the
- * charts below. No extra API calls — same trend payload feeds all four
- * sparklines + all four totals.
+ * Executive KPI hero strip. Six cards in a 3-across grid — Revenue / Gross
+ * Profit / Net Profit / Purchased Cost / Utilities / Gross Margin. Net
+ * Profit is the "hero" tile (gold gradient) because it's the client's
+ * actual question — "how much did I keep after every bill".
  *
- * Visual hierarchy:
- *   • Profit card takes the gold-gradient background — the number the
- *     owner scans first. If the period is a net loss, the same card
- *     flips to a red border + red number so "the answer" is obvious.
- *   • Revenue / Cost / Margin sit in cream cards, matching the rest of
- *     the app palette. Sparklines share the axis so the eye can compare
- *     slopes even without reading exact values.
- *   • Delta labels ("↑" green / "↓" red) show first-half vs second-half
- *     of the selected range — a rough trend cue without a "vs previous
- *     period" API call.
+ * Row 1 tells the story left-to-right: Revenue → Gross Profit → Net Profit
+ * (the answer). Row 2 shows the components: Cost / Utilities / Margin %.
  *
- * Positional intent: this card is the "3-second read" for the owner —
- * everything below (movement chart, per-shop bars, per-category donut)
- * is drill-down.
+ * Utilities logic: shop_utility_expenses.amount summed across the
+ * (from, to, shopIds) filter. Counted by expense_date only — see the
+ * tooltip on the Utilities card.
+ *
+ * Sparklines are wired only for the four trend-backed metrics (Revenue,
+ * Cost, Gross Profit, Margin). Utilities have no per-bucket series (they
+ * are logged as monthly bulk entries, so a day-bucketed sparkline would
+ * be misleading), and Net Profit is left without a sparkline for the same
+ * reason — its shape would inherit Gross Profit's, which the user can see
+ * on the neighbouring card.
  */
-export default function DashboardHero({ data, loading }: Props) {
-  const totals = useMemo(() => computeTotals(data), [data])
+export default function DashboardHero({ data, utilities, loading }: Props) {
+  const totals = useMemo(() => computeTotals(data, utilities), [data, utilities])
   const sparks = useMemo(() => computeSparks(data), [data])
 
   return (
     <Box
       sx={{
         display: 'grid',
-        gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(4, 1fr)' },
+        gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr', md: 'repeat(3, 1fr)' },
         gap: 2,
       }}
     >
+      {/* Row 1 — the "top-line story": Revenue → Gross Profit → Net Profit. */}
       <KpiCard
         label="Revenue (at MRP)"
         value={totals.revenue}
@@ -56,6 +59,28 @@ export default function DashboardHero({ data, loading }: Props) {
         sparkColor="#1F6FEB"
         delta={totals.revenueDelta}
       />
+      <KpiCard
+        label={totals.gross >= 0 ? 'Gross Profit' : 'Gross Loss'}
+        value={Math.abs(totals.gross)}
+        loading={loading}
+        icon={<TrendingUp size={16} />}
+        sparkData={sparks.gross}
+        sparkColor={totals.gross >= 0 ? PROFIT_GREEN : LOSS_RED}
+        delta={totals.grossDelta}
+        heroTone={totals.gross >= 0 ? 'profit' : 'loss'}
+      />
+      <KpiCard
+        label={totals.net >= 0 ? 'Net Profit' : 'Net Loss'}
+        value={Math.abs(totals.net)}
+        loading={loading}
+        icon={<Wallet size={16} />}
+        sparkColor={totals.net >= 0 ? PROFIT_GREEN : LOSS_RED}
+        accent="hero"
+        heroTone={totals.net >= 0 ? 'profit' : 'loss'}
+        tooltip="Net Profit = Gross Profit − Utilities logged in this date range."
+      />
+
+      {/* Row 2 — the components: Cost, Utilities, Margin. */}
       <KpiCard
         label="Purchased (Cost)"
         value={totals.cost}
@@ -68,15 +93,12 @@ export default function DashboardHero({ data, loading }: Props) {
         deltaTone="cost"
       />
       <KpiCard
-        label={totals.profit >= 0 ? 'Profit' : 'Loss'}
-        value={Math.abs(totals.profit)}
+        label="Utilities"
+        value={totals.utilities}
         loading={loading}
-        icon={<TrendingUp size={16} />}
-        sparkData={sparks.profit}
-        sparkColor={totals.profit >= 0 ? PROFIT_GREEN : LOSS_RED}
-        delta={totals.profitDelta}
-        accent="hero"
-        heroTone={totals.profit >= 0 ? 'profit' : 'loss'}
+        icon={<Receipt size={16} />}
+        sparkColor="#B45309"
+        tooltip="Total shop utility expenses (Rent, Electricity, Salary, …) logged in this date range. Counted by expense_date only — monthly bills logged as a single entry may under-count a partial-month view."
       />
       <KpiCard
         label="Gross Margin"
@@ -96,13 +118,14 @@ export default function DashboardHero({ data, loading }: Props) {
 
 function KpiCard({
   label, value, loading, icon, sparkData, sparkColor, delta, valueFormat = 'rupees',
-  accent = 'plain', heroTone = 'profit', deltaTone = 'normal',
+  accent = 'plain', heroTone = 'profit', deltaTone = 'normal', tooltip,
 }: {
   label: string
   value: number
   loading: boolean
   icon: React.ReactNode
-  sparkData: number[]
+  /** Omit for cards with no per-bucket trend (Utilities, Net Profit). */
+  sparkData?: number[]
   sparkColor: string
   delta?: DeltaSignal
   valueFormat?: 'rupees' | 'percent'
@@ -112,6 +135,8 @@ function KpiCard({
   heroTone?: 'profit' | 'loss'
   /** 'cost' inverts the delta colour so "up = bad, down = good". */
   deltaTone?: 'normal' | 'cost'
+  /** Optional info tooltip — anchors on an info glyph next to the label. */
+  tooltip?: string
 }) {
   const isHero = accent === 'hero'
   const isLossHero = isHero && heroTone === 'loss'
@@ -131,12 +156,22 @@ function KpiCard({
     >
       <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 0.5 }}>
-          <Typography
-            variant="caption"
-            sx={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 700, fontSize: 10 }}
-          >
-            {label}
-          </Typography>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+            <Typography
+              variant="caption"
+              sx={{ textTransform: 'uppercase', letterSpacing: 0.8, fontWeight: 700, fontSize: 10 }}
+            >
+              {label}
+            </Typography>
+            {tooltip && (
+              <Tooltip title={tooltip} arrow enterDelay={200}>
+                {/* span wrapper so Tooltip's ref doesn't collide with the SVG icon. */}
+                <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
+                  <Info size={12} />
+                </Box>
+              </Tooltip>
+            )}
+          </Box>
           <Box sx={{ opacity: 0.7, display: 'flex' }}>{icon}</Box>
         </Box>
 
@@ -149,7 +184,7 @@ function KpiCard({
               fontSize: isHero ? 30 : 24,
               lineHeight: 1.1,
               color: isLossHero ? LOSS_RED : '#1F1F1F',
-              // Tabular numerals — digits align across the four cards.
+              // Tabular numerals — digits align across the cards.
               fontVariantNumeric: 'tabular-nums',
             }}
           >
@@ -164,10 +199,10 @@ function KpiCard({
           <DeltaRow delta={delta} deltaTone={deltaTone} />
         )}
 
-        {/* Sparkline — inline mini-chart. Same 30-buckets → 30-points mapping
-            across all four cards so a visual eye-cast across them reveals
-            which line is diverging from the pack. */}
-        {sparkData.length > 1 && !loading && (
+        {/* Sparkline — inline mini-chart. Cards without per-bucket data
+            (utilities / net profit) render a matching-height spacer so
+            heights across all six cards stay uniform. */}
+        {loading ? null : sparkData && sparkData.length > 1 ? (
           <Box sx={{ mt: 0.5, height: 34 }}>
             <SparkLineChart
               data={sparkData}
@@ -181,6 +216,8 @@ function KpiCard({
               }}
             />
           </Box>
+        ) : (
+          <Box sx={{ mt: 0.5, height: 34 }} />
         )}
       </CardContent>
     </Card>
@@ -226,13 +263,23 @@ function DeltaRow({ delta, deltaTone }: { delta: DeltaSignal; deltaTone: 'normal
  * Sum every trend bucket to grand totals + estimate a within-range trend
  * signal (first-half average vs second-half average). No BE call — reads
  * the same rows already fetched for the trend charts.
+ *
+ * Utilities do NOT have a per-bucket series (they're one-off entries on
+ * shop_utility_expenses.expense_date), so they only contribute to the
+ * scalar totals — no first-half / second-half delta. Net Profit inherits
+ * the Gross delta (utilities treated as flat within the range).
  */
-function computeTotals(data: AccountsTrendBucketDto[] | undefined) {
+function computeTotals(
+  data: AccountsTrendBucketDto[] | undefined,
+  utilities: AccountsUtilityRowDto[] | undefined,
+) {
   const rows = data ?? []
-  const revenue = rows.reduce((s, r) => s + r.netAmount,      0)
-  const cost    = rows.reduce((s, r) => s + r.purchaseAmount, 0)
-  const profit  = revenue - cost
-  const marginPct = revenue > 0 ? (profit / revenue) * 100 : 0
+  const revenue   = rows.reduce((s, r) => s + r.netAmount,      0)
+  const cost      = rows.reduce((s, r) => s + r.purchaseAmount, 0)
+  const gross     = revenue - cost
+  const util      = totalUtilities(utilities)
+  const net       = gross - util
+  const marginPct = revenue > 0 ? (gross / revenue) * 100 : 0
 
   // First-half vs second-half deltas — cheap proxy for "trending up" without
   // asking the BE for a "vs previous period" comparison. n=1 → not meaningful.
@@ -245,8 +292,8 @@ function computeTotals(data: AccountsTrendBucketDto[] | undefined) {
   const revB = halfSum(secondHalf, 'netAmount')
   const cosA = halfSum(firstHalf,  'purchaseAmount')
   const cosB = halfSum(secondHalf, 'purchaseAmount')
-  const proA = revA - cosA
-  const proB = revB - cosB
+  const groA = revA - cosA
+  const groB = revB - cosB
 
   const delta = (base: number, curr: number): DeltaSignal => ({
     pct: base > 0 ? ((curr - base) / base) * 100 : 0,
@@ -255,24 +302,24 @@ function computeTotals(data: AccountsTrendBucketDto[] | undefined) {
   })
 
   return {
-    revenue, cost, profit, marginPct,
+    revenue, cost, gross, utilities: util, net, marginPct,
     revenueDelta: delta(revA, revB),
     costDelta:    delta(cosA, cosB),
-    profitDelta:  delta(proA, proB),
+    grossDelta:   delta(groA, groB),
   }
 }
 
 /**
- * Turn the trend rows into 4 aligned sparkline series. Every card gets
- * the same X-axis buckets so the eye can compare slopes.
+ * Turn the trend rows into aligned sparkline series. Every card that has
+ * a sparkline shares the same X-axis buckets so the eye can compare slopes.
+ * Utilities + Net Profit are NOT sparklined (see the header docblock).
  */
 function computeSparks(data: AccountsTrendBucketDto[] | undefined) {
   const rows = data ?? []
   return {
     revenue: rows.map(r => r.netAmount),
     cost:    rows.map(r => r.purchaseAmount),
-    profit:  rows.map(r => r.netAmount - r.purchaseAmount),
+    gross:   rows.map(r => r.netAmount - r.purchaseAmount),
     margin:  rows.map(r => r.netAmount > 0 ? ((r.netAmount - r.purchaseAmount) / r.netAmount) * 100 : 0),
   }
 }
-

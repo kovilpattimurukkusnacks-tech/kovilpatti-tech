@@ -142,3 +142,20 @@ public record AccountsInTransitDto(
     /// Sum of total_amount over the Special-only subset.
     decimal         SpecialAmount
 );
+
+/// One row per (shop, utility category) in the selected date range. Shops
+/// with zero utilities in range are absent — FE treats missing shops as ₹0.
+/// Used to derive the Net Profit KPI (Gross Profit − Utilities) and the
+/// Utilities columns on the admin Accounts breakdowns (15-Jul-2026,
+/// client req: "shop bills la ellam kalanjaa dhan real profit").
+public record AccountsUtilityRowDto(
+    Guid    ShopId,
+    string  ShopCode,
+    string  ShopName,
+    /// Free text — the FE offers Electricity / Rent / Water / Staff Salary /
+    /// Maintenance / Internet/Wifi / Others via autocomplete, but shops can
+    /// log anything. Unknown values render on the FE with a fallback icon.
+    string  Category,
+    decimal Amount,
+    long    ExpenseCount
+);

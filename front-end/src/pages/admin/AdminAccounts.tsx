@@ -19,6 +19,9 @@ import {
   useAccountsByShop,
   useAccountsInTransit,
   useAccountsSummary,
+  useAccountsUtilities,
+  totalUtilities,
+  utilitiesByShop,
   useAccountsTopProducts,
 } from '../../hooks/useAccounts'
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
@@ -173,11 +176,18 @@ export default function AdminAccounts() {
   const byCategory  = useAccountsByCategory(filters)
   const topProducts = useAccountsTopProducts(filters)
   const adjustments = useAccountsAdjustments(nonCategoryFilters)
+  // Utilities (15-Jul-2026) — drives the Net Profit KPI + Utilities column
+  // in ShopBreakdownTable. Uses the same non-category filter set (utility
+  // categories are a separate taxonomy from product categories).
+  const utilities   = useAccountsUtilities(nonCategoryFilters)
+  const utilTotal   = totalUtilities(utilities.data)
+  const utilByShop  = useMemo(() => utilitiesByShop(utilities.data), [utilities.data])
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
   const firstError = summary.error || inTransit.error || byShop.error
                    || byCategory.error || topProducts.error || adjustments.error
+                   || utilities.error
 
   return (
     <Box sx={{ p: 3 }}>
@@ -203,7 +213,12 @@ export default function AdminAccounts() {
           </Alert>
         )}
 
-        <KpiStrip data={summary.data} loading={summary.isLoading} view={filters.view} />
+        <KpiStrip
+          data={summary.data}
+          loading={summary.isLoading || utilities.isLoading}
+          view={filters.view}
+          utilitiesTotal={utilTotal}
+        />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).
             Doesn't apply when the user is focused on Returns view — hide. */}
@@ -215,6 +230,7 @@ export default function AdminAccounts() {
           rows={byShop.data}
           loading={byShop.isLoading}
           filters={filters}
+          utilitiesByShop={utilities.data ? utilByShop : undefined}
         />
 
         <CategoryAndProductsTable

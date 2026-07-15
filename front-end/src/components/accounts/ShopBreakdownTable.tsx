@@ -11,6 +11,10 @@ type Props = {
   rows: AccountsShopRowDto[] | undefined
   loading: boolean
   filters: AccountsFilters
+  /** Per-shop utility totals for the current range (15-Jul-2026). Optional
+   *  — when undefined the Utilities / Net P&L columns are hidden. Shops
+   *  absent from the map are treated as ₹0. */
+  utilitiesByShop?: Map<string, number>
 }
 
 /**
@@ -22,7 +26,7 @@ type Props = {
  * into the DataGrid's horizontal scrollbar instead of squishing the cells;
  * only the Shop name column flexes.
  */
-export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
+export default function ShopBreakdownTable({ rows, loading, filters, utilitiesByShop }: Props) {
   const navigate = useNavigate()
   const view: AccountsView = filters.view ?? 'all'
   // Excel export typically takes 2-5 seconds (BE renders the .xlsx +
@@ -86,7 +90,7 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
     // Shown on 'all' + 'purchased' (both include cost + revenue, so P&L
     // reconciles). Hidden on the pure-dimension lenses ('requested' /
     // 'dispatched' / 'returns' single-side) which don't have both halves.
-    { field: 'profitLoss', headerName: 'Profit / Loss', type: 'number', width: 145,
+    { field: 'profitLoss', headerName: 'Gross P&L', type: 'number', width: 130,
       showIn: ['all', 'purchased'],
       valueGetter: (_v, row) => (row.profit ?? 0) - (row.loss ?? 0),
       renderCell: ({ row }) => {
@@ -97,8 +101,46 @@ export default function ShopBreakdownTable({ rows, loading, filters }: Props) {
         return <span style={{ color: '#1F1F1F66' }}>—</span>
       },
     },
+    // Utilities (15-Jul-2026) — shop operating expenses in range. Feeds
+    // Net P&L below. Rendered only when utilitiesByShop was supplied
+    // (see the filter after the array). Shops absent from the map = ₹0.
+    { field: 'utilitiesAmount', headerName: 'Utilities (Cost)', type: 'number', width: 145,
+      showIn: ['all', 'purchased'],
+      valueGetter: (_v, row) => utilitiesByShop?.get(row.shopId) ?? 0,
+      renderCell: ({ row }) => {
+        const u = utilitiesByShop?.get(row.shopId) ?? 0
+        return u > 0
+          ? <span style={{ color: '#8A6D3B', fontWeight: 600 }}>{formatINR(u)}</span>
+          : <span style={{ color: '#1F1F1F66' }}>—</span>
+      },
+    },
+    // Net P&L (15-Jul-2026) — Gross P&L minus Utilities. Same signed
+    // display convention as Gross P&L: positive = green, negative = red.
+    // Sorted / filtered numerically via valueGetter's signed number.
+    { field: 'netProfitLoss', headerName: 'Net P&L', type: 'number', width: 130,
+      showIn: ['all', 'purchased'],
+      valueGetter: (_v, row) => {
+        const gross = (row.profit ?? 0) - (row.loss ?? 0)
+        const util  = utilitiesByShop?.get(row.shopId) ?? 0
+        return gross - util
+      },
+      renderCell: ({ row }) => {
+        const gross = (row.profit ?? 0) - (row.loss ?? 0)
+        const util  = utilitiesByShop?.get(row.shopId) ?? 0
+        const net   = gross - util
+        if (net > 0) return <span style={{ color: '#2E7D32', fontWeight: 700 }}>+{formatINR(net)}</span>
+        if (net < 0) return <span style={{ color: '#C62828', fontWeight: 700 }}>−{formatINR(Math.abs(net))}</span>
+        return <span style={{ color: '#1F1F1F66' }}>—</span>
+      },
+    },
   ]
-  const columns = allColumns.filter(c => c.showIn.includes(view))
+  const columns = allColumns
+    .filter(c => c.showIn.includes(view))
+    // Hide utilities-derived columns entirely when the caller didn't
+    // fetch utilities data — matches the KpiStrip behaviour so pages
+    // that don't opt in stay unchanged.
+    .filter(c => utilitiesByShop != null
+                 || (c.field !== 'utilitiesAmount' && c.field !== 'netProfitLoss'))
 
   return (
     <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', background: '#FFFBE6' }}>

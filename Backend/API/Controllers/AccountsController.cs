@@ -52,6 +52,16 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<ActionResult<AccountsInTransitDto>> InTransit([FromQuery] AccountsFilters filters, CancellationToken ct)
         => Ok(await accounts.GetInTransitAsync(filters, ct));
 
+    /// <summary>
+    /// Per-shop-per-category operating expenses in the date range. Powers
+    /// the Net Profit KPI + Utilities columns on the admin Dashboard /
+    /// Accounts screens (15-Jul-2026). Only From/To/ShopIds are honoured;
+    /// InventoryIds and CategoryIds are ignored by design.
+    /// </summary>
+    [HttpGet("utilities")]
+    public async Task<ActionResult<IReadOnlyList<AccountsUtilityRowDto>>> Utilities([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetUtilitiesAsync(filters, ct));
+
     // ──────── XLSX export endpoints ────────
     //
     // Each export passes the raw typed value (decimal / long / DateTimeOffset

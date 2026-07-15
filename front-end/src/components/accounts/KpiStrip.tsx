@@ -1,7 +1,8 @@
 import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
-import { ArrowDownLeft, ArrowUpRight, ClipboardList, ShoppingCart, TrendingUp } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
+import { LOSS_RED } from './ProfitLossChart'
 import type { AccountsSummaryDto, AccountsView } from '../../api/accounts/types'
 
 type Props = {
@@ -9,6 +10,11 @@ type Props = {
   loading: boolean
   /** Active view / lens. Drives which KPI cards render (19-Jun-2026, client #13). */
   view?: AccountsView
+  /** Grand-total shop operating expenses for the current filter range
+   *  (15-Jul-2026). Optional — when omitted the Utilities / Net Profit
+   *  cards are hidden even in views that would normally include them,
+   *  so a page that doesn't fetch utilities doesn't render blanks. */
+  utilitiesTotal?: number
 }
 
 /**
@@ -25,7 +31,15 @@ type Props = {
  * Requested→Dispatched gap — confusing next to them. The edits total + log
  * live on the Adjustments log table instead. (Tried 06-Jun-2026, removed.)
  */
-export default function KpiStrip({ data, loading, view = 'all' }: Props) {
+export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }: Props) {
+  // Net Profit = Gross Profit (net_amount − purchase_amount) − Utilities.
+  // Signed — negative when the shops spent more than they earned in the
+  // range. Computed here so both the KPI card and the fallback (no data
+  // yet → undefined) go through one path.
+  const netProfit = data == null || utilitiesTotal == null
+    ? undefined
+    : (data.netAmount - data.purchaseAmount) - utilitiesTotal
+
   // Build the full card set once, then filter by the active view.
   // 'all' shows everything; each dim view shows ONLY its own card so the
   // strip clearly reframes around that dimension (lens-mode).
@@ -73,13 +87,40 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
       icon: <TrendingUp size={18} />,
       accent: 'net' as const,
     },
+    // Operating expenses (Rent / Electricity / Salary / …) logged via the
+    // Shop Utilities screen. Only surfaces when the caller supplied a total
+    // (utilitiesTotal !== undefined) — pages that don't fetch the utilities
+    // endpoint see this card and Net Profit hidden entirely (see dimsByView
+    // + the filter below).
+    {
+      dim: 'utilities' as const,
+      label: 'Utilities (Cost)',
+      value: utilitiesTotal,
+      secondary: 'shop bills in range',
+      icon: <Receipt size={18} />,
+      accent: undefined as 'net' | 'returns' | 'loss' | undefined,
+    },
+    // Net Profit = (Net at MRP − Purchased at Cost) − Utilities. Signed —
+    // negative renders with a red tint (accent='loss') so a period that
+    // slipped into a loss doesn't hide behind identical styling.
+    {
+      dim: 'netProfit' as const,
+      label: netProfit != null && netProfit < 0 ? 'Net Loss' : 'Net Profit',
+      value: netProfit != null ? Math.abs(netProfit) : undefined,
+      secondary: 'after utilities',
+      icon: <Wallet size={18} />,
+      accent: (netProfit != null && netProfit < 0 ? 'loss' : 'net') as 'net' | 'returns' | 'loss',
+    },
   ]
 
   // Map view → which dims to show. Net belongs to 'all' only since it's a
   // composite (Dispatched − Returns) — surfacing it inside a single-dim view
   // would be misleading.
+  // Utilities / Net Profit (15-Jul-2026) show only in the composite views
+  // ('all' and 'purchased') — they're cross-lens metrics that don't relate
+  // to the single-dim slices (Requested / Dispatched / Returns).
   const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
-    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net'],
+    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'netProfit'],
     requested:  ['requested'],
     dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
@@ -87,9 +128,14 @@ export default function KpiStrip({ data, loading, view = 'all' }: Props) {
     // the KPI strip shows "cost invested" alongside the "revenue at MRP"
     // it turns into. Profit/Loss shows up per-shop and per-category in
     // the tables below.
-    purchased:  ['purchased', 'net'],
+    purchased:  ['purchased', 'net', 'utilities', 'netProfit'],
   }
-  const cards = allCards.filter(c => dimsByView[view].includes(c.dim))
+  // Additional guard: even when the view would include utilities / netProfit,
+  // hide them if the caller didn't fetch utilities. Pages that don't opt in
+  // shouldn't see blank cards.
+  const cards = allCards
+    .filter(c => dimsByView[view].includes(c.dim))
+    .filter(c => (c.dim === 'utilities' || c.dim === 'netProfit') ? utilitiesTotal != null : true)
 
   // Grid column count tracks the visible card count so a single card doesn't
   // stretch the full page width (looks awkward). When only one card shows
@@ -135,18 +181,25 @@ function KpiCard({
   secondary: string | undefined
   icon: React.ReactNode
   loading: boolean
-  /** 'net' = gold gradient. 'returns' = red tint. Default = cream. */
-  accent?: 'net' | 'returns'
+  /** 'net' = gold gradient. 'returns' / 'loss' = red-tinted number.
+   *  'loss' additionally paints the border red so a period that slipped
+   *  into a net loss reads at a glance. Default = cream. */
+  accent?: 'net' | 'returns' | 'loss'
 }) {
   const isNet     = accent === 'net'
   const isReturns = accent === 'returns'
+  const isLoss    = accent === 'loss'
+  const valueColor  = (isReturns || isLoss) ? LOSS_RED : '#1F1F1F'
+  const borderColor = isLoss ? LOSS_RED : '#1F1F1F'
 
   return (
     <Card
       sx={{
-        border: '2px solid #1F1F1F',
+        border: `2px solid ${borderColor}`,
         boxShadow: '4px 4px 0 0 #FCD835',
-        background: isNet ? GOLD_GRADIENT : '#FFFBE6',
+        background: isNet
+          ? GOLD_GRADIENT
+          : isLoss ? '#FFEBEE' : '#FFFBE6',
         color: '#1F1F1F',
       }}
     >
@@ -167,7 +220,7 @@ function KpiCard({
               variant="h5"
               sx={{
                 fontWeight: 700,
-                color: isReturns ? '#C62828' : '#1F1F1F',
+                color: valueColor,
                 lineHeight: 1.1,
               }}
             >

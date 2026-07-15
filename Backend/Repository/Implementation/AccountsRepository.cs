@@ -158,4 +158,23 @@ public class AccountsRepository(IDbConnectionFactory factory) : IAccountsReposit
             },
             cancellationToken: ct));
     }
+
+    public async Task<IReadOnlyList<AccountsUtilityRow>> GetUtilitiesAsync(
+        DateOnly from, DateOnly to,
+        Guid[]? shopIds,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_accounts_utilities_breakdown(@p_from, @p_to, @p_shop_ids)";
+        var rows = await conn.QueryAsync<AccountsUtilityRow>(new CommandDefinition(
+            sql,
+            new
+            {
+                p_from     = from,
+                p_to       = to,
+                p_shop_ids = shopIds,
+            },
+            cancellationToken: ct));
+        return rows.ToList();
+    }
 }
