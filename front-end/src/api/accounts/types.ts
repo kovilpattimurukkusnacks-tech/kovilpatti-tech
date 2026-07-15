@@ -29,7 +29,11 @@ export type AccountsTopProductsLimit = 10 | 25 | 50
  * dims). Category + top-products SPs got additive per-dim aggregates so
  * FE can pick the right field at render time.
  */
-export type AccountsView = 'all' | 'requested' | 'dispatched' | 'returns'
+// 12-Jul-2026 (client req) — 'purchased' added as a cost-basis lens.
+// Same data slice as 'dispatched' but pivots the amount column from MRP
+// (revenue) to purchase_price_snapshot (cost) so the client can see the
+// tenant's investment side by shop / category alongside the P&L pair.
+export type AccountsView = 'all' | 'requested' | 'dispatched' | 'returns' | 'purchased'
 
 /** Shared query-string filters for every Accounts endpoint. */
 export type AccountsFilters = {
@@ -63,6 +67,9 @@ export type AccountsSummaryDto = {
   /** Informational: edits whose edited_at falls in range. */
   adjustmentsAmount:      number
   adjustmentsCount:       number
+  /** 12-Jul-2026: Purchased (at Cost) — net dispatched cost at the line's
+   *  frozen purchase_price_snapshot (Orders cost − Returns cost). */
+  purchaseAmount:         number
 }
 
 export type AccountsTrendBucketDto = {
@@ -70,6 +77,12 @@ export type AccountsTrendBucketDto = {
   dispatchedAmount:  number
   returnsAmount:     number
   netAmount:         number
+  /** 12-Jul-2026: Purchased (at Cost) per bucket — net dispatched cost at
+   *  the line's frozen purchase_price_snapshot. */
+  purchaseAmount:    number
+  /** 12-Jul-2026 (client): MRP value shops requested but did not get
+   *  (stock short at the godown). Per-line requested − sent, floored at 0. */
+  shortfallAmount:   number
 }
 
 export type AccountsShopRowDto = {
@@ -88,9 +101,9 @@ export type AccountsShopRowDto = {
   /** Informational — NOT folded into netAmount (see AccountsSummaryDto). */
   adjustmentsAmount:    number
   netAmount:            number
-  /** 17-Jun-2026 (client #12): net cost of dispatched goods at current
-   *  products.purchase_price. NOT displayed in the on-screen ShopBreakdownTable —
-   *  surfaced only in the by-shop Excel export. */
+  /** Net cost of dispatched goods at the line's frozen
+   *  purchase_price_snapshot (12-Jul-2026 — was live purchase_price).
+   *  Shown on screen as Purchased (Cost) and in the by-shop Excel export. */
   purchaseAmount:       number
   /** Profit and loss are mutually exclusive — exactly one is non-zero per row
    *  (Indian P&L pair convention). Excel-export-only. */

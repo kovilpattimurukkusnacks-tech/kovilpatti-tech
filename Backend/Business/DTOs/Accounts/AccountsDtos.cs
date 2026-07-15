@@ -15,14 +15,23 @@ public record AccountsSummaryDto(
     decimal NetAmount,
     long    ActiveShopCount,
     decimal AdjustmentsAmount,
-    long    AdjustmentsCount
+    long    AdjustmentsCount,
+    /// 12-Jul-2026: Purchased (at Cost) — net dispatched cost at the line's
+    /// frozen purchase_price_snapshot (Orders cost − Returns cost).
+    decimal PurchaseAmount
 );
 
 public record AccountsTrendBucketDto(
     DateOnly BucketStart,
     decimal  DispatchedAmount,
     decimal  ReturnsAmount,
-    decimal  NetAmount
+    decimal  NetAmount,
+    /// 12-Jul-2026: Purchased (at Cost) per bucket — net dispatched cost at
+    /// the line's frozen purchase_price_snapshot.
+    decimal  PurchaseAmount,
+    /// 12-Jul-2026 (client): MRP value shops requested but did not get
+    /// (per-line requested − sent, floored at 0; Orders only).
+    decimal  ShortfallAmount
 );
 
 public record AccountsShopRowDto(

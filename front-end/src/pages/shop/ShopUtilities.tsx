@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import {
   Alert, Autocomplete, Box, Button, Card, CardContent, Chip, Dialog, DialogActions,
-  DialogContent, DialogTitle, IconButton, Paper, Table, TableBody, TableCell,
+  DialogContent, DialogTitle, IconButton, MenuItem, Paper, Table, TableBody, TableCell,
   TableContainer, TableHead, TableRow, TextField, Typography,
 } from '@mui/material'
 import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
@@ -10,8 +10,15 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs from 'dayjs'
 import { Pencil, Plus, Trash2 } from 'lucide-react'
 import PageHeader from '../../components/PageHeader'
+import ConfirmDialog from '../../components/ConfirmDialog'
 import { useApp } from '../../context/AppContext'
 import { useShop } from '../../hooks/useShops'
+import {
+  useShopUtilityExpenses, useCreateShopUtilityExpense,
+  useUpdateShopUtilityExpense, useDeleteShopUtilityExpense,
+} from '../../hooks/useShopUtilityExpenses'
+import type { ShopUtilityExpenseDto } from '../../api/shop-utility-expenses/types'
+import { ValidationError } from '../../api/errors'
 import { formatINR } from '../../utils/format'
 import { GOLD_GRADIENT } from '../../theme'
 
@@ -52,12 +59,22 @@ function fmtDate(ymd: string): string {
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-type Entry = {
-  id: string
-  date: string        // yyyy-mm-dd
-  category: Category
-  note: string
-  amount: number
+// "2026-07" → { from: '2026-07-01', to: '2026-07-31' } — passed straight
+// through to the list API's from/to range filter.
+function monthBounds(yyyyMm: string): { from: string; to: string } {
+  const [y, m] = yyyyMm.split('-').map(Number)
+  const lastDay = new Date(y, m, 0).getDate() // day 0 of next month = last day of this one
+  return { from: `${yyyyMm}-01`, to: `${yyyyMm}-${String(lastDay).padStart(2, '0')}` }
+}
+
+// Dropdown options — current month plus the previous 11, newest first.
+function monthOptions(count = 12): { value: string; label: string }[] {
+  const now = new Date()
+  return Array.from({ length: count }, (_, i) => {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1)
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`
+    return { value, label: d.toLocaleDateString('en-IN', { month: 'long', year: 'numeric' }) }
+  })
 }
 
 export default function ShopUtilities() {
@@ -65,9 +82,23 @@ export default function ShopUtilities() {
   const shopQuery = useShop(currentUser?.shopId ?? undefined)
   const shopName = shopQuery.data?.name ?? 'your shop'
 
-  const [entries, setEntries] = useState<Entry[]>([])
+  // Month filter — defaults to the current month. monthOptions() lists the
+  // current month + previous 11 for the dropdown.
+  const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
+  const { from, to } = useMemo(() => monthBounds(selectedMonth), [selectedMonth])
+  const months = useMemo(() => monthOptions(), [])
+
+  const expensesQuery = useShopUtilityExpenses(from, to)
+  const entries = useMemo(() => expensesQuery.data ?? [], [expensesQuery.data])
+  const createMutation = useCreateShopUtilityExpense()
+  const updateMutation = useUpdateShopUtilityExpense()
+  const deleteMutation = useDeleteShopUtilityExpense()
+
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
+  // Entry pending delete confirmation — trash icon opens this instead of
+  // deleting immediately.
+  const [deleteTarget, setDeleteTarget] = useState<ShopUtilityExpenseDto | null>(null)
 
   // Add/Edit form state — category starts blank (not pre-filled with a
   // default) so the dropdown always opens clean and the shop has to
@@ -98,21 +129,27 @@ export default function ShopUtilities() {
     setDialogOpen(true)
   }
 
-  function openEdit(entry: Entry) {
+  function openEdit(entry: ShopUtilityExpenseDto) {
     setEditingId(entry.id)
     setFormCategory(entry.category)
     setFormAmount(String(entry.amount))
-    setFormNote(entry.note)
-    setFormDate(entry.date)
+    setFormNote(entry.note ?? '')
+    setFormDate(entry.expenseDate)
     setFormErr(null)
     setDialogOpen(true)
   }
 
-  function handleDelete(id: string) {
-    setEntries(prev => prev.filter(e => e.id !== id))
+  function handleDeleteClick(entry: ShopUtilityExpenseDto) {
+    setDeleteTarget(entry)
   }
 
-  function handleSave() {
+  function confirmDelete() {
+    if (!deleteTarget) return
+    deleteMutation.mutate(deleteTarget.id)
+    setDeleteTarget(null)
+  }
+
+  async function handleSave() {
     if (!formCategory.trim()) {
       setFormErr('Pick or type a category.')
       return
@@ -122,18 +159,25 @@ export default function ShopUtilities() {
       setFormErr('Enter a valid amount greater than zero.')
       return
     }
-    if (editingId) {
-      setEntries(prev => prev.map(e => e.id === editingId
-        ? { ...e, category: formCategory, note: formNote, amount, date: formDate }
-        : e))
-    } else {
-      setEntries(prev => [
-        { id: crypto.randomUUID(), category: formCategory, note: formNote, amount, date: formDate },
-        ...prev,
-      ])
+    setFormErr(null)
+    const req = { category: formCategory.trim(), amount, note: formNote.trim() || undefined, expenseDate: formDate }
+    try {
+      if (editingId) {
+        await updateMutation.mutateAsync({ id: editingId, req })
+      } else {
+        await createMutation.mutateAsync(req)
+      }
+      setDialogOpen(false)
+    } catch (err) {
+      setFormErr(
+        err instanceof ValidationError ? err.flatten()
+          : err instanceof Error ? err.message
+          : 'Failed to save expense.',
+      )
     }
-    setDialogOpen(false)
   }
+
+  const isSaving = createMutation.isPending || updateMutation.isPending
 
   return (
     <div>
@@ -152,6 +196,29 @@ export default function ShopUtilities() {
           </Button>
         }
       />
+
+      {/* Month filter — dropdown of the current month + previous 11,
+          newest first. Drives the from/to range passed to the list API. */}
+      <Box sx={{ mb: 2 }}>
+        <TextField
+          select
+          size="small"
+          label="Month"
+          value={selectedMonth}
+          onChange={e => setSelectedMonth(e.target.value)}
+          sx={{ minWidth: 200 }}
+        >
+          {months.map(m => (
+            <MenuItem key={m.value} value={m.value}>{m.label}</MenuItem>
+          ))}
+        </TextField>
+      </Box>
+
+      {expensesQuery.isError && (
+        <Alert severity="error" sx={{ mb: 2 }}>
+          Failed to load utility expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
+        </Alert>
+      )}
 
       {/* KPI strip — cream cards with a plain dark border, matching the
           plain-Paper look used everywhere else (ShopRequests.tsx etc.) —
@@ -192,7 +259,9 @@ export default function ShopUtilities() {
                 </TableRow>
               </TableHead>
               <TableBody>
-                {entries.length === 0 ? (
+                {expensesQuery.isLoading ? (
+                  <TableRow><TableCell colSpan={5} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>Loading…</TableCell></TableRow>
+                ) : entries.length === 0 ? (
                   <TableRow><TableCell colSpan={5} align="center" sx={{ color: '#1F1F1F99', py: 4 }}>No entries.</TableCell></TableRow>
                 ) : entries.map(e => {
                   return (
@@ -222,7 +291,7 @@ export default function ShopUtilities() {
                           the same left edge every row); Amount stays right-aligned
                           (currency convention). */}
                       <TableCell sx={{ whiteSpace: 'nowrap', fontSize: 12.5, color: '#1F1F1F99', fontWeight: 600 }}>
-                        {fmtDate(e.date)}
+                        {fmtDate(e.expenseDate)}
                       </TableCell>
                       <TableCell align="right" sx={{ whiteSpace: 'nowrap', fontSize: 12.5, color: '#C62828', fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>
                         − {formatINR(e.amount)}
@@ -231,7 +300,7 @@ export default function ShopUtilities() {
                         <IconButton size="small" onClick={() => openEdit(e)} aria-label="Edit">
                           <Pencil className="w-3.5 h-3.5" />
                         </IconButton>
-                        <IconButton size="small" onClick={() => handleDelete(e.id)} aria-label="Delete" sx={{ color: '#C62828' }}>
+                        <IconButton size="small" onClick={() => handleDeleteClick(e)} aria-label="Delete" sx={{ color: '#C62828' }}>
                           <Trash2 className="w-3.5 h-3.5" />
                         </IconButton>
                       </TableCell>
@@ -330,14 +399,27 @@ export default function ShopUtilities() {
           {formErr && <Alert severity="error">{formErr}</Alert>}
         </DialogContent>
         <DialogActions sx={{ p: 2 }}>
-          <Button onClick={() => setDialogOpen(false)} variant="outlined" sx={{ textTransform: 'none', fontWeight: 600 }}>
+          <Button onClick={() => setDialogOpen(false)} variant="outlined" disabled={isSaving} sx={{ textTransform: 'none', fontWeight: 600 }}>
             Cancel
           </Button>
-          <Button onClick={handleSave} variant="contained" color="primary" sx={{ textTransform: 'none', fontWeight: 700 }}>
-            {editingId ? 'Save Changes' : 'Save Expense'}
+          <Button onClick={handleSave} variant="contained" color="primary" disabled={isSaving} sx={{ textTransform: 'none', fontWeight: 700 }}>
+            {isSaving ? 'Saving…' : editingId ? 'Save Changes' : 'Save Expense'}
           </Button>
         </DialogActions>
       </Dialog>
+
+      {/* Delete confirmation — trash icon no longer deletes immediately. */}
+      <ConfirmDialog
+        open={deleteTarget !== null}
+        title="Delete this expense?"
+        message={deleteTarget
+          ? `"${deleteTarget.category}" — ${formatINR(deleteTarget.amount)} on ${fmtDate(deleteTarget.expenseDate)}. This can't be undone.`
+          : ''}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
     </div>
   )
 }

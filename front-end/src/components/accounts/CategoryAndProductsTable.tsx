@@ -67,30 +67,41 @@ export default function CategoryAndProductsTable({
   const qtyLabel    = view === 'all'        ? 'Quantity (Net)'
                     : view === 'requested'  ? 'Requested Qty'
                     : view === 'dispatched' ? 'Dispatched Qty'
+                    : view === 'purchased'  ? 'Dispatched Qty'   // physical qty = same as dispatched
                     :                         'Returned Qty'
   const amtLabel    = view === 'all'        ? 'Amount (MRP Net)'
                     : view === 'requested'  ? 'Requested (MRP)'
                     : view === 'dispatched' ? 'Dispatched (MRP)'
+                    : view === 'purchased'  ? 'Purchased (Cost)' // cost basis pivot
                     :                         'Returns (MRP)'
   // Field-resolution helpers — pick the right numeric column per view.
+  // 'purchased' uses the same physical qty as 'dispatched' (units are units)
+  // but pivots the amount to purchaseAmount so the row reads at cost basis.
   const catQty = (r: AccountsCategoryRowDto) =>
     view === 'requested'  ? r.requestedQty
   : view === 'dispatched' ? r.dispatchedQty
+  : view === 'purchased'  ? r.dispatchedQty
   : view === 'returns'    ? r.returnsQty
   :                         r.quantity
   const catAmt = (r: AccountsCategoryRowDto) =>
     view === 'requested'  ? r.requestedAmount
   : view === 'dispatched' ? r.dispatchedAmount
+  : view === 'purchased'  ? r.purchaseAmount
   : view === 'returns'    ? r.returnsAmount
   :                         r.amount
+  // Products fall back to dispatched under 'purchased' (top-products DTO
+  // doesn't carry purchaseAmount yet — BE follow-up if the client asks
+  // for per-product cost). Physical qty stays the same either way.
   const prodQty = (r: AccountsProductRowDto) =>
     view === 'requested'  ? r.requestedQty
   : view === 'dispatched' ? r.dispatchedQty
+  : view === 'purchased'  ? r.dispatchedQty
   : view === 'returns'    ? r.returnsQty
   :                         r.quantity
   const prodAmt = (r: AccountsProductRowDto) =>
     view === 'requested'  ? r.requestedAmount
   : view === 'dispatched' ? r.dispatchedAmount
+  : view === 'purchased'  ? r.dispatchedAmount
   : view === 'returns'    ? r.returnsAmount
   :                         r.amount
 
@@ -113,6 +124,25 @@ export default function CategoryAndProductsTable({
       valueFormatter: (value) => formatINR(value as number),
       cellClassName: 'amount-cell',
     },
+    // Profit / Loss column (12-Jul-2026 client req) — matches ShopBreakdownTable.
+    // SP returns the pair as two mutually-exclusive columns (exactly one is
+    // non-zero per category). Shown here as ONE column: green +₹ profit,
+    // red −₹ loss. Shown on 'all' + 'purchased' (both have cost + revenue,
+    // so P&L reconciles). Hidden on pure-dim lenses.
+    ...(view === 'all' || view === 'purchased' ? [{
+      field: 'profitLoss',
+      headerName: 'Profit / Loss',
+      type: 'number' as const,
+      width: 145,
+      valueGetter: (_v: unknown, row: AccountsCategoryRowDto) => (row.profit ?? 0) - (row.loss ?? 0),
+      renderCell: ({ row }: { row: AccountsCategoryRowDto }) => {
+        const p = row.profit ?? 0
+        const l = row.loss ?? 0
+        if (p > 0) return <span style={{ color: '#2E7D32', fontWeight: 700 }}>+{formatINR(p)}</span>
+        if (l > 0) return <span style={{ color: '#C62828', fontWeight: 700 }}>−{formatINR(l)}</span>
+        return <span style={{ color: '#1F1F1F66' }}>—</span>
+      },
+    } satisfies GridColDef<AccountsCategoryRowDto>] : []),
   ]
 
   const prodCols: GridColDef<AccountsProductRowDto>[] = [
