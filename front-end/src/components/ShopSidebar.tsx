@@ -2,19 +2,28 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { ClipboardList, LayoutDashboard, LogOut, ReceiptText, Store, Wallet } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useShop } from '../hooks/useShops'
+import { featureFlags } from '../featureFlags'
 import './Sidebar.css'
 
 // Shop user has a much smaller nav than admin. Dashboard sits at the top —
 // it's the post-login landing page (10-Jul-2026, see the shop-landing memory).
+//
+// Billing (Phase 4 — POS issue + cancel, stock-decrementing) is gated by
+// the `billing` feature flag. On UAT/prod the item is hidden until the
+// client signs off; the underlying route + component are intact so direct
+// URL access still works for internal testing.
 const navItems = [
   { to: '/shop/dashboard', label: 'Dashboard',    icon: LayoutDashboard },
   { to: '/shop/requests',  label: 'Stock Requests', icon: ClipboardList },
-  // Phase 4 — POS billing (issue + cancel, stock-decrementing).
-  { to: '/shop/billing',   label: 'Billing',      icon: ReceiptText },
-  // Utilities — UI-preview page for this shop's operating expenses
-  // (electricity, rent, staff, etc.). No backend yet; see
-  // DB/planned/pos_billing_screens.md.
-  { to: '/shop/utilities', label: 'Utilities',    icon: Wallet },
+  ...(featureFlags.billing
+    ? [{ to: '/shop/billing', label: 'Billing', icon: ReceiptText }]
+    : []),
+  // Shop Expenses — this shop's operating expenses (electricity, rent,
+  // staff, etc.). Renamed from "Utilities" on 15-Jul-2026 — the earlier
+  // name was inaccurate (rent/salary aren't utilities in an accounting
+  // sense). Internal identifiers (component, DB table `shop_utility_expenses`,
+  // API path) kept as-is to avoid a churn-only rename.
+  { to: '/shop/expenses',  label: 'Shop Expenses', icon: Wallet },
 ]
 
 type Props = { onNavigate?: () => void }

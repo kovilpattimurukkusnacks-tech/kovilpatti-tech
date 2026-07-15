@@ -77,7 +77,7 @@ export default function DashboardHero({ data, utilities, loading }: Props) {
         sparkColor={totals.net >= 0 ? PROFIT_GREEN : LOSS_RED}
         accent="hero"
         heroTone={totals.net >= 0 ? 'profit' : 'loss'}
-        tooltip="Net Profit = Gross Profit − Utilities logged in this date range."
+        tooltip="Net Profit = Gross Profit − Shop Expenses logged in this date range."
       />
 
       {/* Row 2 — the components: Cost, Utilities, Margin. */}
@@ -93,12 +93,12 @@ export default function DashboardHero({ data, utilities, loading }: Props) {
         deltaTone="cost"
       />
       <KpiCard
-        label="Utilities"
+        label="Shop Expenses"
         value={totals.utilities}
         loading={loading}
         icon={<Receipt size={16} />}
         sparkColor="#B45309"
-        tooltip="Total shop utility expenses (Rent, Electricity, Salary, …) logged in this date range. Counted by expense_date only — monthly bills logged as a single entry may under-count a partial-month view."
+        tooltip="Total shop operating expenses (Rent, Electricity, Salary, …) logged in this date range. Counted by expense_date only — monthly bills logged as a single entry may under-count a partial-month view."
       />
       <KpiCard
         label="Gross Margin"

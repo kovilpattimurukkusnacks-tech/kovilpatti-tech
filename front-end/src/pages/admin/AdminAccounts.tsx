@@ -20,8 +20,6 @@ import {
   useAccountsInTransit,
   useAccountsSummary,
   useAccountsUtilities,
-  totalUtilities,
-  utilitiesByShop,
   useAccountsTopProducts,
 } from '../../hooks/useAccounts'
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
@@ -176,12 +174,11 @@ export default function AdminAccounts() {
   const byCategory  = useAccountsByCategory(filters)
   const topProducts = useAccountsTopProducts(filters)
   const adjustments = useAccountsAdjustments(nonCategoryFilters)
-  // Utilities (15-Jul-2026) — drives the Net Profit KPI + Utilities column
-  // in ShopBreakdownTable. Uses the same non-category filter set (utility
-  // categories are a separate taxonomy from product categories).
+  // Shop expenses (15-Jul-2026) — drives the Net Profit KPI, the Shop
+  // Expenses card + tooltip, and the Shop Expenses column in the by-shop
+  // table. Uses the same non-category filter set (utility categories are
+  // a separate taxonomy from product categories).
   const utilities   = useAccountsUtilities(nonCategoryFilters)
-  const utilTotal   = totalUtilities(utilities.data)
-  const utilByShop  = useMemo(() => utilitiesByShop(utilities.data), [utilities.data])
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
@@ -217,7 +214,7 @@ export default function AdminAccounts() {
           data={summary.data}
           loading={summary.isLoading || utilities.isLoading}
           view={filters.view}
-          utilitiesTotal={utilTotal}
+          utilityRows={utilities.data}
         />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).
@@ -230,7 +227,7 @@ export default function AdminAccounts() {
           rows={byShop.data}
           loading={byShop.isLoading}
           filters={filters}
-          utilitiesByShop={utilities.data ? utilByShop : undefined}
+          utilityRows={utilities.data}
         />
 
         <CategoryAndProductsTable

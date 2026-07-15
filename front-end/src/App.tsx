@@ -93,7 +93,10 @@ const router = createBrowserRouter(
         <Route path="requests/:id" element={<ShopRequestDetail />} />
         {/* Phase 4 — POS billing (issue + cancel, stock-decrementing). */}
         <Route path="billing" element={<ShopBilling />} />
-        <Route path="utilities" element={<ShopUtilities />} />
+        {/* Renamed from "utilities" → "expenses" on 15-Jul-2026 (client
+            rename of the feature). Component name kept for internal
+            stability — only the URL surface changed. */}
+        <Route path="expenses" element={<ShopUtilities />} />
       </Route>
 
       <Route path="/inventory" element={<RoleGate allow="Inventory"><InventoryLayout /></RoleGate>}>

@@ -32,7 +32,7 @@ export default function ProfitByShopChart({ filters }: Props) {
   const chart = useMemo(() => buildChartData(data), [data])
 
   return (
-    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', height: '100%' }}>
+    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', height: '100%', background: '#FFFBE6' }}>
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>
@@ -83,17 +83,33 @@ function ProfitBars({ rows }: { rows: ProfitRow[] }) {
     return v !== 0 ? compactINR(Math.abs(v)) : ''
   }
 
+  // Widest bar drives the axis extents. Without explicit min/max the auto
+  // scale ends within a rounding-tick of the largest value, which means a
+  // bar can extend to the very edge of the plot area — and its "outside"
+  // value label overflows past the SVG viewport where MUI clips it. We
+  // reserve 22% headroom on the busy side (positive for profit-heavy
+  // periods, negative for loss-heavy) so labels always have room to render.
+  const maxProfit = Math.max(0, ...dataset.map(d => d.profit))
+  const minLoss   = Math.min(0, ...dataset.map(d => d.loss))
+  const axisMax   = maxProfit > 0 ? maxProfit * 1.22 : 0
+  const axisMin   = minLoss   < 0 ? minLoss   * 1.22 : 0
+
   return (
     <BarChart
       layout="horizontal"
       height={height}
       dataset={dataset as unknown as Record<string, number | string>[]}
       borderRadius={4}
-      // Room for long shop names on the left; a bit of right-margin so the
-      // outside label doesn't get clipped for the widest positive bar.
-      margin={{ top: 10, right: 44, bottom: 24, left: 140 }}
+      // Room for long shop names on the left. Right margin holds the
+      // outside value label (e.g. "₹20.5k" ≈ 6 chars @ 11px) — the axis
+      // headroom above keeps the bar itself from reaching this margin.
+      margin={{ top: 10, right: 80, bottom: 24, left: 140 }}
       yAxis={[{ dataKey: 'shopName', scaleType: 'band' }]}
-      xAxis={[{ valueFormatter: (v: unknown) => compactINR(Number(v)) }]}
+      xAxis={[{
+        valueFormatter: (v: unknown) => compactINR(Number(v)),
+        min: axisMin,
+        max: axisMax,
+      }]}
       series={[
         {
           dataKey: 'profit', stack: 'pl', label: 'Profit',

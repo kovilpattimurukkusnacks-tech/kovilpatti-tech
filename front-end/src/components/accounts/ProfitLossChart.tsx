@@ -44,7 +44,7 @@ export default function ProfitLossChart({ data, loading, grouping }: Props) {
   }
 
   return (
-    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }}>
+    <Card sx={{ border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', background: '#FFFBE6' }}>
       <CardContent>
         <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1, flexWrap: 'wrap', gap: 1 }}>
           <Typography variant="subtitle1" sx={{ fontWeight: 700 }}>

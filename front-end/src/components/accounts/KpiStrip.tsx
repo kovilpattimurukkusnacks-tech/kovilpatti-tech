@@ -1,59 +1,355 @@
-import { Box, Card, CardContent, Skeleton, Typography } from '@mui/material'
+import { Box, Card, CardContent, Divider, Skeleton, Typography } from '@mui/material'
 import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
-import { LOSS_RED } from './ProfitLossChart'
-import type { AccountsSummaryDto, AccountsView } from '../../api/accounts/types'
+import { totalUtilities } from '../../hooks/useAccounts'
+import { LOSS_RED, PROFIT_GREEN } from './ProfitLossChart'
+import type {
+  AccountsSummaryDto,
+  AccountsUtilityRowDto,
+  AccountsView,
+} from '../../api/accounts/types'
 
 type Props = {
   data: AccountsSummaryDto | undefined
   loading: boolean
   /** Active view / lens. Drives which KPI cards render (19-Jun-2026, client #13). */
   view?: AccountsView
-  /** Grand-total shop operating expenses for the current filter range
-   *  (15-Jul-2026). Optional — when omitted the Utilities / Net Profit
-   *  cards are hidden even in views that would normally include them,
-   *  so a page that doesn't fetch utilities doesn't render blanks. */
-  utilitiesTotal?: number
+  /** Raw per-shop-per-category shop-expense rows for the current filter
+   *  range (15-Jul-2026). Optional — when omitted the Shop Expenses /
+   *  Net Profit cards are hidden even in views that would normally
+   *  include them. We accept the raw rows (not a pre-summed total) so
+   *  the Shop Expenses card can render its per-category hover tooltip
+   *  without a second prop. Total is computed internally. */
+  utilityRows?: AccountsUtilityRowDto[]
 }
 
 /**
- * 4-card KPI strip at the top of the Accounts dashboard, in reading order
- * Requested → Dispatched → Returns → Net, where Net = Dispatched − Returns
- * so the strip visibly adds up. The Net card uses the gold gradient to draw
- * the eye; the rest are cream surfaces matching the rest of the app. Every
- * rupee label carries "(at MRP)" so consumers don't mistake it for revenue.
+ * KPI strip at the top of the Accounts dashboard.
+ *
+ * 'all' view (15-Jul-2026 redesign, client req: "advanced + premium"):
+ *   Bento layout. Big Net P&L hero card on the left with an inline
+ *   Gross P&L + Utilities breakdown, so the client's actual question
+ *   ("did I make money?") is answered before their eye even lands on
+ *   the supporting numbers. Right side: 3×2 grid of supporting metrics
+ *   (Requested / Dispatched / Returns / Purchased / Utilities / Net at MRP).
+ *
+ * Other views (requested / dispatched / returns / purchased):
+ *   Original horizontal grid — the lens is focused, no derived "answer"
+ *   card needed. Same card visual as before.
  *
  * Deliberately NO Adjustments card here: qty edits update the live
  * Dispatched figure directly, so a peer-level Adjustments number reads as
  * "money to add" and double-counts. It also uses a different date anchor
  * (edited_at vs received_at), so it never reconciles against the
- * Requested→Dispatched gap — confusing next to them. The edits total + log
- * live on the Adjustments log table instead. (Tried 06-Jun-2026, removed.)
+ * Requested→Dispatched gap. The edits total + log live on the
+ * Adjustments log table instead. (Tried 06-Jun-2026, removed.)
  */
-export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }: Props) {
-  // Net Profit = Gross Profit (net_amount − purchase_amount) − Utilities.
-  // Signed — negative when the shops spent more than they earned in the
-  // range. Computed here so both the KPI card and the fallback (no data
-  // yet → undefined) go through one path.
+export default function KpiStrip({ data, loading, view = 'all', utilityRows }: Props) {
+  // Bento layout is only meaningful on the composite 'all' view AND when
+  // shop expenses have been fetched — that's when the Net P&L hero has
+  // enough information to render its mini breakdown. Everything else
+  // falls back to the classic grid.
+  if (view === 'all' && utilityRows != null) {
+    return <BentoLayout data={data} loading={loading} utilityRows={utilityRows} />
+  }
+  return <ClassicGrid data={data} loading={loading} view={view} utilityRows={utilityRows} />
+}
+
+// ══════════════════ Bento (all view) ══════════════════
+
+function BentoLayout({ data, loading, utilityRows }: {
+  data: AccountsSummaryDto | undefined
+  loading: boolean
+  utilityRows: AccountsUtilityRowDto[]
+}) {
+  // Derived values — computed once, used across the hero + supporting cards.
+  const utilitiesTotal = totalUtilities(utilityRows)
+  const gross = data ? data.netAmount - data.purchaseAmount : undefined
+  const netProfit = gross != null ? gross - utilitiesTotal : undefined
+
+  return (
+    <Box
+      sx={{
+        display: 'grid',
+        // Hero (2fr) + three 1fr supporting cols on md+. On sm the hero
+        // spans two cols above a 2×3 supporting grid. On xs everything
+        // stacks single-column with the hero on top.
+        gridTemplateColumns: {
+          xs: '1fr',
+          sm: '1fr 1fr',
+          md: '1.6fr repeat(3, 1fr)',
+        },
+        gridTemplateAreas: {
+          xs: `
+            "hero"
+            "req"
+            "disp"
+            "ret"
+            "pur"
+            "uti"
+            "net"
+          `,
+          sm: `
+            "hero hero"
+            "req  disp"
+            "ret  pur"
+            "uti  net"
+          `,
+          md: `
+            "hero req  disp ret"
+            "hero pur  uti  net"
+          `,
+        },
+        gap: 2,
+      }}
+    >
+      <Box sx={{ gridArea: 'hero' }}>
+        <NetProfitHero
+          netProfit={netProfit}
+          gross={gross}
+          utilities={utilitiesTotal}
+          loading={loading}
+        />
+      </Box>
+
+      {/* Supporting cards — same visual language as the classic grid,
+          just laid into the bento grid areas. */}
+      <Box sx={{ gridArea: 'req' }}>
+        <KpiCard
+          label="Requested (at MRP)"
+          value={data?.requestedAmount}
+          secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
+          icon={<ClipboardList size={18} />}
+          loading={loading}
+        />
+      </Box>
+      <Box sx={{ gridArea: 'disp' }}>
+        <KpiCard
+          label="Dispatched (at MRP)"
+          value={data?.dispatchedAmount}
+          secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
+          icon={<ArrowUpRight size={18} />}
+          loading={loading}
+        />
+      </Box>
+      <Box sx={{ gridArea: 'ret' }}>
+        <KpiCard
+          label="Returns (at MRP)"
+          value={data?.returnsAmount}
+          secondary={data ? `${data.returnsRequestCount} return${data.returnsRequestCount === 1 ? '' : 's'}` : undefined}
+          icon={<ArrowDownLeft size={18} />}
+          loading={loading}
+          accent="returns"
+        />
+      </Box>
+      <Box sx={{ gridArea: 'pur' }}>
+        <KpiCard
+          label="Purchased (at Cost)"
+          value={data?.purchaseAmount}
+          secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
+          icon={<ShoppingCart size={18} />}
+          loading={loading}
+        />
+      </Box>
+      <Box sx={{ gridArea: 'uti' }}>
+        <KpiCard
+          label="Shop Expenses"
+          value={utilitiesTotal}
+          secondary="rent, electricity, salary, …"
+          icon={<Receipt size={18} />}
+          loading={loading}
+        />
+      </Box>
+      <Box sx={{ gridArea: 'net' }}>
+        <KpiCard
+          label="Net (at MRP)"
+          value={data?.netAmount}
+          secondary={data ? `${data.activeShopCount} active shop${data.activeShopCount === 1 ? '' : 's'}` : undefined}
+          icon={<TrendingUp size={18} />}
+          loading={loading}
+        />
+      </Box>
+    </Box>
+  )
+}
+
+/** The bento's anchor card. Big signed Net P&L number, with an inline
+ *  Gross P&L + Utilities breakdown below so the client sees WHY it's
+ *  positive/negative without hovering.
+ *
+ *  Profit → gold gradient background (brand hero treatment).
+ *  Loss   → red border + red-tinted background so a loss period reads
+ *           at a glance across the room. Number stays large regardless. */
+function NetProfitHero({ netProfit, gross, utilities, loading }: {
+  netProfit: number | undefined
+  gross: number | undefined
+  utilities: number
+  loading: boolean
+}) {
+  const isLoss  = netProfit != null && netProfit < 0
+  const isBreak = netProfit === 0
+  const label   = isLoss ? 'Net Loss' : isBreak ? 'Break-even' : 'Net Profit'
+
+  return (
+    <Card
+      sx={{
+        height: '100%',
+        border: `2px solid ${isLoss ? LOSS_RED : '#1F1F1F'}`,
+        boxShadow: '4px 4px 0 0 #FCD835',
+        background: isLoss ? '#FFEBEE' : GOLD_GRADIENT,
+        color: '#1F1F1F',
+      }}
+    >
+      <CardContent sx={{
+        p: { xs: 2.5, md: 3 },
+        '&:last-child': { pb: { xs: 2.5, md: 3 } },
+        // Stretch to fill the hero grid cell — flex-column so the eyebrow
+        // hugs the top, the big number sits centred-ish, and the mini
+        // breakdown anchors to the bottom.
+        display: 'flex', flexDirection: 'column', height: '100%',
+        gap: 1.5,
+      }}>
+        {/* Eyebrow + icon */}
+        <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <Typography sx={{
+            textTransform: 'uppercase', letterSpacing: 1.4,
+            fontWeight: 800, fontSize: 11, color: isLoss ? LOSS_RED : '#1F1F1F',
+          }}>
+            {label}
+          </Typography>
+          <Box sx={{ opacity: 0.7, display: 'flex' }}>
+            <Wallet size={22} />
+          </Box>
+        </Box>
+
+        {/* Big number — signed. Empty on loading; on data the abs value
+            renders with a signed prefix so a loss reads unambiguously. */}
+        {loading || netProfit == null
+          ? <Skeleton variant="text" width="70%" height={56} />
+          : (
+            <Typography sx={{
+              fontWeight: 800,
+              fontSize: { xs: 32, sm: 36, md: 40 },
+              lineHeight: 1.05,
+              color: isLoss ? LOSS_RED : '#1F1F1F',
+              fontVariantNumeric: 'tabular-nums',
+            }}>
+              {isLoss ? '−' : isBreak ? '' : '+'}{formatINR(Math.abs(netProfit))}
+            </Typography>
+          )}
+
+        <Typography sx={{
+          fontSize: 12, fontWeight: 600, color: isLoss ? '#8B0000CC' : '#1F1F1F99',
+          letterSpacing: 0.3,
+        }}>
+          after shop expenses
+        </Typography>
+
+        {/* Push the mini breakdown to the bottom of the flex column. */}
+        <Box sx={{ flexGrow: 1 }} />
+
+        {/* Inline mini breakdown — Gross P&L + Utilities, so the answer's
+            derivation is visible on the card itself. Divider matches the
+            border tone. */}
+        <Divider sx={{
+          borderColor: isLoss ? '#8B000033' : '#1F1F1F22',
+          borderStyle: 'dashed',
+        }} />
+
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5 }}>
+          {loading || gross == null ? (
+            <>
+              <Skeleton variant="text" width="80%" />
+              <Skeleton variant="text" width="70%" />
+            </>
+          ) : (
+            <>
+              <MiniLine
+                label="Gross P&L"
+                signed={gross}
+                onLossHero={isLoss}
+              />
+              <MiniLine
+                label="Shop Expenses"
+                signed={-utilities}   /* shop expenses always subtract */
+                onLossHero={isLoss}
+                muted
+              />
+            </>
+          )}
+        </Box>
+      </CardContent>
+    </Card>
+  )
+}
+
+/** One row in the hero's mini breakdown. Label on the left, signed
+ *  amount on the right — green for positive, red for negative. On the
+ *  loss-tinted hero, muted contrast is bumped to stay readable against
+ *  the pink background. */
+function MiniLine({ label, signed, onLossHero, muted = false }: {
+  label: string
+  /** Signed number — negative renders with a leading minus + red color. */
+  signed: number
+  onLossHero: boolean
+  /** Slightly quieter styling for the "cost" line so the positive
+   *  intermediate (Gross P&L) stays the eye-catcher. */
+  muted?: boolean
+}) {
+  const isPositive = signed > 0
+  const sign  = isPositive ? '+' : signed < 0 ? '−' : ''
+  const color = isPositive
+    ? PROFIT_GREEN
+    : signed < 0
+      ? LOSS_RED
+      : onLossHero ? '#8B0000CC' : '#1F1F1F99'
+
+  return (
+    <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 1 }}>
+      <Typography sx={{
+        fontSize: 12, fontWeight: 700, letterSpacing: 0.4,
+        textTransform: 'uppercase',
+        color: onLossHero ? '#8B0000CC' : '#1F1F1F99',
+        opacity: muted ? 0.9 : 1,
+      }}>
+        {label}
+      </Typography>
+      <Typography sx={{
+        fontSize: 13.5, fontWeight: 800, color,
+        fontVariantNumeric: 'tabular-nums',
+      }}>
+        {sign}{formatINR(Math.abs(signed))}
+      </Typography>
+    </Box>
+  )
+}
+
+// ══════════════════ Classic grid (non-'all' views) ══════════════════
+
+function ClassicGrid({ data, loading, view, utilityRows }: {
+  data: AccountsSummaryDto | undefined
+  loading: boolean
+  view: AccountsView
+  utilityRows: AccountsUtilityRowDto[] | undefined
+}) {
+  // Grand total driven by rows — same helper used by DashboardHero, so
+  // both pages compute the total identically. Undefined when rows haven't
+  // been fetched yet.
+  const utilitiesTotal = utilityRows ? totalUtilities(utilityRows) : undefined
+  // Net Profit = Gross Profit (net_amount − purchase_amount) − Shop Expenses.
   const netProfit = data == null || utilitiesTotal == null
     ? undefined
     : (data.netAmount - data.purchaseAmount) - utilitiesTotal
 
-  // Build the full card set once, then filter by the active view.
-  // 'all' shows everything; each dim view shows ONLY its own card so the
-  // strip clearly reframes around that dimension (lens-mode).
   const allCards = [
     {
-      // Purchased (at Cost) — net dispatched cost at purchase_price_snapshot
-      // (12-Jul-2026, client ask). Sits FIRST so the owner reads cost before
-      // the retail figures.
       dim: 'purchased' as const,
       label: 'Purchased (at Cost)',
       value: data?.purchaseAmount,
       secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
       icon: <ShoppingCart size={18} />,
-      accent: undefined as 'net' | 'returns' | undefined,
+      accent: undefined as 'net' | 'returns' | 'loss' | undefined,
     },
     {
       dim: 'requested' as const,
@@ -61,7 +357,7 @@ export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }
       value: data?.requestedAmount,
       secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
       icon: <ClipboardList size={18} />,
-      accent: undefined as 'net' | 'returns' | undefined,
+      accent: undefined,
     },
     {
       dim: 'dispatched' as const,
@@ -69,7 +365,7 @@ export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }
       value: data?.dispatchedAmount,
       secondary: data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined,
       icon: <ArrowUpRight size={18} />,
-      accent: undefined as 'net' | 'returns' | undefined,
+      accent: undefined,
     },
     {
       dim: 'returns' as const,
@@ -87,61 +383,35 @@ export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }
       icon: <TrendingUp size={18} />,
       accent: 'net' as const,
     },
-    // Operating expenses (Rent / Electricity / Salary / …) logged via the
-    // Shop Utilities screen. Only surfaces when the caller supplied a total
-    // (utilitiesTotal !== undefined) — pages that don't fetch the utilities
-    // endpoint see this card and Net Profit hidden entirely (see dimsByView
-    // + the filter below).
     {
       dim: 'utilities' as const,
-      label: 'Utilities (Cost)',
+      label: 'Shop Expenses',
       value: utilitiesTotal,
-      secondary: 'shop bills in range',
+      secondary: 'rent, electricity, salary, …',
       icon: <Receipt size={18} />,
-      accent: undefined as 'net' | 'returns' | 'loss' | undefined,
+      accent: undefined,
     },
-    // Net Profit = (Net at MRP − Purchased at Cost) − Utilities. Signed —
-    // negative renders with a red tint (accent='loss') so a period that
-    // slipped into a loss doesn't hide behind identical styling.
     {
       dim: 'netProfit' as const,
       label: netProfit != null && netProfit < 0 ? 'Net Loss' : 'Net Profit',
       value: netProfit != null ? Math.abs(netProfit) : undefined,
-      secondary: 'after utilities',
+      secondary: 'after shop expenses',
       icon: <Wallet size={18} />,
       accent: (netProfit != null && netProfit < 0 ? 'loss' : 'net') as 'net' | 'returns' | 'loss',
     },
   ]
 
-  // Map view → which dims to show. Net belongs to 'all' only since it's a
-  // composite (Dispatched − Returns) — surfacing it inside a single-dim view
-  // would be misleading.
-  // Utilities / Net Profit (15-Jul-2026) show only in the composite views
-  // ('all' and 'purchased') — they're cross-lens metrics that don't relate
-  // to the single-dim slices (Requested / Dispatched / Returns).
   const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
     all:        ['purchased', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'netProfit'],
     requested:  ['requested'],
     dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
-    // Purchased lens (12-Jul-2026 client req) — Purchased + Net pair so
-    // the KPI strip shows "cost invested" alongside the "revenue at MRP"
-    // it turns into. Profit/Loss shows up per-shop and per-category in
-    // the tables below.
     purchased:  ['purchased', 'net', 'utilities', 'netProfit'],
   }
-  // Additional guard: even when the view would include utilities / netProfit,
-  // hide them if the caller didn't fetch utilities. Pages that don't opt in
-  // shouldn't see blank cards.
   const cards = allCards
     .filter(c => dimsByView[view].includes(c.dim))
     .filter(c => (c.dim === 'utilities' || c.dim === 'netProfit') ? utilitiesTotal != null : true)
 
-  // Grid column count tracks the visible card count so a single card doesn't
-  // stretch the full page width (looks awkward). When only one card shows
-  // (Requested / Dispatched / Returns single-dim views), the strip is
-  // width-capped AND centered with mx:'auto' so it sits in the middle of
-  // the page instead of clinging to the left edge.
   const cols = Math.min(cards.length, 5)
   return (
     <Box
@@ -152,9 +422,6 @@ export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }
           md: `repeat(${cols}, minmax(220px, 1fr))`,
         },
         gap: 2,
-        // alignSelf overrides the parent Stack's default `align-items: stretch`
-        // so the maxWidth actually constrains the child; mx:'auto' then
-        // pushes equal margin left/right for horizontal centering.
         ...(cols === 1 ? { maxWidth: 360, mx: 'auto', alignSelf: 'center', width: '100%' } : {}),
       }}
     >
@@ -172,6 +439,8 @@ export default function KpiStrip({ data, loading, view = 'all', utilitiesTotal }
     </Box>
   )
 }
+
+// ══════════════════ Shared supporting card ══════════════════
 
 function KpiCard({
   label, value, secondary, icon, loading, accent,
@@ -195,6 +464,7 @@ function KpiCard({
   return (
     <Card
       sx={{
+        height: '100%',
         border: `2px solid ${borderColor}`,
         boxShadow: '4px 4px 0 0 #FCD835',
         background: isNet
@@ -228,7 +498,7 @@ function KpiCard({
             </Typography>
           )}
         <Typography variant="caption" sx={{ display: 'block', mt: 0.5, opacity: 0.7, fontWeight: 600 }}>
-          {loading ? <Skeleton width="60%" /> : (secondary ?? ' ')}
+          {loading ? <Skeleton width="60%" /> : (secondary ?? ' ')}
         </Typography>
       </CardContent>
     </Card>
