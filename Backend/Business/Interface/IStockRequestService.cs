@@ -10,6 +10,14 @@ public interface IStockRequestService
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
         string? requestType = null,
+        // 15-Jul-2026: when true, ALSO returns status='Draft' rows created
+        // by the current user (admin "My Drafts" preset). Default false =
+        // unchanged behaviour for existing callers.
+        bool includeDrafts = false,
+        // 15-Jul-2026: is_special filter — null = all, true = specials
+        // only, false = non-specials only. Drives the "Special Order"
+        // preset chip on all list pages.
+        bool? isSpecial = null,
         CancellationToken ct = default);
 
     Task<StockRequestDto> GetAsync(Guid id, CancellationToken ct = default);

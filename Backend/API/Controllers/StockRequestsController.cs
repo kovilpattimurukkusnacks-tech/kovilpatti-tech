@@ -19,13 +19,21 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] Guid?     inventoryId,
         [FromQuery] string?   status,
         [FromQuery] string?   search,
-        [FromQuery] int       page        = 1,
-        [FromQuery] int       pageSize    = 10,
-        [FromQuery] DateOnly? fromDate    = null,
-        [FromQuery] DateOnly? toDate      = null,
-        [FromQuery] string?   requestType = null,
+        [FromQuery] int       page          = 1,
+        [FromQuery] int       pageSize      = 10,
+        [FromQuery] DateOnly? fromDate      = null,
+        [FromQuery] DateOnly? toDate        = null,
+        [FromQuery] string?   requestType   = null,
+        // 15-Jul-2026: opt-in for the admin "My Drafts" preset. When true,
+        // status='Draft' rows created by the calling admin are included in
+        // the response. Service resolves the user id from currentUser, so
+        // there's no way for a rogue client to see another user's drafts.
+        [FromQuery] bool      includeDrafts = false,
+        // 15-Jul-2026: is_special filter for the "Special Order" preset.
+        // null = default (no filter), true = specials only, false = non-specials.
+        [FromQuery] bool?     isSpecial     = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, fromDate, toDate, requestType, ct));
+        => Ok(await requests.ListAsync(shopId, inventoryId, status, search, page, pageSize, fromDate, toDate, requestType, includeDrafts, isSpecial, ct));
 
     // ─── Shop user: own shop's requests ──────────────────────
     [HttpGet("mine")]
@@ -38,8 +46,11 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] DateOnly? fromDate    = null,
         [FromQuery] DateOnly? toDate      = null,
         [FromQuery] string?   requestType = null,
+        // 15-Jul-2026: "Special Order" filter — shop user can filter their
+        // own request list to just special requests they've raised.
+        [FromQuery] bool?     isSpecial   = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, fromDate, toDate, requestType, ct));
+        => Ok(await requests.ListAsync(currentUser.ShopId, null, status, search, page, pageSize, fromDate, toDate, requestType, includeDrafts: false, isSpecial: isSpecial, ct: ct));
 
     // ─── Inventory user: requests for their godown ───────────
     // shopId is an optional drill-down filter from the per-shop chip row;
@@ -55,8 +66,11 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
         [FromQuery] DateOnly? fromDate    = null,
         [FromQuery] DateOnly? toDate      = null,
         [FromQuery] string?   requestType = null,
+        // 15-Jul-2026: "Special Order" filter — inventory user can filter
+        // incoming requests for their godown to just special orders.
+        [FromQuery] bool?     isSpecial   = null,
         CancellationToken ct = default)
-        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, fromDate, toDate, requestType, ct));
+        => Ok(await requests.ListAsync(shopId, currentUser.InventoryId, status, search, page, pageSize, fromDate, toDate, requestType, includeDrafts: false, isSpecial: isSpecial, ct: ct));
 
     // ─── Cumulative pending workload (Inventory + Admin) ─────
     // Aggregate of every Pending request's items, grouped by SKU. Inventory

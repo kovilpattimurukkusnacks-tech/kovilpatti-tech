@@ -9,6 +9,15 @@ public interface IStockRequestRepository
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
         string? requestType = null,
+        // 15-Jul-2026: opt-in for the admin "My Drafts" preset — when true
+        // AND userId is non-null, status='Draft' rows created by that user
+        // are included. Both default false / null → identical behaviour
+        // for every existing caller.
+        bool includeDrafts = false, Guid? userId = null,
+        // 15-Jul-2026: is_special filter. NULL = no filter (default),
+        // true = specials only, false = non-specials only. Drives the
+        // "Special Order" preset chip on all list pages.
+        bool? isSpecial = null,
         CancellationToken ct = default);
 
     Task<StockRequest?> GetAsync(Guid id, CancellationToken ct = default);
