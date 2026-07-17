@@ -349,8 +349,16 @@ export default function ShopUtilities() {
         </Card>
       </Box>
 
-      {/* Add / Edit dialog */}
-      <Dialog open={dialogOpen} onClose={() => setDialogOpen(false)} maxWidth="xs" fullWidth slotProps={{ paper: { sx: { borderRadius: 3 } } }}>
+      {/* Add / Edit dialog — backdrop click must not close it (only Cancel/
+          Save/Escape should); MUI's onClose fires for backdropClick too, so
+          that reason is ignored here. */}
+      <Dialog
+        open={dialogOpen}
+        onClose={(_e, reason) => { if (reason !== 'backdropClick') setDialogOpen(false) }}
+        maxWidth="xs"
+        fullWidth
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      >
         <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Shop Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           {/* Free-typing category — pick a suggestion or type a new one.
