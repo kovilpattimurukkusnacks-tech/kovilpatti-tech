@@ -22,6 +22,12 @@ function toQuery(filters?: StockRequestListFilters): string {
   if (filters.fromDate)         p.set('fromDate', filters.fromDate)
   if (filters.toDate)           p.set('toDate', filters.toDate)
   if (filters.requestType)      p.set('requestType', filters.requestType)
+  // 15-Jul-2026: admin "My Drafts" preset — only serialise when true so
+  // the URL stays clean on the default path.
+  if (filters.includeDrafts)    p.set('includeDrafts', 'true')
+  // 15-Jul-2026: "Special Order" preset — only serialise when actually
+  // set (undefined = no filter, don't send).
+  if (filters.isSpecial != null) p.set('isSpecial', String(filters.isSpecial))
   const qs = p.toString()
   return qs ? `?${qs}` : ''
 }

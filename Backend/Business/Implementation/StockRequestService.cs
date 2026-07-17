@@ -46,13 +46,29 @@ public class StockRequestService(
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
         string? requestType = null,
+        // 15-Jul-2026: opt-in for the "My Drafts" preset. Only surfaces the
+        // caller's OWN draft rows — we resolve `currentUser.UserId` here
+        // rather than trusting a client-supplied user id (defence: never
+        // let a rogue payload leak another user's drafts).
+        bool includeDrafts = false,
+        // 15-Jul-2026: is_special filter for the "Special Order" preset.
+        // Forwarded to the SP as-is — the filter is a lens over
+        // already-authorised rows, no additional gating needed.
+        bool? isSpecial = null,
         CancellationToken ct = default)
     {
         var safePage     = page     < 1 ? 1  : page;
         var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
 
+        // Only pass the user id when the caller is actually opting into
+        // drafts — keeps the SP's default path untouched otherwise.
+        var draftUserId = includeDrafts ? currentUser.UserId : null;
+
         var (rows, total) = await requests.ListPagedAsync(
-            shopId, inventoryId, status, search, safePage, safePageSize, fromDate, toDate, requestType, ct);
+            shopId, inventoryId, status, search, safePage, safePageSize,
+            fromDate, toDate, requestType,
+            includeDrafts, draftUserId,
+            isSpecial, ct);
         var items = rows.Select(MapHeaderToDto).ToList();
         return new PagedResult<StockRequestDto>(items, total, safePage, safePageSize);
     }

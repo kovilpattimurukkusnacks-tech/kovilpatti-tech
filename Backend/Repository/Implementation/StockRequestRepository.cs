@@ -13,31 +13,48 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
         string? requestType = null,
+        bool includeDrafts = false, Guid? userId = null,
+        bool? isSpecial = null,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
 
         // p_request_type is the request_type enum — cast at call site so callers
         // pass a plain string ('Order'/'Return') without knowing the PG type name.
-        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size, @p_from_date, @p_to_date, @p_request_type::request_type)";
-        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_from_date, @p_to_date, @p_request_type::request_type)";
+        const string sqlList  = "SELECT * FROM fn_request_list_paged(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_page, @p_page_size, @p_from_date, @p_to_date, @p_request_type::request_type, @p_include_drafts, @p_user_id, @p_is_special)";
+        const string sqlCount = "SELECT fn_request_count(@p_shop_id, @p_inventory_id, @p_status::request_status, @p_search, @p_from_date, @p_to_date, @p_request_type::request_type, @p_include_drafts, @p_user_id, @p_is_special)";
 
         var args = new
         {
-            p_shop_id      = shopId,
-            p_inventory_id = inventoryId,
-            p_status       = status,
-            p_search       = search,
-            p_page         = page,
-            p_page_size    = pageSize,
-            p_from_date    = fromDate,
-            p_to_date      = toDate,
-            p_request_type = requestType,
+            p_shop_id        = shopId,
+            p_inventory_id   = inventoryId,
+            p_status         = status,
+            p_search         = search,
+            p_page           = page,
+            p_page_size      = pageSize,
+            p_from_date      = fromDate,
+            p_to_date        = toDate,
+            p_request_type   = requestType,
+            p_include_drafts = includeDrafts,
+            p_user_id        = userId,
+            p_is_special     = isSpecial,
         };
 
         var rows = (await conn.QueryAsync<StockRequest>(new CommandDefinition(sqlList, args, cancellationToken: ct))).ToList();
 
-        var countArgs = new { p_shop_id = shopId, p_inventory_id = inventoryId, p_status = status, p_search = search, p_from_date = fromDate, p_to_date = toDate, p_request_type = requestType };
+        var countArgs = new
+        {
+            p_shop_id        = shopId,
+            p_inventory_id   = inventoryId,
+            p_status         = status,
+            p_search         = search,
+            p_from_date      = fromDate,
+            p_to_date        = toDate,
+            p_request_type   = requestType,
+            p_include_drafts = includeDrafts,
+            p_user_id        = userId,
+            p_is_special     = isSpecial,
+        };
         var total = await conn.ExecuteScalarAsync<long>(new CommandDefinition(sqlCount, countArgs, cancellationToken: ct));
 
         return (rows, total);

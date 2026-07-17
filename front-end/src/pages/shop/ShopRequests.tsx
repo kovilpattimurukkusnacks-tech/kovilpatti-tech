@@ -24,6 +24,10 @@ type Preset = {
   label: string
   status?: RequestStatus
   requestType?: RequestType
+  // 15-Jul-2026: is_special filter for the "Special Order" preset —
+  // shows every request this shop marked as special, across the whole
+  // lifecycle (same intent as the Return preset but on the flag).
+  isSpecial?: boolean
 }
 const PRESETS: Preset[] = [
   { key: 'all',        label: 'All',        status: undefined },
@@ -34,6 +38,7 @@ const PRESETS: Preset[] = [
   { key: 'dispatched', label: 'Dispatched', status: 'Dispatched' },
   { key: 'received',   label: 'Received',   status: 'Received'   },
   { key: 'return',     label: 'Return',     requestType: 'Return' },
+  { key: 'special',    label: 'Special Order', isSpecial: true },
 ]
 
 // STATUS_COLOR + STATUS_CHIP_SX consolidated into a shared util so a color
@@ -65,6 +70,7 @@ export default function ShopRequests() {
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
   const currentRequestType = currentPreset?.requestType
+  const isSpecialFilter    = currentPreset?.isSpecial
 
   const list = useMyStockRequests({
     status: currentStatus,
@@ -72,6 +78,7 @@ export default function ShopRequests() {
     search: search.trim() || undefined,
     page: page + 1,
     pageSize,
+    isSpecial: isSpecialFilter,
   } satisfies StockRequestListFilters)
 
   // Status-specific extra column — only the Received chip surfaces a

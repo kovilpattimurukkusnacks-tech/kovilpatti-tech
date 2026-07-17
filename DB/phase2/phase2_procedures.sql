@@ -145,6 +145,14 @@ DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varcha
 -- for is_special/special_label as part of the Special Request rework. Signature
 -- (arg list) unchanged, but return-shape drift → drop the pre-rework shape.
 -- Idempotent on a fresh DB (nothing to drop).
+--
+-- 15-Jul-2026: signature gained p_include_drafts + p_user_id so admin's
+-- own draft rows can be surfaced in the list (via a "My Drafts" preset).
+-- Drafts stay HIDDEN by default (p_include_drafts=false) — same behaviour
+-- for every existing caller. Only when include-drafts is true AND the
+-- caller passes their user id are draft rows created by that user
+-- included. Shape unchanged → CREATE OR REPLACE handles both branches.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type);
 
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
@@ -159,7 +167,18 @@ CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_to_date      date           DEFAULT NULL,
   -- Filter by request_type: NULL = both Orders + Returns mixed (current chip
   -- behaviour); 'Return' = the new Return chip; 'Order' = explicit Orders.
-  p_request_type request_type   DEFAULT NULL
+  p_request_type request_type   DEFAULT NULL,
+  -- 15-Jul-2026: when true AND p_user_id is non-null, ALSO include
+  -- status='Draft' rows created_by that user. Powers the admin "My Drafts"
+  -- filter so an admin who saved a draft can see + resume it from the
+  -- list. Default false → identical behaviour to existing callers.
+  p_include_drafts boolean      DEFAULT false,
+  p_user_id        uuid         DEFAULT NULL,
+  -- 15-Jul-2026: is_special filter — NULL = no filter (default,
+  -- behaviour unchanged), true = only Special Requests, false = only
+  -- non-special. Drives the "Special Order" preset chip across admin /
+  -- shop / inventory list pages.
+  p_is_special     boolean      DEFAULT NULL
 )
 RETURNS TABLE (
   id                    uuid,
@@ -270,18 +289,30 @@ LANGUAGE sql STABLE AS $$
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.is_deleted = false
-    AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
+    -- Drafts hidden by default. When p_include_drafts is true AND the caller
+    -- passes their user id, drafts created by that user leak through — the
+    -- exact opt-in for the admin "My Drafts" filter (15-Jul-2026). Users
+    -- never see other users' drafts (draft rows belong to the person who
+    -- last saved them).
+    AND (r.status <> 'Draft'
+         OR (p_include_drafts = true AND p_user_id IS NOT NULL AND r.created_by = p_user_id))
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
     AND (p_request_type IS NULL OR r.request_type = p_request_type)
+    -- 15-Jul-2026: is_special filter — NULL leaves everything through,
+    -- true keeps only special requests, false keeps only non-special.
+    AND (p_is_special   IS NULL OR r.is_special   = p_is_special)
     -- IST day boundaries: p_from_date's midnight (IST) → UTC instant; upper
     -- bound is p_to_date + 1 day midnight (IST), exclusive, so the whole
-    -- p_to_date day is included.
-    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
-    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'))
-  ORDER BY r.submitted_at DESC
+    -- p_to_date day is included. Drafts don't have submitted_at (still Draft
+    -- status) so the date filter below excludes them — the include-drafts
+    -- caller compensates by lifting the date filter FE-side (my-drafts view
+    -- is not date-scoped).
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+  ORDER BY r.submitted_at DESC NULLS FIRST
   LIMIT  GREATEST(p_page_size, 1)
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
 $$;
@@ -293,6 +324,10 @@ DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar);
 -- Second drop — follow-up (28-May-2026) added p_request_type for the
 -- "Return" chip filter.
 DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar, date, date);
+-- Third drop — 15-Jul-2026 adds p_include_drafts + p_user_id to match
+-- fn_request_list_paged so total count reflects the same "My Drafts"
+-- opt-in filter.
+DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar, date, date, request_type);
 
 CREATE OR REPLACE FUNCTION fn_request_count(
   p_shop_id      uuid           DEFAULT NULL,
@@ -301,22 +336,36 @@ CREATE OR REPLACE FUNCTION fn_request_count(
   p_search       varchar        DEFAULT NULL,
   p_from_date    date           DEFAULT NULL,
   p_to_date      date           DEFAULT NULL,
-  p_request_type request_type   DEFAULT NULL
+  p_request_type request_type   DEFAULT NULL,
+  -- 15-Jul-2026: mirror fn_request_list_paged so total-row count matches
+  -- the list output when the "My Drafts" preset is active.
+  p_include_drafts boolean      DEFAULT false,
+  p_user_id        uuid         DEFAULT NULL,
+  -- 15-Jul-2026: mirror fn_request_list_paged's is_special filter so the
+  -- pagination row-count matches the visible list under the "Special
+  -- Order" preset.
+  p_is_special     boolean      DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
   SELECT COUNT(*)
   FROM stock_requests r
   WHERE r.is_deleted = false
-    AND r.status     <> 'Draft'   -- match fn_request_list_paged: drafts excluded from list/count
+    -- Match fn_request_list_paged: drafts hidden unless the caller opts in
+    -- AND owns the draft rows via created_by.
+    AND (r.status <> 'Draft'
+         OR (p_include_drafts = true AND p_user_id IS NOT NULL AND r.created_by = p_user_id))
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
     AND (p_request_type IS NULL OR r.request_type = p_request_type)
+    AND (p_is_special   IS NULL OR r.is_special   = p_is_special)
     -- Same IST day-boundary filter as fn_request_list_paged so count matches list.
-    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
-    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'));
+    -- Draft rows have no submitted_at yet — bypass the date bounds so they
+    -- always show under the "My Drafts" preset regardless of date filter.
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft');
 $$;
 
 
