@@ -1,5 +1,5 @@
 import { Fragment, memo, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { Trash2, ArrowLeft, ShoppingCart, X, Search, ChevronLeft, ChevronRight } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
@@ -58,7 +58,13 @@ export default function ShopRequestNew() {
   const isAdminCreate = isAdmin && !isEditMode
   // Admin's chosen target shop for the new-request flow. Null until they
   // pick from the shop picker at the top of the review dialog.
-  const [adminShopId, setAdminShopId] = useState<string | null>(null)
+  // 15-Jul-2026: honour `?shopId=<uuid>` on mount. Admin lands here from
+  // the AdminRequests "My Drafts" preset with the draft's shopId in the
+  // URL — pre-selecting it here means useShopDraft fires immediately and
+  // the saved cart hydrates without the admin re-picking the shop.
+  const [searchParams] = useSearchParams()
+  const shopIdFromUrl = searchParams.get('shopId')
+  const [adminShopId, setAdminShopId] = useState<string | null>(shopIdFromUrl)
   // Admin lands here from /admin/requests/:id/edit, shop from /shop/requests/:id/edit
   const detailPath = isEditMode && editId
     ? (isAdmin ? `/admin/requests/${editId}` : `/shop/requests/${editId}`)

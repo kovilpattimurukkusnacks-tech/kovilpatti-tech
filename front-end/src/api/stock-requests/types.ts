@@ -281,6 +281,16 @@ export type StockRequestListFilters = {
   // 'Order' / 'Return' — when set, restricts to that request_type. Drives the
   // "Return" preset chip on ShopRequests + InventoryRequests.
   requestType?: RequestType
+  // 15-Jul-2026: admin "My Drafts" opt-in. When true, the BE response
+  // ALSO includes status='Draft' rows created by the caller — so an
+  // admin who saved a draft can find + resume it from the list. Server
+  // resolves the user id from the auth claim; false = default hidden.
+  includeDrafts?: boolean
+  // 15-Jul-2026: is_special filter for the "Special Order" preset.
+  // undefined = no filter (default), true = specials only, false =
+  // non-specials only. Available on admin / shop / inventory list
+  // endpoints.
+  isSpecial?: boolean
 }
 
 export type PagedResult<T> = {

@@ -48,7 +48,7 @@ public class ShopDashboardService(
         var todayBucketsTask = invRepo.MovementSummaryAsync(scopedShopId, istToday, istToday, ct);
         var recentTask     = invRepo.ListMovementsAsync(scopedShopId, null, null, null, 1, RecentMovementsCount, ct);
         var pendingReqsTask = stockRequestRepo.ListPagedAsync(
-            scopedShopId, null, "Pending", null, 1, 1, null, null, null, ct);
+            scopedShopId, null, "Pending", null, 1, 1, null, null, null, ct: ct);
         var lastTakeTask   = invRepo.StockTakeListAsync(
             scopedShopId, null, null, null, 1, 1, ct);
 
