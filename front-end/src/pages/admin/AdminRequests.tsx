@@ -49,10 +49,15 @@ const PRESETS: Preset[] = [
   // across the request lifecycle so admin can see every vendor-procurement
   // request in one place (15-Jul-2026 client req).
   { key: 'special',    label: 'Special Order', isSpecial: true },
-  // "My Drafts" — admin's unfinished New Requests. Client asked for
-  // draft visibility on the list so back-navigation doesn't feel like
-  // work is lost (15-Jul-2026). Drafts are user-scoped server-side.
-  { key: 'drafts',     label: 'My Drafts',  includeDrafts: true },
+  // "My Drafts" — admin's unfinished New Requests. Both flags matter:
+  //   • status: 'Draft'   → narrows the list to Draft rows only
+  //   • includeDrafts: true → tells the SP to lift its default "hide
+  //                            drafts" clause for rows owned by the caller
+  // Without includeDrafts, the SP's `r.status <> 'Draft'` gate excludes
+  // every Draft row before the status filter is even applied. Both
+  // together = "only my own drafts, and nothing else" (15-Jul-2026,
+  // client req: draft visibility from the list).
+  { key: 'drafts',     label: 'My Drafts',  status: 'Draft', includeDrafts: true },
 ]
 
 export default function AdminRequests() {
