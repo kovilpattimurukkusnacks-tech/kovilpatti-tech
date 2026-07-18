@@ -41,8 +41,17 @@ CREATE INDEX IF NOT EXISTS idx_shop_utility_expenses_staff
 ALTER TABLE shop_utility_expenses
   DROP CONSTRAINT IF EXISTS chk_shop_utility_expenses_amount_positive;
 
-ALTER TABLE shop_utility_expenses
-  ADD CONSTRAINT chk_shop_utility_expenses_amount_nonzero CHECK (amount <> 0);
+-- Postgres has no "ADD CONSTRAINT IF NOT EXISTS" — guard it explicitly so
+-- this file stays safely re-runnable, same as everything else in it.
+DO $$
+BEGIN
+  IF NOT EXISTS (
+    SELECT 1 FROM pg_constraint WHERE conname = 'chk_shop_utility_expenses_amount_nonzero'
+  ) THEN
+    ALTER TABLE shop_utility_expenses
+      ADD CONSTRAINT chk_shop_utility_expenses_amount_nonzero CHECK (amount <> 0);
+  END IF;
+END $$;
 
 -- ------------------------------------------------------------
 -- 2. staff_salaries — the "expected monthly amount" master. One row per
