@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, ChevronUp, ChevronDown, Star } from 'lucide-react'
+import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, ChevronUp, ChevronDown, Star, PauseCircle } from 'lucide-react'
 import {
   Alert, Autocomplete, Badge, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, InputAdornment, Paper, Table, TableBody, TableCell, TableContainer,
@@ -16,6 +16,7 @@ import { formatIstDateTime, formatIstTime } from '../../utils/formatDate'
 import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
+  useHoldStockRequest,
   useSaveDispatchDraft, useClearDispatchDraft,
   useAcceptReturn,
   useInventoryAddItems, useInventoryRemoveItem,
@@ -40,6 +41,7 @@ export default function InventoryRequestDetail() {
   const approveMutation      = useApproveStockRequest()
   const rejectMutation       = useRejectStockRequest()
   const revokeMutation       = useRevokeStockRequest()
+  const holdMutation         = useHoldStockRequest()
   const saveDraftMutation    = useSaveDispatchDraft()
   const clearDraftMutation   = useClearDispatchDraft()
   const addItemsMutation     = useInventoryAddItems()
@@ -95,6 +97,7 @@ export default function InventoryRequestDetail() {
   const [rejectOpen, setRejectOpen]   = useState(false)
   const [rejectReason, setRejectReason] = useState('')
   const [revokeConfirm, setRevokeConfirm] = useState(false)
+  const [holdConfirm, setHoldConfirm] = useState(false)
 
   // Seed dispatchQtys from items when the request loads. Priority order:
   //   1. draftDispatchedQty  — inventory user's saved WIP from a previous visit
@@ -454,12 +457,25 @@ export default function InventoryRequestDetail() {
     finally { setRevokeConfirm(false) }
   }
 
-  // Approve / Reject / Revoke gates. Returns don't have an Approve step —
+  const handleHold = async () => {
+    try { await holdMutation.mutateAsync(request.id) }
+    finally { setHoldConfirm(false) }
+  }
+
+  // Approve / Reject / Revoke / Hold gates. Returns don't have an Approve step —
   // they go Pending → Accepted directly — but Reject IS valid for either
   // type. Revoke is Order-only (Returns have no Approved intermediate state).
-  const canApprove = !isReturn && request.status === 'Pending'
-  const canReject  = request.status === 'Pending'
-  const canRevoke  = !isReturn && (request.status === 'Approved' || request.status === 'Rejected')
+  // On-Hold parks a late-special Order; approving it again resumes the flow,
+  // so canApprove also covers the On-Hold state.
+  const canApprove = !isReturn && (request.status === 'Pending' || request.status === 'On-Hold')
+  // Reject also valid from On-Hold (special item fell through).
+  const canReject  = request.status === 'Pending' || request.status === 'On-Hold'
+  // Revoke → Pending from Approved/Rejected, and from On-Hold (un-hold
+  // without approving).
+  const canRevoke  = !isReturn && (request.status === 'Approved' || request.status === 'Rejected' || request.status === 'On-Hold')
+  // Hold is Order-only, available while still Pending or Approved (before
+  // dispatch freezes the request). Not offered once already On-Hold.
+  const canHold    = !isReturn && (request.status === 'Pending' || request.status === 'Approved')
   // Inventory can append items post-approval (01-Jul-2026 client req).
   // Order-only, and only while the request is still editable (Pending
   // or Approved; once dispatched, the qty is frozen).
@@ -781,6 +797,23 @@ export default function InventoryRequestDetail() {
                 Approve
               </Button>
             )}
+            {/* Hold — park a late-special Order. Drops it out of the
+                cumulative kitchen print until re-approved. Orders only. */}
+            {canHold && (
+              <Button
+                variant="outlined"
+                startIcon={<PauseCircle className="w-4 h-4" />}
+                onClick={() => setHoldConfirm(true)}
+                disabled={holdMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#546E7A', color: '#546E7A',
+                  '&:hover': { borderColor: '#546E7A', bgcolor: 'rgba(84,110,122,0.06)' },
+                }}
+              >
+                Hold
+              </Button>
+            )}
             {canRevoke && (
               <Button
                 variant="outlined"
@@ -793,7 +826,7 @@ export default function InventoryRequestDetail() {
                   '&:hover': { borderColor: '#1F1F1F', bgcolor: '#FCD835' },
                 }}
               >
-                Revoke
+                {request.status === 'On-Hold' ? 'Un-hold' : 'Revoke'}
               </Button>
             )}
             <Button
@@ -1280,11 +1313,23 @@ export default function InventoryRequestDetail() {
       />
 
       <ConfirmDialog
+        open={holdConfirm}
+        title="Put this request On-Hold?"
+        message={`${request.code} will be parked as On-Hold — use this when it's waiting on a late special item. It stays out of the cumulative kitchen print until you Approve it. You can approve it any time the stock arrives.`}
+        confirmLabel="Yes, Hold"
+        cancelLabel="Not yet"
+        onConfirm={handleHold}
+        onCancel={() => setHoldConfirm(false)}
+      />
+
+      <ConfirmDialog
         open={revokeConfirm}
-        title={`Revoke ${request.status === 'Approved' ? 'approval' : 'rejection'}?`}
+        title={`Revoke ${request.status === 'Approved' ? 'approval' : request.status === 'On-Hold' ? 'hold' : 'rejection'}?`}
         message={
           request.status === 'Approved'
             ? `This sends ${request.code} back to Pending. The shop will be able to edit it again, and you'll need to Approve (or Reject) before dispatch.`
+            : request.status === 'On-Hold'
+            ? `This lifts the hold and sends ${request.code} back to Pending, so it re-enters the normal flow and the cumulative kitchen print once approved.`
             : `This sends ${request.code} back to Pending and clears the rejection reason. The shop will see it as a fresh request again.`
         }
         confirmLabel="Yes, Revoke"

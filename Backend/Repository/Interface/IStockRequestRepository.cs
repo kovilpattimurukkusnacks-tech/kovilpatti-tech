@@ -47,6 +47,7 @@ public interface IStockRequestRepository
     Task<bool> ApproveAsync(Guid id, Guid userId, CancellationToken ct = default);
     Task<bool> RejectAsync(Guid id, Guid userId, string reason, CancellationToken ct = default);
     Task<bool> RevokeAsync(Guid id, Guid userId, CancellationToken ct = default);
+    Task<bool> HoldAsync(Guid id, Guid userId, CancellationToken ct = default);
     Task<bool> DispatchAsync(Guid id, Guid userId, string dispatchedItemsJson, CancellationToken ct = default);
     Task<bool> ReceiveAsync(Guid id, Guid userId, string? itemsJson = null, CancellationToken ct = default);
     Task<bool> CancelAsync(Guid id, Guid userId, CancellationToken ct = default);

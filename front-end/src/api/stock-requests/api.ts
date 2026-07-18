@@ -78,6 +78,7 @@ export const stockRequestsApi = {
   approve:  (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/approve`),
   reject:   (id: string, req: RejectRequest)               => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/reject`, req),
   revoke:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/revoke`),
+  hold:     (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/hold`),
   dispatch: (id: string, req: DispatchRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch`, req),
   receive:  (id: string, req?: ReceiveRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/receive`, req ?? {}),
   cancel:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/cancel`),

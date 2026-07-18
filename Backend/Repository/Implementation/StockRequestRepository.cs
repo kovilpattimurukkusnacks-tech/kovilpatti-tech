@@ -174,6 +174,14 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
             sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
     }
 
+    public async Task<bool> HoldAsync(Guid id, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_request_hold(@p_id, @p_user_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
+    }
+
     public async Task<bool> DispatchAsync(Guid id, Guid userId, string dispatchedItemsJson, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
