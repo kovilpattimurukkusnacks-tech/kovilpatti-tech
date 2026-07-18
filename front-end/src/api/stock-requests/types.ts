@@ -11,6 +11,10 @@ export type RequestStatus =
   // Terminal state for Returns — set by fn_request_accept_return when the
   // inventory user accepts the goods back. Never appears on Orders.
   | 'Accepted'
+  // Inventory parked a Pending/Approved Order that has a late-arriving special
+  // item. Held requests drop out of the cumulative kitchen print until the
+  // inventory user approves them (On-Hold → Approved). Orders only.
+  | 'On-Hold'
 
 export type StockRequestItemDto = {
   id: string

@@ -52,6 +52,9 @@ const PRESETS: Preset[] = [
   // mirror the request lifecycle: Pending → Approved → Dispatched → Received.
   { key: 'dispatched', label: 'Dispatched',    status: 'Dispatched' },
   { key: 'received',   label: 'Delivered',     status: 'Received'   },
+  // 18-Jul-2026: On-Hold tab — requests parked while waiting on a late
+  // special item. Excluded from the cumulative kitchen print until approved.
+  { key: 'onhold',     label: 'On-Hold',       status: 'On-Hold'    },
   { key: 'all',        label: 'All',           status: undefined    },
   { key: 'return',     label: 'Return',        requestType: 'Return' },
   { key: 'special',    label: 'Special Order', isSpecial: true      },

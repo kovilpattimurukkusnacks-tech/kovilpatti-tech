@@ -306,6 +306,26 @@ public class StockRequestService(
         return await GetAsync(id, ct);
     }
 
+    public async Task<StockRequestDto> HoldAsync(Guid id, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Inventory user may only hold their own godown's request; admin any.
+        // SP guards status IN ('Pending','Approved') AND request_type='Order',
+        // so Returns and already-dispatched requests can't be held.
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.HoldAsync(id, userId, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status", $"Cannot hold — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
     public async Task<StockRequestDto> DispatchAsync(Guid id, DispatchRequest request, CancellationToken ct = default)
     {
         var validation = await dispatchValidator.ValidateAsync(request, ct);
