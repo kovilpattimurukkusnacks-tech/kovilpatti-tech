@@ -2,11 +2,12 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Edit2, Trash2, X, User as UserIcon, KeyRound, Eye, EyeOff } from 'lucide-react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, MenuItem, Paper, TextField,
+  IconButton, MenuItem, Paper, Tab, Tabs, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../components/PageHeader'
 import ConfirmDialog from '../components/ConfirmDialog'
+import SalaryTab from '../components/staff/SalaryTab'
 import {
   useUsersPaged, useCreateUser, useUpdateUser, useResetUserPassword, useDeleteUser,
 } from '../hooks/useUsers'
@@ -35,6 +36,9 @@ type FormValues = {
 }
 
 export default function Staff() {
+  // Salary tab (15-Jul-2026) lives on this same page, not a separate sidebar
+  // item — see SalaryTab.tsx for the ledger design.
+  const [tab, setTab] = useState<'details' | 'salary'>('details')
   const [paginationModel, setPaginationModel] = useState({ page: 0, pageSize: 10 })
   const list = useUsersPaged(paginationModel.page + 1, paginationModel.pageSize)
   const shopsQuery = useShops()
@@ -160,73 +164,90 @@ export default function Staff() {
             : `${total} ${total === 1 ? 'user' : 'users'} configured`
         }
         action={
-          <Button
-            variant="contained"
-            color="primary"
-            startIcon={<Plus className="w-4 h-4" />}
-            onClick={() => setFormMode({ kind: 'create' })}
-            sx={{ textTransform: 'none', fontWeight: 600 }}
-            disabled={!canAdd || shopsQuery.isLoading || inventoriesQuery.isLoading}
-          >
-            Add Staff
-          </Button>
+          tab === 'details' && (
+            <Button
+              variant="contained"
+              color="primary"
+              startIcon={<Plus className="w-4 h-4" />}
+              onClick={() => setFormMode({ kind: 'create' })}
+              sx={{ textTransform: 'none', fontWeight: 600 }}
+              disabled={!canAdd || shopsQuery.isLoading || inventoriesQuery.isLoading}
+            >
+              Add Staff
+            </Button>
+          )
         }
       />
 
-      {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
+      <Tabs
+        value={tab}
+        onChange={(_, v) => setTab(v as 'details' | 'salary')}
+        sx={{ mb: 2, minHeight: 36, '& .MuiTab-root': { minHeight: 36, fontWeight: 700, textTransform: 'none' } }}
+      >
+        <Tab label="Staff Details" value="details" />
+        <Tab label="Salary" value="salary" />
+      </Tabs>
 
-      {!shopsQuery.isLoading && !inventoriesQuery.isLoading && !canAdd && (
-        <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px solid #1F1F1F', fontSize: 14, color: '#1F1F1F' }}>
-          Create at least one <b>Inventory</b> or <b>Shop</b> before adding staff — every staff member must be mapped to one.
-        </Box>
+      {tab === 'details' && (
+        <>
+          {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
+
+          {!shopsQuery.isLoading && !inventoriesQuery.isLoading && !canAdd && (
+            <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px solid #1F1F1F', fontSize: 14, color: '#1F1F1F' }}>
+              Create at least one <b>Inventory</b> or <b>Shop</b> before adding staff — every staff member must be mapped to one.
+            </Box>
+          )}
+
+          <Paper className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
+            <DataGrid
+              className="data-page-grid"
+              rows={users}
+              columns={columns}
+              getRowId={r => r.id}
+              loading={list.isLoading}
+              autoHeight
+              disableRowSelectionOnClick
+              disableColumnMenu
+              paginationMode="server"
+              rowCount={total}
+              paginationModel={paginationModel}
+              onPaginationModelChange={setPaginationModel}
+              pageSizeOptions={[10, 25, 50, 100]}
+            />
+          </Paper>
+
+          <StaffFormDialog
+            open={formMode.kind !== 'closed'}
+            user={formMode.kind === 'edit' ? formMode.user : null}
+            shops={shops}
+            inventories={inventories}
+            submitting={create.isPending || update.isPending}
+            submitError={mutationErrorMessage(create.error) ?? mutationErrorMessage(update.error)}
+            onClose={closeForm}
+            onSave={handleSave}
+          />
+
+          <ResetPasswordDialog
+            open={!!resetTarget}
+            username={resetTarget?.username ?? ''}
+            submitting={resetPwd.isPending}
+            submitError={mutationErrorMessage(resetPwd.error)}
+            onConfirm={handleResetPassword}
+            onCancel={() => setResetTarget(null)}
+          />
+
+          <ConfirmDialog
+            open={!!pendingDelete}
+            title="Delete staff"
+            message={`Are you sure you want to delete user "${pendingDelete?.username ?? ''}"? This will deactivate them.`}
+            confirmLabel="Delete"
+            onConfirm={handleConfirmDelete}
+            onCancel={() => setPendingDelete(null)}
+          />
+        </>
       )}
 
-      <Paper className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
-        <DataGrid
-          className="data-page-grid"
-          rows={users}
-          columns={columns}
-          getRowId={r => r.id}
-          loading={list.isLoading}
-          autoHeight
-          disableRowSelectionOnClick
-          disableColumnMenu
-          paginationMode="server"
-          rowCount={total}
-          paginationModel={paginationModel}
-          onPaginationModelChange={setPaginationModel}
-          pageSizeOptions={[10, 25, 50, 100]}
-        />
-      </Paper>
-
-      <StaffFormDialog
-        open={formMode.kind !== 'closed'}
-        user={formMode.kind === 'edit' ? formMode.user : null}
-        shops={shops}
-        inventories={inventories}
-        submitting={create.isPending || update.isPending}
-        submitError={mutationErrorMessage(create.error) ?? mutationErrorMessage(update.error)}
-        onClose={closeForm}
-        onSave={handleSave}
-      />
-
-      <ResetPasswordDialog
-        open={!!resetTarget}
-        username={resetTarget?.username ?? ''}
-        submitting={resetPwd.isPending}
-        submitError={mutationErrorMessage(resetPwd.error)}
-        onConfirm={handleResetPassword}
-        onCancel={() => setResetTarget(null)}
-      />
-
-      <ConfirmDialog
-        open={!!pendingDelete}
-        title="Delete staff"
-        message={`Are you sure you want to delete user "${pendingDelete?.username ?? ''}"? This will deactivate them.`}
-        confirmLabel="Delete"
-        onConfirm={handleConfirmDelete}
-        onCancel={() => setPendingDelete(null)}
-      />
+      {tab === 'salary' && <SalaryTab />}
     </div>
   )
 }

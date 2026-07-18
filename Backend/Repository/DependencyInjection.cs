@@ -51,6 +51,9 @@ public static class DependencyInjection
         // Phase 4 — shop utility / operating expenses
         services.AddScoped<IShopUtilityExpenseRepository, ShopUtilityExpenseRepository>();
 
+        // Phase 4 — staff salary
+        services.AddScoped<IStaffSalaryRepository, StaffSalaryRepository>();
+
         // Phase 4 — shop inventory + stock-take
         services.AddScoped<IShopInventoryRepository, ShopInventoryRepository>();
 
