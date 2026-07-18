@@ -152,6 +152,11 @@ function patchAllListCaches(qc: ReturnType<typeof useQueryClient>, updated: Stoc
   // change the status. All can shift rows in/out of the inventory drafts
   // list, so invalidate it on any of these mutations.
   qc.invalidateQueries({ queryKey: ['stock-requests', 'dispatch-drafts'] })
+  // A status change on a special request (hold / approve / reject / cancel /
+  // dispatch → received) can add, remove, or relabel it in the "Special
+  // Requests open" banner, whose feed is status-filtered. Refetch it so the
+  // banner reflects the new status instantly instead of showing a stale chip.
+  qc.invalidateQueries({ queryKey: ['stock-requests', 'active-specials'] })
 }
 
 export function useCreateStockRequest() {
@@ -424,6 +429,23 @@ export function useRevokeStockRequest() {
       qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
       patchAllListCaches(qc, updated)
       toast.info(`Request ${updated.code} — decision reverted to Pending`)
+    },
+  })
+}
+
+/**
+ * Park a Pending/Approved Order as On-Hold (late special item). Held requests
+ * drop out of the cumulative kitchen print until approved.
+ */
+export function useHoldStockRequest() {
+  const qc = useQueryClient()
+  const toast = useToast()
+  return useMutation({
+    mutationFn: (id: string) => stockRequestsApi.hold(id),
+    onSuccess: (updated) => {
+      qc.setQueryData(stockRequestsKeys.detail(updated.id), updated)
+      patchAllListCaches(qc, updated)
+      toast.info(`Request ${updated.code} put On-Hold`)
     },
   })
 }

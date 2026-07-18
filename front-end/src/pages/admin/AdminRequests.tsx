@@ -27,6 +27,14 @@ type Preset = {
   label: string
   status?: RequestStatus
   requestType?: RequestType
+  // 15-Jul-2026: opt-in for the admin "My Drafts" preset. When true, the
+  // list request asks the BE to include admin's own status='Draft' rows.
+  // Only used by the 'drafts' preset — every other row leaves it undefined
+  // so the URL stays clean.
+  includeDrafts?: boolean
+  // 15-Jul-2026: is_special filter for the "Special Order" preset.
+  // undefined = no filter (default); true = specials only.
+  isSpecial?: boolean
 }
 const PRESETS: Preset[] = [
   { key: 'all',        label: 'All',        status: undefined    },
@@ -37,7 +45,19 @@ const PRESETS: Preset[] = [
   { key: 'rejected',   label: 'Rejected',   status: 'Rejected'   },
   { key: 'cancelled',  label: 'Cancelled',  status: 'Cancelled'  },
   { key: 'return',     label: 'Return',     requestType: 'Return' },
-  { key: 'backorder',  label: 'Back-order', requestType: 'Backorder' },
+  // "Special Order" — is_special=true regardless of status/type. Cuts
+  // across the request lifecycle so admin can see every vendor-procurement
+  // request in one place (15-Jul-2026 client req).
+  { key: 'special',    label: 'Special Order', isSpecial: true },
+  // "My Drafts" — admin's unfinished New Requests. Both flags matter:
+  //   • status: 'Draft'   → narrows the list to Draft rows only
+  //   • includeDrafts: true → tells the SP to lift its default "hide
+  //                            drafts" clause for rows owned by the caller
+  // Without includeDrafts, the SP's `r.status <> 'Draft'` gate excludes
+  // every Draft row before the status filter is even applied. Both
+  // together = "only my own drafts, and nothing else" (15-Jul-2026,
+  // client req: draft visibility from the list).
+  { key: 'drafts',     label: 'My Drafts',  status: 'Draft', includeDrafts: true },
 ]
 
 export default function AdminRequests() {
@@ -84,6 +104,8 @@ export default function AdminRequests() {
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
   const currentRequestType = currentPreset?.requestType
+  const includeDrafts      = currentPreset?.includeDrafts ?? false
+  const isSpecialFilter    = currentPreset?.isSpecial
 
   const handleDateChange = (from: string, to: string) => {
     // Keep today's defaults out of the URL — only persist when admin picks
@@ -103,8 +125,14 @@ export default function AdminRequests() {
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
     pageSize: paginationModel.pageSize,
-    fromDate: fromDate || undefined,
-    toDate: toDate || undefined,
+    // My Drafts preset is date-scope-agnostic — drafts have no
+    // submitted_at yet, so clamping to a date range would hide them.
+    // The SP also bypasses the date filter for Draft rows, but skipping
+    // it here keeps the URL clean and the badge count honest.
+    fromDate: includeDrafts ? undefined : (fromDate || undefined),
+    toDate:   includeDrafts ? undefined : (toDate   || undefined),
+    includeDrafts: includeDrafts || undefined,
+    isSpecial: isSpecialFilter,
   })
 
   // Per-shop badge counts for the active preset. Refetches whenever the
@@ -580,7 +608,18 @@ export default function AdminRequests() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
-          onRowClick={(p) => navigate(`/admin/requests/${p.id}`)}
+          onRowClick={(p) => {
+            // 15-Jul-2026: Draft rows can't open the standard detail page
+            // (fn_request_get filters status <> 'Draft'). Route them
+            // instead to the New Request flow with the draft's shop
+            // pre-selected — that page's useShopDraft(shopId) will pull
+            // the saved cart/notes/special-flag from the server draft.
+            if (p.row.status === 'Draft') {
+              navigate(`/admin/requests/new?shopId=${p.row.shopId}`)
+              return
+            }
+            navigate(`/admin/requests/${p.id}`)
+          }}
           paginationMode="server"
           rowCount={total}
           paginationModel={paginationModel}

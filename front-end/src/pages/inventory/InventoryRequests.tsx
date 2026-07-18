@@ -38,6 +38,10 @@ type Preset = {
   label: string
   status?: RequestStatus
   requestType?: RequestType
+  // 15-Jul-2026: is_special filter for the "Special Order" preset — lets
+  // godown filter incoming requests to just Special (vendor-procurement)
+  // orders across the lifecycle.
+  isSpecial?: boolean
 }
 const PRESETS: Preset[] = [
   { key: 'pending',    label: 'Needs Action',  status: 'Pending'    },
@@ -48,8 +52,12 @@ const PRESETS: Preset[] = [
   // mirror the request lifecycle: Pending → Approved → Dispatched → Received.
   { key: 'dispatched', label: 'Dispatched',    status: 'Dispatched' },
   { key: 'received',   label: 'Delivered',     status: 'Received'   },
+  // 18-Jul-2026: On-Hold tab — requests parked while waiting on a late
+  // special item. Excluded from the cumulative kitchen print until approved.
+  { key: 'onhold',     label: 'On-Hold',       status: 'On-Hold'    },
   { key: 'all',        label: 'All',           status: undefined    },
   { key: 'return',     label: 'Return',        requestType: 'Return' },
+  { key: 'special',    label: 'Special Order', isSpecial: true      },
 ]
 
 export default function InventoryRequests() {
@@ -94,6 +102,7 @@ export default function InventoryRequests() {
   const currentPreset      = PRESETS.find(p => p.key === activePreset)
   const currentStatus      = currentPreset?.status
   const currentRequestType = currentPreset?.requestType
+  const isSpecialFilter    = currentPreset?.isSpecial
 
   const list = useIncomingStockRequests({
     status: currentStatus,
@@ -102,6 +111,7 @@ export default function InventoryRequests() {
     search: search.trim() || undefined,
     page: paginationModel.page + 1,
     pageSize: paginationModel.pageSize,
+    isSpecial: isSpecialFilter,
   })
 
   // Inventory user's own scope is enforced server-side, so no inventoryId

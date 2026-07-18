@@ -46,13 +46,29 @@ public class StockRequestService(
         int page, int pageSize,
         DateOnly? fromDate = null, DateOnly? toDate = null,
         string? requestType = null,
+        // 15-Jul-2026: opt-in for the "My Drafts" preset. Only surfaces the
+        // caller's OWN draft rows — we resolve `currentUser.UserId` here
+        // rather than trusting a client-supplied user id (defence: never
+        // let a rogue payload leak another user's drafts).
+        bool includeDrafts = false,
+        // 15-Jul-2026: is_special filter for the "Special Order" preset.
+        // Forwarded to the SP as-is — the filter is a lens over
+        // already-authorised rows, no additional gating needed.
+        bool? isSpecial = null,
         CancellationToken ct = default)
     {
         var safePage     = page     < 1 ? 1  : page;
         var safePageSize = pageSize < 1 ? 10 : (pageSize > 200 ? 200 : pageSize);
 
+        // Only pass the user id when the caller is actually opting into
+        // drafts — keeps the SP's default path untouched otherwise.
+        var draftUserId = includeDrafts ? currentUser.UserId : null;
+
         var (rows, total) = await requests.ListPagedAsync(
-            shopId, inventoryId, status, search, safePage, safePageSize, fromDate, toDate, requestType, ct);
+            shopId, inventoryId, status, search, safePage, safePageSize,
+            fromDate, toDate, requestType,
+            includeDrafts, draftUserId,
+            isSpecial, ct);
         var items = rows.Select(MapHeaderToDto).ToList();
         return new PagedResult<StockRequestDto>(items, total, safePage, safePageSize);
     }
@@ -286,6 +302,26 @@ public class StockRequestService(
         var ok = await requests.RevokeAsync(id, userId, ct);
         if (!ok) throw new ValidationException(new[] {
             new ValidationFailure("status", $"Cannot revoke — request is in '{existing.Status}' state.")
+        });
+        return await GetAsync(id, ct);
+    }
+
+    public async Task<StockRequestDto> HoldAsync(Guid id, CancellationToken ct = default)
+    {
+        var userId = currentUser.UserId
+            ?? throw new UnauthorizedException("Authenticated user required.");
+
+        var existing = await requests.GetAsync(id, ct)
+            ?? throw new NotFoundException($"Stock request '{id}' not found.");
+
+        // Inventory user may only hold their own godown's request; admin any.
+        // SP guards status IN ('Pending','Approved') AND request_type='Order',
+        // so Returns and already-dispatched requests can't be held.
+        EnsureInventoryScope(existing);
+
+        var ok = await requests.HoldAsync(id, userId, ct);
+        if (!ok) throw new ValidationException(new[] {
+            new ValidationFailure("status", $"Cannot hold — request is in '{existing.Status}' state.")
         });
         return await GetAsync(id, ct);
     }

@@ -143,6 +143,7 @@ function statusColor(status: string): string {
     case 'Pending':    return '#E65100'
     case 'Approved':   return '#0277BD'
     case 'Dispatched': return '#2E7D32'
+    case 'On-Hold':    return '#546E7A'  // blue-grey "parked" — matches STATUS_CHIP_SX
     default:           return '#7C4A00'
   }
 }

@@ -22,6 +22,12 @@ function toQuery(filters?: StockRequestListFilters): string {
   if (filters.fromDate)         p.set('fromDate', filters.fromDate)
   if (filters.toDate)           p.set('toDate', filters.toDate)
   if (filters.requestType)      p.set('requestType', filters.requestType)
+  // 15-Jul-2026: admin "My Drafts" preset — only serialise when true so
+  // the URL stays clean on the default path.
+  if (filters.includeDrafts)    p.set('includeDrafts', 'true')
+  // 15-Jul-2026: "Special Order" preset — only serialise when actually
+  // set (undefined = no filter, don't send).
+  if (filters.isSpecial != null) p.set('isSpecial', String(filters.isSpecial))
   const qs = p.toString()
   return qs ? `?${qs}` : ''
 }
@@ -72,6 +78,7 @@ export const stockRequestsApi = {
   approve:  (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/approve`),
   reject:   (id: string, req: RejectRequest)               => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/reject`, req),
   revoke:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/revoke`),
+  hold:     (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/hold`),
   dispatch: (id: string, req: DispatchRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/dispatch`, req),
   receive:  (id: string, req?: ReceiveRequest)             => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/receive`, req ?? {}),
   cancel:   (id: string)                                   => apiClient.patch<StockRequestDto>(`/api/stock-requests/${id}/cancel`),

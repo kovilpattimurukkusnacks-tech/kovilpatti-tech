@@ -18,8 +18,10 @@ export const STATUS_COLOR: Record<
   RequestStatus,
   'default' | 'primary' | 'success' | 'error' | 'warning' | 'info'
 > = {
-  // Drafts are never surfaced by the paged list endpoints (only via the
-  // Resume-Draft strip). Mapping kept to satisfy the exhaustive Record type.
+  // Drafts surface on the admin "My Drafts" preset (15-Jul-2026) — the
+  // sx override below paints a distinctive warm brown-gold so they don't
+  // blend with grey Cancelled rows. 'default' keeps the base structure
+  // consistent; the sx wins on colours.
   Draft:      'default',
   Pending:    'warning',
   Approved:   'info',
@@ -32,6 +34,9 @@ export const STATUS_COLOR: Record<
   // Returns' terminal state — green-success mirrors Received since the
   // goods have moved successfully (just in reverse).
   Accepted:   'success',
+  // Parked/waiting on a late special item → default + slate sx override
+  // below, so it reads as "paused" and doesn't clash with Pending's amber.
+  'On-Hold':  'default',
 }
 
 /**
@@ -48,6 +53,25 @@ export const STATUS_CHIP_SX: Partial<Record<RequestStatus, SxProps<Theme>>> = {
     // (Rejected). Semantic fit: "in transit, on the way" = purple.
     borderColor: '#7B1FA2',
     color: '#7B1FA2',
+    fontWeight: 700,
+    '& .MuiChip-label': { fontWeight: 700 },
+  },
+  Draft: {
+    // Warm brown-gold — reads as "in-progress / held" without clashing
+    // with the amber orange used by Special Request highlights. Same
+    // tone family as the operator column in the accounts breakdown
+    // tooltips, so the visual grammar stays consistent across the app.
+    borderColor: '#8A6D3B',
+    color: '#8A6D3B',
+    backgroundColor: '#FFF8DC',
+    fontWeight: 700,
+    '& .MuiChip-label': { fontWeight: 700 },
+  },
+  'On-Hold': {
+    // Blue-grey 600 — a muted "parked / paused" hue, clearly separate from
+    // Pending's amber and Dispatched's purple.
+    borderColor: '#546E7A',
+    color: '#546E7A',
     fontWeight: 700,
     '& .MuiChip-label': { fontWeight: 700 },
   },

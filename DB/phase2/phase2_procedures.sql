@@ -145,6 +145,14 @@ DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varcha
 -- for is_special/special_label as part of the Special Request rework. Signature
 -- (arg list) unchanged, but return-shape drift → drop the pre-rework shape.
 -- Idempotent on a fresh DB (nothing to drop).
+--
+-- 15-Jul-2026: signature gained p_include_drafts + p_user_id so admin's
+-- own draft rows can be surfaced in the list (via a "My Drafts" preset).
+-- Drafts stay HIDDEN by default (p_include_drafts=false) — same behaviour
+-- for every existing caller. Only when include-drafts is true AND the
+-- caller passes their user id are draft rows created by that user
+-- included. Shape unchanged → CREATE OR REPLACE handles both branches.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type);
 
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
@@ -159,7 +167,18 @@ CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_to_date      date           DEFAULT NULL,
   -- Filter by request_type: NULL = both Orders + Returns mixed (current chip
   -- behaviour); 'Return' = the new Return chip; 'Order' = explicit Orders.
-  p_request_type request_type   DEFAULT NULL
+  p_request_type request_type   DEFAULT NULL,
+  -- 15-Jul-2026: when true AND p_user_id is non-null, ALSO include
+  -- status='Draft' rows created_by that user. Powers the admin "My Drafts"
+  -- filter so an admin who saved a draft can see + resume it from the
+  -- list. Default false → identical behaviour to existing callers.
+  p_include_drafts boolean      DEFAULT false,
+  p_user_id        uuid         DEFAULT NULL,
+  -- 15-Jul-2026: is_special filter — NULL = no filter (default,
+  -- behaviour unchanged), true = only Special Requests, false = only
+  -- non-special. Drives the "Special Order" preset chip across admin /
+  -- shop / inventory list pages.
+  p_is_special     boolean      DEFAULT NULL
 )
 RETURNS TABLE (
   id                    uuid,
@@ -270,18 +289,30 @@ LANGUAGE sql STABLE AS $$
   -- idx_stock_requests_source_request keeps this lookup cheap.
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.is_deleted = false
-    AND r.status     <> 'Draft'   -- drafts are private; only fn_request_get_shop_draft surfaces them
+    -- Drafts hidden by default. When p_include_drafts is true AND the caller
+    -- passes their user id, drafts created by that user leak through — the
+    -- exact opt-in for the admin "My Drafts" filter (15-Jul-2026). Users
+    -- never see other users' drafts (draft rows belong to the person who
+    -- last saved them).
+    AND (r.status <> 'Draft'
+         OR (p_include_drafts = true AND p_user_id IS NOT NULL AND r.created_by = p_user_id))
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
     AND (p_request_type IS NULL OR r.request_type = p_request_type)
+    -- 15-Jul-2026: is_special filter — NULL leaves everything through,
+    -- true keeps only special requests, false keeps only non-special.
+    AND (p_is_special   IS NULL OR r.is_special   = p_is_special)
     -- IST day boundaries: p_from_date's midnight (IST) → UTC instant; upper
     -- bound is p_to_date + 1 day midnight (IST), exclusive, so the whole
-    -- p_to_date day is included.
-    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
-    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'))
-  ORDER BY r.submitted_at DESC
+    -- p_to_date day is included. Drafts don't have submitted_at (still Draft
+    -- status) so the date filter below excludes them — the include-drafts
+    -- caller compensates by lifting the date filter FE-side (my-drafts view
+    -- is not date-scoped).
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+  ORDER BY r.submitted_at DESC NULLS FIRST
   LIMIT  GREATEST(p_page_size, 1)
   OFFSET GREATEST((p_page - 1) * p_page_size, 0);
 $$;
@@ -293,6 +324,10 @@ DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar);
 -- Second drop — follow-up (28-May-2026) added p_request_type for the
 -- "Return" chip filter.
 DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar, date, date);
+-- Third drop — 15-Jul-2026 adds p_include_drafts + p_user_id to match
+-- fn_request_list_paged so total count reflects the same "My Drafts"
+-- opt-in filter.
+DROP FUNCTION IF EXISTS fn_request_count(uuid, uuid, request_status, varchar, date, date, request_type);
 
 CREATE OR REPLACE FUNCTION fn_request_count(
   p_shop_id      uuid           DEFAULT NULL,
@@ -301,22 +336,36 @@ CREATE OR REPLACE FUNCTION fn_request_count(
   p_search       varchar        DEFAULT NULL,
   p_from_date    date           DEFAULT NULL,
   p_to_date      date           DEFAULT NULL,
-  p_request_type request_type   DEFAULT NULL
+  p_request_type request_type   DEFAULT NULL,
+  -- 15-Jul-2026: mirror fn_request_list_paged so total-row count matches
+  -- the list output when the "My Drafts" preset is active.
+  p_include_drafts boolean      DEFAULT false,
+  p_user_id        uuid         DEFAULT NULL,
+  -- 15-Jul-2026: mirror fn_request_list_paged's is_special filter so the
+  -- pagination row-count matches the visible list under the "Special
+  -- Order" preset.
+  p_is_special     boolean      DEFAULT NULL
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
   SELECT COUNT(*)
   FROM stock_requests r
   WHERE r.is_deleted = false
-    AND r.status     <> 'Draft'   -- match fn_request_list_paged: drafts excluded from list/count
+    -- Match fn_request_list_paged: drafts hidden unless the caller opts in
+    -- AND owns the draft rows via created_by.
+    AND (r.status <> 'Draft'
+         OR (p_include_drafts = true AND p_user_id IS NOT NULL AND r.created_by = p_user_id))
     AND (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
     AND (p_status       IS NULL OR r.status       = p_status)
     AND (p_search       IS NULL OR r.code ILIKE '%' || p_search || '%')
     AND (p_request_type IS NULL OR r.request_type = p_request_type)
+    AND (p_is_special   IS NULL OR r.is_special   = p_is_special)
     -- Same IST day-boundary filter as fn_request_list_paged so count matches list.
-    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata'))
-    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata'));
+    -- Draft rows have no submitted_at yet — bypass the date bounds so they
+    -- always show under the "My Drafts" preset regardless of date filter.
+    AND (p_from_date IS NULL OR r.submitted_at >= (p_from_date::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft')
+    AND (p_to_date   IS NULL OR r.submitted_at <  ((p_to_date + 1)::timestamp AT TIME ZONE 'Asia/Kolkata') OR r.status = 'Draft');
 $$;
 
 
@@ -1122,7 +1171,10 @@ $$;
 -- 5. STATUS TRANSITIONS
 -- ============================================================
 
--- Pending → Approved (admin)
+-- Pending | On-Hold → Approved (admin / inventory)
+-- On-Hold accepted as a from-state (18-Jul-2026): inventory approves a held
+-- request directly once the late special stock arrives. Clears the hold audit
+-- fields so an approved request no longer looks held.
 CREATE OR REPLACE FUNCTION fn_request_approve(
   p_id      uuid,
   p_user_id uuid
@@ -1134,16 +1186,46 @@ BEGIN
   SET status      = 'Approved',
       approved_at = now(),
       approved_by = p_user_id,
+      on_hold_at  = NULL,
+      on_hold_by  = NULL,
       updated_by  = p_user_id
   WHERE id = p_id
-    AND status = 'Pending'
+    AND status IN ('Pending', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
 $$;
 
 
--- Pending → Rejected (admin). Reason required.
+-- Pending | Approved → On-Hold (inventory user)
+-- Parks the WHOLE Order when it contains a late-arriving special item, instead
+-- of approving now. Held requests drop out of the cumulative kitchen print
+-- (Approved-only) until re-approved. Orders only — the request_type guard
+-- leaves the Return (Pending → Accepted) lifecycle untouched.
+CREATE OR REPLACE FUNCTION fn_request_hold(
+  p_id      uuid,
+  p_user_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE stock_requests
+  SET status     = 'On-Hold',
+      on_hold_at = now(),
+      on_hold_by = p_user_id,
+      updated_by = p_user_id
+  WHERE id = p_id
+    AND status IN ('Pending', 'Approved')
+    AND request_type = 'Order'
+    AND is_deleted = false;
+  RETURN FOUND;
+END
+$$;
+
+
+-- Pending | On-Hold → Rejected (admin). Reason required.
+-- On-Hold accepted 18-Jul-2026 so a held request can be rejected outright
+-- (e.g. the special item is no longer available).
 CREATE OR REPLACE FUNCTION fn_request_reject(
   p_id      uuid,
   p_user_id uuid,
@@ -1159,21 +1241,24 @@ BEGIN
   UPDATE stock_requests
   SET status           = 'Rejected',
       rejection_reason = p_reason,
+      on_hold_at       = NULL,
+      on_hold_by       = NULL,
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status = 'Pending'
+    AND status IN ('Pending', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
 $$;
 
 
--- Approved | Rejected | Cancelled → Pending (inventory user, admin)
--- "Undo" the Approve/Reject/Cancel decision before dispatch happens. Clears
--- the corresponding audit fields so the request looks like it was never
--- acted on; the next action writes fresh timestamps.
+-- Approved | Rejected | Cancelled | On-Hold → Pending (inventory user, admin)
+-- "Undo" the Approve/Reject/Cancel/Hold decision before dispatch happens.
+-- Clears the corresponding audit fields so the request looks like it was
+-- never acted on; the next action writes fresh timestamps.
 -- Cancelled → Pending added 01-Jul-2026 (client req: shop users sometimes
 -- cancel by mistake; admin needs to recover).
+-- On-Hold → Pending added 18-Jul-2026 (un-hold without approving).
 CREATE OR REPLACE FUNCTION fn_request_revoke(
   p_id      uuid,
   p_user_id uuid
@@ -1190,11 +1275,13 @@ BEGIN
       rejection_reason = NULL,
       cancelled_at     = NULL,
       cancelled_by     = NULL,
+      on_hold_at       = NULL,
+      on_hold_by       = NULL,
       draft_name       = NULL,     -- draft label was tied to Approved state
       pinned_at        = NULL,     -- pinning a Pending request is meaningless
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status IN ('Approved', 'Rejected', 'Cancelled')
+    AND status IN ('Approved', 'Rejected', 'Cancelled', 'On-Hold')
     AND is_deleted = false;
   v_did_revoke := FOUND;
 
@@ -1684,7 +1771,8 @@ END
 $$;
 
 
--- Cancel from Pending or Approved (either shop user or admin, role-gated in BE)
+-- Cancel from Pending, Approved or On-Hold (shop user or admin, role-gated in BE)
+-- On-Hold added 18-Jul-2026 so a held request can be cancelled outright.
 CREATE OR REPLACE FUNCTION fn_request_cancel(
   p_id      uuid,
   p_user_id uuid
@@ -1696,9 +1784,11 @@ BEGIN
   SET status        = 'Cancelled',
       cancelled_at  = now(),
       cancelled_by  = p_user_id,
+      on_hold_at    = NULL,
+      on_hold_by    = NULL,
       updated_by    = p_user_id
   WHERE id = p_id
-    AND status IN ('Pending', 'Approved')
+    AND status IN ('Pending', 'Approved', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
@@ -2066,7 +2156,9 @@ LANGUAGE sql STABLE AS $$
   INNER JOIN inventories i ON i.id = r.inventory_id
   WHERE  r.is_deleted = false
     AND  r.is_special = true
-    AND  r.status IN ('Pending', 'Approved', 'Dispatched')
+    -- On-Hold added 18-Jul-2026: a held special is still "open" and, since
+    -- it's waiting on late stock, is exactly what the godown needs to chase.
+    AND  r.status IN ('Pending', 'Approved', 'Dispatched', 'On-Hold')
     AND  (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND  (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   ORDER BY r.submitted_at ASC;   -- oldest first — those need attention most
