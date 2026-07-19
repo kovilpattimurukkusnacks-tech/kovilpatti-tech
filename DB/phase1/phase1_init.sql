@@ -121,6 +121,26 @@ ALTER TABLE shops
   ADD CONSTRAINT fk_shops_updated_by FOREIGN KEY (updated_by) REFERENCES users(id) ON DELETE SET NULL;
 
 -- ------------------------------------------------------------
+-- 4a. refresh_tokens — long-lived session-renewal tokens
+--     A short access token (JWT) is exchanged for a fresh one via a
+--     refresh token, so an active user isn't logged out on JWT expiry.
+--     Only the SHA-256 hash of the raw token is stored. Rotated on every
+--     refresh (revoked_at + replaced_by_hash); reusing a revoked token
+--     revokes the whole family (theft defence).
+-- ------------------------------------------------------------
+CREATE TABLE refresh_tokens (
+  id               uuid         PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id          uuid         NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  token_hash       varchar(64)  NOT NULL UNIQUE,
+  expires_at       timestamptz  NOT NULL,
+  created_at       timestamptz  NOT NULL DEFAULT now(),
+  revoked_at       timestamptz,
+  replaced_by_hash varchar(64)
+);
+
+CREATE INDEX idx_refresh_tokens_user ON refresh_tokens(user_id);
+
+-- ------------------------------------------------------------
 -- 5. categories — nested (self-FK parent_id, NULL = root).
 --    Unlimited depth; per client #1 (28-May-2026) the tree can nest
 --    arbitrarily and products can sit on any node (root OR sub-category).
