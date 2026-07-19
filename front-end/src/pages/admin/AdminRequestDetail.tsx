@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useState } from 'react'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
-import { ArrowLeft, Ban, Pencil, Printer, Undo2, Star, Edit2, Check, X as XIcon } from 'lucide-react'
+import { ArrowLeft, Ban, Pencil, Printer, Undo2, Star, Edit2, Check, X as XIcon, PauseCircle } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
   IconButton, Paper, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
@@ -15,7 +15,7 @@ import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
-  useRevokeStockRequest, useSetSpecial,
+  useRevokeStockRequest, useSetSpecial, useHoldStockRequest,
 } from '../../hooks/useStockRequests'
 import type { StockRequestItemDto } from '../../api/stock-requests/types'
 import { ValidationError } from '../../api/errors'
@@ -43,6 +43,7 @@ export default function AdminRequestDetail() {
   const cancelMutation  = useCancelStockRequest()
   const editQtyMutation = useEditDispatchedQty()
   const revokeMutation  = useRevokeStockRequest()
+  const holdMutation    = useHoldStockRequest()
   const setSpecialMutation = useSetSpecial()
   // Inline edit state for the special_label — mirrors ShopRequestDetail's
   // affordance. Admin gets the same rename capability the shop has
@@ -74,6 +75,7 @@ export default function AdminRequestDetail() {
   }
   const [cancelConfirm, setCancelConfirm]   = useState(false)
   const [revokeConfirm, setRevokeConfirm]   = useState(false)
+  const [holdConfirm,   setHoldConfirm]     = useState(false)
   // Post-completion qty edit dialog state. `editingItem` is the row being
   // edited (null = dialog closed). The qty field is a string so we can
   // distinguish "" (untouched / cleared) from "0" (valid edit to zero).
@@ -148,7 +150,11 @@ export default function AdminRequestDetail() {
   const canRevoke     =
     (request.status === 'Approved' && !isReturn) ||
     request.status === 'Rejected' ||
-    request.status === 'Cancelled'
+    request.status === 'Cancelled' ||
+    request.status === 'On-Hold'   // un-hold → Pending (18-Jul-2026)
+  // Hold is Order-only, offered while still Pending or Approved (before
+  // dispatch freezes the request). Not offered once already On-Hold.
+  const canHold       = !isReturn && (request.status === 'Pending' || request.status === 'Approved')
 
   const flatErr = (e: unknown) =>
     e instanceof ValidationError ? e.flatten()
@@ -163,6 +169,11 @@ export default function AdminRequestDetail() {
   const handleRevoke = async () => {
     try { await revokeMutation.mutateAsync(request.id) }
     finally { setRevokeConfirm(false) }
+  }
+
+  const handleHold = async () => {
+    try { await holdMutation.mutateAsync(request.id) }
+    finally { setHoldConfirm(false) }
   }
 
   const openQtyEdit = (item: StockRequestItemDto) => {
@@ -597,6 +608,40 @@ export default function AdminRequestDetail() {
         </Alert>
       )}
 
+      {/* On-Hold banner — a held request is parked while it waits on a late
+          special item. It's excluded from the cumulative kitchen print until
+          approved. Un-hold sends it back to Pending; the shop / inventory can
+          continue the normal flow. (18-Jul-2026.) */}
+      {request.status === 'On-Hold' && (
+        <Alert
+          severity="info"
+          icon={<PauseCircle className="w-5 h-5" />}
+          sx={{ mb: 2, '& .MuiAlert-action': { pt: 0, alignItems: 'center' } }}
+          action={canRevoke ? (
+            <Button
+              variant="contained"
+              size="small"
+              startIcon={<Undo2 className="w-3.5 h-3.5" />}
+              onClick={() => setRevokeConfirm(true)}
+              disabled={revokeMutation.isPending}
+              sx={{
+                textTransform: 'none',
+                fontWeight: 700,
+                whiteSpace: 'nowrap',
+                bgcolor: '#1F1F1F',
+                color: '#FFFFFF',
+                '&:hover': { bgcolor: '#0A0A0A' },
+              }}
+            >
+              Un-hold
+            </Button>
+          ) : undefined}
+        >
+          <strong>On-Hold</strong> — waiting on a late special item. Excluded
+          from the cumulative kitchen print until approved.
+        </Alert>
+      )}
+
       <Paper elevation={0} sx={{ p: 2, mb: 2, borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFF8DC' }}>
         {/* Approval step removed from the workflow. Timeline is now Submitted →
             Dispatched → Received. (Legacy approvedAt/approvedByName values on
@@ -740,7 +785,7 @@ export default function AdminRequestDetail() {
           bgcolor: '#FFFFFF',
         }}
       >
-        {(canEdit || (canRevoke && request.status === 'Approved') || canCancel) && (
+        {(canEdit || (canRevoke && request.status === 'Approved') || canHold || canCancel) && (
           <Box
             sx={{
               display: 'flex',
@@ -785,6 +830,23 @@ export default function AdminRequestDetail() {
                 Revoke Approval
               </Button>
             )}
+            {/* Hold — park a late-special Order. Drops it out of the
+                cumulative kitchen print until re-approved. Orders only. */}
+            {canHold && (
+              <Button
+                variant="outlined"
+                startIcon={<PauseCircle className="w-4 h-4" />}
+                onClick={() => setHoldConfirm(true)}
+                disabled={holdMutation.isPending}
+                sx={{
+                  textTransform: 'none', fontWeight: 600,
+                  borderColor: '#546E7A', color: '#546E7A', bgcolor: '#FFFFFF',
+                  '&:hover': { borderColor: '#546E7A', bgcolor: 'rgba(84,110,122,0.06)' },
+                }}
+              >
+                Hold
+              </Button>
+            )}
             {canCancel && (
               <Button
                 variant="outlined"
@@ -825,6 +887,7 @@ export default function AdminRequestDetail() {
         title={
           request.status === 'Rejected'  ? 'Undo this rejection?'
           : request.status === 'Cancelled' ? 'Undo this cancel?'
+          : request.status === 'On-Hold'  ? 'Un-hold this request?'
           : 'Revoke this approval?'
         }
         message={
@@ -832,16 +895,29 @@ export default function AdminRequestDetail() {
             ? `This sends ${request.code} back to Pending and clears the rejection reason. The shop will see it as a fresh request again and the inventory can approve or reject it once more.`
             : request.status === 'Cancelled'
             ? `This sends ${request.code} back to Pending. The shop will be able to edit or submit the request again, and the inventory will see it in the Needs Action queue.`
+            : request.status === 'On-Hold'
+            ? `This lifts the hold and sends ${request.code} back to Pending, so it re-enters the normal flow and the cumulative kitchen print once approved.`
             : `This sends ${request.code} back to Pending. The shop will be able to edit it again, and the inventory can approve or reject it once more before dispatch.`
         }
         confirmLabel={
           request.status === 'Rejected'  ? 'Yes, Undo Rejection'
           : request.status === 'Cancelled' ? 'Yes, Undo Cancel'
+          : request.status === 'On-Hold'  ? 'Yes, Un-hold'
           : 'Yes, Revoke'
         }
         cancelLabel="Not yet"
         onConfirm={handleRevoke}
         onCancel={() => setRevokeConfirm(false)}
+      />
+
+      <ConfirmDialog
+        open={holdConfirm}
+        title="Put this request On-Hold?"
+        message={`${request.code} will be parked as On-Hold — use this when it's waiting on a late special item. It stays out of the cumulative kitchen print until approved. You can approve or un-hold it any time.`}
+        confirmLabel="Yes, Hold"
+        cancelLabel="Not yet"
+        onConfirm={handleHold}
+        onCancel={() => setHoldConfirm(false)}
       />
 
       {/* Post-completion qty edit dialog. Opens when the admin clicks the

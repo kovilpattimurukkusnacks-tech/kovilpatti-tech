@@ -463,15 +463,12 @@ export default function InventoryRequestDetail() {
   }
 
   // Approve / Reject / Revoke / Hold gates. Returns don't have an Approve step —
-  // they go Pending → Accepted directly — but Reject IS valid for either
-  // type. Revoke is Order-only (Returns have no Approved intermediate state).
-  // On-Hold parks a late-special Order; approving it again resumes the flow,
-  // so canApprove also covers the On-Hold state.
-  const canApprove = !isReturn && (request.status === 'Pending' || request.status === 'On-Hold')
-  // Reject also valid from On-Hold (special item fell through).
-  const canReject  = request.status === 'Pending' || request.status === 'On-Hold'
-  // Revoke → Pending from Approved/Rejected, and from On-Hold (un-hold
-  // without approving).
+  // they go Pending → Accepted directly — but Reject IS valid for either type.
+  // An On-Hold request offers ONLY Un-hold (no Approve/Reject) — the user
+  // un-holds it back to Pending first, then Approve/Reject reappear.
+  const canApprove = !isReturn && request.status === 'Pending'
+  const canReject  = request.status === 'Pending'
+  // Revoke → Pending from Approved/Rejected, and from On-Hold (Un-hold).
   const canRevoke  = !isReturn && (request.status === 'Approved' || request.status === 'Rejected' || request.status === 'On-Hold')
   // Hold is Order-only, available while still Pending or Approved (before
   // dispatch freezes the request). Not offered once already On-Hold.
