@@ -977,6 +977,110 @@ BEGIN
 END;
 $$;
 
+-- ============== Refresh tokens ===================================
+-- Long-lived session-renewal tokens (see refresh_tokens table). Only the
+-- SHA-256 hash of the raw token is stored. Rotated on every refresh.
+
+-- Issue a new refresh token (login + inside rotate).
+CREATE OR REPLACE FUNCTION fn_refresh_token_issue(
+  p_user_id    uuid,
+  p_token_hash varchar,
+  p_expires_at timestamptz
+)
+RETURNS uuid
+LANGUAGE sql AS $$
+  INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+  VALUES (p_user_id, p_token_hash, p_expires_at)
+  RETURNING id;
+$$;
+
+-- Validate + rotate. Returns user fields on success; NO ROWS on any failure
+-- (unknown / expired / revoked-reuse / deactivated user) → caller re-logins.
+-- Reusing an already-revoked token revokes the whole family (theft defence).
+CREATE OR REPLACE FUNCTION fn_refresh_token_rotate(
+  p_old_hash       varchar,
+  p_new_hash       varchar,
+  p_new_expires_at timestamptz
+)
+RETURNS TABLE (
+  id           uuid,
+  username     varchar,
+  full_name    varchar,
+  role         varchar,
+  shop_id      uuid,
+  inventory_id uuid,
+  active       boolean
+)
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_tok  refresh_tokens%ROWTYPE;
+  v_user users%ROWTYPE;
+BEGIN
+  SELECT * INTO v_tok FROM refresh_tokens WHERE token_hash = p_old_hash;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  IF v_tok.revoked_at IS NOT NULL THEN
+    UPDATE refresh_tokens
+      SET revoked_at = now()
+      WHERE user_id = v_tok.user_id AND revoked_at IS NULL;
+    RETURN;
+  END IF;
+
+  IF v_tok.expires_at <= now() THEN
+    RETURN;
+  END IF;
+
+  -- Qualify with the alias — the RETURNS TABLE out-columns (id, active)
+  -- otherwise shadow users.id / users.active.
+  SELECT * INTO v_user FROM users u
+    WHERE u.id = v_tok.user_id AND u.active = true AND u.is_deleted = false;
+  IF NOT FOUND THEN
+    RETURN;
+  END IF;
+
+  UPDATE refresh_tokens
+    SET revoked_at = now(), replaced_by_hash = p_new_hash
+    WHERE token_hash = p_old_hash;
+
+  INSERT INTO refresh_tokens (user_id, token_hash, expires_at)
+    VALUES (v_tok.user_id, p_new_hash, p_new_expires_at);
+
+  RETURN QUERY
+    SELECT v_user.id, v_user.username, v_user.full_name,
+           fn_user_role_label(v_user.role), v_user.shop_id, v_user.inventory_id,
+           v_user.active;
+END
+$$;
+
+-- Revoke a single refresh token (logout). True if a live token was revoked.
+CREATE OR REPLACE FUNCTION fn_refresh_token_revoke(p_token_hash varchar)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE refresh_tokens
+    SET revoked_at = now()
+    WHERE token_hash = p_token_hash AND revoked_at IS NULL;
+  RETURN FOUND;
+END
+$$;
+
+-- Revoke every live refresh token for a user. Returns the number revoked.
+CREATE OR REPLACE FUNCTION fn_refresh_token_revoke_all_for_user(p_user_id uuid)
+RETURNS integer
+LANGUAGE plpgsql AS $$
+DECLARE
+  v_count integer;
+BEGIN
+  UPDATE refresh_tokens
+    SET revoked_at = now()
+    WHERE user_id = p_user_id AND revoked_at IS NULL;
+  GET DIAGNOSTICS v_count = ROW_COUNT;
+  RETURN v_count;
+END
+$$;
+
 COMMIT;
 
 -- ============================================================
