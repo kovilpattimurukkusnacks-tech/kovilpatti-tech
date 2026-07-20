@@ -68,10 +68,12 @@ export const STATUS_CHIP_SX: Partial<Record<RequestStatus, SxProps<Theme>>> = {
     '& .MuiChip-label': { fontWeight: 700 },
   },
   'On-Hold': {
-    // Blue-grey 600 — a muted "parked / paused" hue, clearly separate from
-    // Pending's amber and Dispatched's purple.
+    // Filled blue-grey 600 — a solid "parked / paused" chip so it reads as
+    // clearly coloured (an outlined blue-grey looked grey at chip size) and
+    // stays distinct from Pending's amber and Dispatched's purple.
+    backgroundColor: '#546E7A',
     borderColor: '#546E7A',
-    color: '#546E7A',
+    color: '#FFFFFF',
     fontWeight: 700,
     '& .MuiChip-label': { fontWeight: 700 },
   },

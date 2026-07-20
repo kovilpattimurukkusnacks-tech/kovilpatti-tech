@@ -2,24 +2,30 @@ using FluentValidation;
 using KovilpattiSnacks.Business.DTOs.Auth;
 using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
+using KovilpattiSnacks.Business.Settings;
+using KovilpattiSnacks.Repository.Entities;
 using KovilpattiSnacks.Repository.Interface;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
 using Microsoft.Extensions.Logging;
+using Microsoft.Extensions.Options;
 using ValidationException = KovilpattiSnacks.Business.Exceptions.ValidationException;
 
 namespace KovilpattiSnacks.Business.Implementation;
 
 public class AuthService(
     IUserRepository users,
+    IRefreshTokenRepository refreshTokens,
     IPasswordHasher hasher,
     IJwtTokenGenerator tokenGen,
     IValidator<LoginRequest> validator,
     IMemoryCache cache,
     IHttpContextAccessor httpAccessor,
+    IOptions<JwtSettings> jwtOptions,
     ILogger<AuthService> logger
 ) : IAuthService
 {
+    private readonly int _refreshExpiryDays = jwtOptions.Value.RefreshTokenExpiryDays;
     // Constant-time-defence dummy. Generated once at type init so an attacker
     // can't measure the difference between "user not found" (no BCrypt) and
     // "wrong password" (BCrypt runs against the real hash). Now BCrypt always
@@ -84,13 +90,60 @@ public class AuthService(
         // a typo earlier in the session don't carry penalty forward.
         cache.Remove(ipKey);
 
-        var (token, expiresAt) = tokenGen.Generate(user);
-
         logger.LogInformation("Login succeeded for user {UserId} ({Username})", user.Id, user.Username);
 
+        var refreshToken = await IssueRefreshTokenAsync(user.Id, ct);
+        return BuildResponse(user, refreshToken);
+    }
+
+    public async Task<LoginResponse> RefreshAsync(RefreshRequest request, CancellationToken ct = default)
+    {
+        var presented = request.RefreshToken?.Trim();
+        if (string.IsNullOrEmpty(presented))
+            throw new UnauthorizedException("Session expired. Please sign in again.");
+
+        // Rotate: the old token is validated + revoked and a new one issued in a
+        // single SP call. A null result means the token was unknown, expired,
+        // already used (reuse → whole family revoked), or the user is disabled.
+        var newRaw     = RefreshTokenUtil.NewRawToken();
+        var newExpires = DateTimeOffset.UtcNow.AddDays(_refreshExpiryDays);
+        var user = await refreshTokens.RotateAsync(
+            RefreshTokenUtil.Hash(presented), RefreshTokenUtil.Hash(newRaw), newExpires, ct);
+
+        if (user is null)
+        {
+            logger.LogWarning("Refresh rejected — invalid/expired/revoked refresh token.");
+            throw new UnauthorizedException("Session expired. Please sign in again.");
+        }
+
+        logger.LogInformation("Access token refreshed for user {UserId} ({Username})", user.Id, user.Username);
+        return BuildResponse(user, newRaw);
+    }
+
+    public async Task LogoutAsync(LogoutRequest request, CancellationToken ct = default)
+    {
+        var presented = request.RefreshToken?.Trim();
+        if (string.IsNullOrEmpty(presented)) return;   // nothing to revoke
+        await refreshTokens.RevokeAsync(RefreshTokenUtil.Hash(presented), ct);
+    }
+
+    // Issue a fresh refresh token: hand the raw value to the caller, store only
+    // its hash.
+    private async Task<string> IssueRefreshTokenAsync(Guid userId, CancellationToken ct)
+    {
+        var raw = RefreshTokenUtil.NewRawToken();
+        var expires = DateTimeOffset.UtcNow.AddDays(_refreshExpiryDays);
+        await refreshTokens.IssueAsync(userId, RefreshTokenUtil.Hash(raw), expires, ct);
+        return raw;
+    }
+
+    private LoginResponse BuildResponse(User user, string refreshToken)
+    {
+        var (token, expiresAt) = tokenGen.Generate(user);
         return new LoginResponse(
             Token: token,
             ExpiresAt: expiresAt,
+            RefreshToken: refreshToken,
             UserId: user.Id,
             Username: user.Username,
             FullName: user.FullName,
