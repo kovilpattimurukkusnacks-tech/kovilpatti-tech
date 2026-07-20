@@ -109,7 +109,7 @@ export default function DashboardHero({ data, utilities, godownExpenses, loading
         value={totals.godown}
         loading={loading}
         icon={<Warehouse size={16} />}
-        sparkColor="#8A6D3B"
+        sparkColor="#6D4C41"
         tooltip="Inventory-role staff salary paid/deducted in this date range. Company-wide — not broken out per shop like Shop Expenses, since godowns aren't shop-scoped."
       />
       <KpiCard
