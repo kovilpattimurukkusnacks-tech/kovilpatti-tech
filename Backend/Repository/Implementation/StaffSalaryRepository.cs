@@ -71,4 +71,12 @@ public class StaffSalaryRepository(IDbConnectionFactory factory) : IStaffSalaryR
             sql, new { p_staff_id = staffId, p_from = from, p_to = to }, cancellationToken: ct));
         return rows.ToList();
     }
+
+    public async Task<StaffSalaryTransaction?> GetLastBonusAsync(Guid staffId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_staff_salary_last_bonus(@p_staff_id)";
+        return await conn.QuerySingleOrDefaultAsync<StaffSalaryTransaction>(
+            new CommandDefinition(sql, new { p_staff_id = staffId }, cancellationToken: ct));
+    }
 }

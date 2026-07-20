@@ -15,4 +15,7 @@ public interface IStaffSalaryService
     /// Signed, dated Pay/Deduct history for one staff member.
     Task<IReadOnlyList<StaffSalaryTransactionDto>> GetTransactionsAsync(
         Guid staffId, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// Most recent Bonus given to this staff (all-time) — null if none yet.
+    Task<StaffSalaryTransactionDto?> GetLastBonusAsync(Guid staffId, CancellationToken ct = default);
 }

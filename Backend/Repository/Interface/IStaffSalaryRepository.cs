@@ -35,4 +35,8 @@ public interface IStaffSalaryRepository
     /// "hover the Net figure" breakdown on the Salary tab.
     Task<List<StaffSalaryTransaction>> GetTransactionsAsync(
         Guid staffId, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// Most recent Bonus-tagged Pay entry for one staff (all-time, not
+    /// month-scoped) — null if none has ever been given.
+    Task<StaffSalaryTransaction?> GetLastBonusAsync(Guid staffId, CancellationToken ct = default);
 }

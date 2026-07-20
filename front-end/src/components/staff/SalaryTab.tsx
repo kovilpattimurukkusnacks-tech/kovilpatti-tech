@@ -4,14 +4,16 @@ import {
   TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
 import type { LucideIcon } from 'lucide-react'
-import { CircleCheck, Clock, Info, MinusCircle, Wallet } from 'lucide-react'
+import { CircleCheck, Clock, Gift, Info, MinusCircle, Wallet } from 'lucide-react'
 import SetSalaryDialog from './SetSalaryDialog'
 import PaySalaryDialog from './PaySalaryDialog'
 import DeductSalaryDialog from './DeductSalaryDialog'
+import BonusDialog from './BonusDialog'
 import { istFirstOfThisMonth } from '../../utils/istDate'
 import { formatINR } from '../../utils/format'
 import {
-  useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary, useStaffSalaryTransactions,
+  useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary,
+  useStaffSalaryTransactions, useStaffLastBonus,
 } from '../../hooks/useStaffSalaries'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
 import { ValidationError } from '../../api/errors'
@@ -46,6 +48,12 @@ const STATUS_COLOR: Record<Status, 'success' | 'warning' | 'error' | 'default'> 
   Paid: 'success', Partial: 'warning', Pending: 'error', 'Not set': 'default',
 }
 
+// Vertical divider between header columns — matches the column separator
+// every DataGrid-based list page (Staff Details tab, Products, Shops, …)
+// already shows by default; this table uses plain MUI Table so it needs
+// the same line added explicitly. Not applied to the last column.
+const HEAD_SEP_SX = { borderRight: '1px solid rgba(31, 31, 31, 0.18)' }
+
 const STATUS_MEANING: Record<Status, string> = {
   'Not set': 'No monthly salary configured yet for this staff.',
   Pending:   'Monthly salary is set, but nothing has been paid this month yet.',
@@ -74,6 +82,7 @@ export default function SalaryTab() {
   const [setDialogOpen, setSetDialogOpen] = useState(false)
   const [payTarget, setPayTarget] = useState<StaffSalaryRowDto | null>(null)
   const [deductTarget, setDeductTarget] = useState<StaffSalaryRowDto | null>(null)
+  const [bonusTarget, setBonusTarget] = useState<StaffSalaryRowDto | null>(null)
 
   const totals = useMemo(() => {
     const totalPayroll = rows.reduce((sum, r) => sum + r.monthlyAmount, 0)
@@ -102,6 +111,14 @@ export default function SalaryTab() {
     if (!deductTarget) return
     await deduct.mutateAsync({ staffId: deductTarget.staffId, ...values })
     setDeductTarget(null)
+  }
+
+  // A Bonus is just a Pay entry with mode fixed to "Bonus" — reuses the
+  // exact same endpoint/ledger/tally as a regular payment, see BonusDialog.
+  const handleBonus = async (values: { amount: number; txnDate: string; note: string }) => {
+    if (!bonusTarget) return
+    await pay.mutateAsync({ staffId: bonusTarget.staffId, mode: 'Bonus', ...values })
+    setBonusTarget(null)
   }
 
   return (
@@ -139,13 +156,13 @@ export default function SalaryTab() {
         <Table size="small">
           <TableHead>
             <TableRow>
-              <TableCell>Staff</TableCell>
-              <TableCell>Mapped To</TableCell>
-              <TableCell align="right">Monthly Salary</TableCell>
-              <TableCell align="right">Paid</TableCell>
-              <TableCell align="right">Deducted</TableCell>
-              <TableCell align="right">Net</TableCell>
-              <TableCell>
+              <TableCell sx={HEAD_SEP_SX}>Staff</TableCell>
+              <TableCell sx={HEAD_SEP_SX}>Mapped To</TableCell>
+              <TableCell align="right" sx={HEAD_SEP_SX}>Monthly Salary</TableCell>
+              <TableCell align="right" sx={HEAD_SEP_SX}>Paid</TableCell>
+              <TableCell align="right" sx={HEAD_SEP_SX}>Deducted</TableCell>
+              <TableCell align="right" sx={HEAD_SEP_SX}>Net</TableCell>
+              <TableCell sx={HEAD_SEP_SX}>
                 <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
                   Status
                   <Tooltip
@@ -213,6 +230,7 @@ export default function SalaryTab() {
                           </Button>
                         </span>
                       </Tooltip>
+                      <BonusButton row={row} disabled={status === 'Not set'} onClick={() => setBonusTarget(row)} />
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -253,7 +271,46 @@ export default function SalaryTab() {
         onClose={() => setDeductTarget(null)}
         onSave={handleDeduct}
       />
+
+      <BonusDialog
+        open={!!bonusTarget}
+        staff={bonusTarget}
+        submitting={pay.isPending}
+        submitError={mutationErrorMessage(pay.error)}
+        onClose={() => setBonusTarget(null)}
+        onSave={handleBonus}
+      />
     </Box>
+  )
+}
+
+// Bonus button — hovering shows when this staff last got a bonus (client
+// req: "oru user ku last ah epo bonus kuduthanga nu history madhiri
+// katanum"). Lazy: the last-bonus query only fires once the tooltip opens.
+function BonusButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
+  const [open, setOpen] = useState(false)
+  const lastBonus = useStaffLastBonus(row.staffId, open)
+
+  const content = disabled
+    ? 'Set a monthly salary for this staff first'
+    : lastBonus.isLoading
+      ? 'Loading…'
+      : !lastBonus.data
+        ? 'No bonus given yet.'
+        : `Last bonus: ${fmtShortDate(lastBonus.data.txnDate)} — ${formatINR(lastBonus.data.amount)}`
+
+  return (
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
+      <span>
+        <Button
+          size="small" variant="outlined" color="warning" disabled={disabled}
+          startIcon={<Gift size={14} />}
+          onClick={onClick} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
+        >
+          Bonus
+        </Button>
+      </span>
+    </Tooltip>
   )
 }
 

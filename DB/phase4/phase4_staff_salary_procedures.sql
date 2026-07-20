@@ -227,6 +227,38 @@ LANGUAGE sql STABLE AS $$
   ORDER BY txn_date DESC;
 $$;
 
+-- ============== Staff Salary — Bonus (18-Jul-2026) =================
+
+-- A Bonus is recorded through the existing Pay flow with mode='Bonus'
+-- (no new table/column — same reuse as Cash/UPI/Bank Transfer, just
+-- another freeSolo mode value), so this just needs to find the most
+-- recent such entry for the "last bonus given" note on the Bonus button.
+CREATE OR REPLACE FUNCTION fn_staff_salary_last_bonus(p_staff_id uuid)
+RETURNS TABLE (
+  txn_date date,
+  amount   numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT txn_date, amount FROM (
+    SELECT e.expense_date AS txn_date, e.amount
+    FROM shop_utility_expenses e
+    WHERE e.staff_id   = p_staff_id
+      AND e.is_deleted = false
+      AND e.category   = 'Staff Salary'
+      AND e.amount > 0
+      AND e.note ILIKE '%via Bonus%'
+    UNION ALL
+    SELECT t.txn_date, t.amount
+    FROM staff_salary_other_transactions t
+    WHERE t.staff_id   = p_staff_id
+      AND t.is_deleted  = false
+      AND t.amount > 0
+      AND t.note ILIKE '%via Bonus%'
+  ) x
+  ORDER BY txn_date DESC
+  LIMIT 1;
+$$;
+
 -- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------

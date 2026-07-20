@@ -11,6 +11,8 @@ export const staffSalariesKeys = {
     [...staffSalariesKeys.all, 'list', from, to] as const,
   transactions: (staffId: string, from: string, to: string) =>
     [...staffSalariesKeys.all, 'transactions', staffId, from, to] as const,
+  lastBonus: (staffId: string) =>
+    [...staffSalariesKeys.all, 'last-bonus', staffId] as const,
 }
 
 export function useStaffSalaries(from: string, to: string) {
@@ -26,6 +28,16 @@ export function useStaffSalaryTransactions(staffId: string, from: string, to: st
   return useQuery({
     queryKey: staffSalariesKeys.transactions(staffId, from, to),
     queryFn: () => staffSalariesApi.transactions(staffId, from, to),
+    enabled,
+  })
+}
+
+/** Lazy — most recent Bonus given to this staff (all-time), for the
+ *  "last bonus given" hover note on the Bonus button. */
+export function useStaffLastBonus(staffId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: staffSalariesKeys.lastBonus(staffId),
+    queryFn: () => staffSalariesApi.lastBonus(staffId),
     enabled,
   })
 }

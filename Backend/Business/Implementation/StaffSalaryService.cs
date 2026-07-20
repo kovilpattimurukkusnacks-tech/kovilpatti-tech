@@ -91,6 +91,13 @@ public class StaffSalaryService(
         return rows.Select(r => new StaffSalaryTransactionDto(r.Txn_Date, r.Amount, r.Note)).ToList();
     }
 
+    public async Task<StaffSalaryTransactionDto?> GetLastBonusAsync(Guid staffId, CancellationToken ct = default)
+    {
+        await GetManageableStaffAsync(staffId, ct);
+        var row = await staffSalaries.GetLastBonusAsync(staffId, ct);
+        return row is null ? null : new StaffSalaryTransactionDto(row.Txn_Date, row.Amount, row.Note);
+    }
+
     // ───────── Helpers ─────────
 
     /// Resolves the target staff member and confirms they're a manageable
