@@ -131,7 +131,11 @@ export default function SalaryTab() {
         <SalaryKpiCard label="Pending This Month" value={totals.pending} icon={Clock} accent={totals.pending > 0 ? 'danger' : undefined} />
       </Box>
 
-      <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
+      {/* Cream background scoped to just this table (sx, not the shared
+          .data-page-paper class) — every other data table in the app
+          (Staff Details tab, Products, Shops, …) stays on the standard
+          white card look; only this Salary tab is going cream. */}
+      <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5, backgroundColor: '#FFFBE6 !important' }} elevation={0}>
         <Table size="small">
           <TableHead>
             <TableRow>
