@@ -122,7 +122,7 @@ export default function SalaryTab() {
   // single-line header, and compact icon-button actions as everywhere else.
   const columns = useMemo<GridColDef<StaffSalaryRowDto>[]>(() => [
     {
-      field: 'fullName', headerName: 'Staff', flex: 1.1, minWidth: 150, sortable: false, filterable: false,
+      field: 'fullName', headerName: 'Staff', flex: 1, minWidth: 100, sortable: false, filterable: false,
       renderCell: ({ row }) => (
         <Box>
           <Box sx={{ fontWeight: 700 }}>{row.fullName}</Box>
@@ -131,30 +131,30 @@ export default function SalaryTab() {
       ),
     },
     {
-      field: 'mappedTo', headerName: 'Mapped To', flex: 1.2, minWidth: 170, sortable: false, filterable: false,
+      field: 'mappedTo', headerName: 'Mapped To', flex: 1, minWidth: 105, sortable: false, filterable: false,
       valueGetter: (_v, row) => row.shopName ?? row.inventoryName ?? '—',
       renderCell: ({ row }) => (
         <Box>
           <Box>{row.shopName ?? row.inventoryName ?? '—'}</Box>
           {!row.inAccounts && (
-            <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700 }}>→ Godown Expenses in Accounts</Box>
+            <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700, lineHeight: 1.2 }}>→ Godown Expenses</Box>
           )}
         </Box>
       ),
     },
     {
-      field: 'monthlyAmount', headerName: 'Monthly Salary', width: 140, align: 'right', headerAlign: 'right',
+      field: 'monthlyAmount', headerName: 'Monthly Salary', width: 100, align: 'right', headerAlign: 'right',
       sortable: false, filterable: false,
       valueFormatter: (value) => formatINR(value as number),
     },
     {
-      field: 'paid', headerName: 'Paid', width: 120, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'paid', headerName: 'Paid', width: 80, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
       renderCell: ({ row }) => (
         <span style={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</span>
       ),
     },
     {
-      field: 'deducted', headerName: 'Deducted', width: 130, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'deducted', headerName: 'Deducted', width: 90, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
       renderCell: ({ row }) => (
         <span style={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
           {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
@@ -162,11 +162,11 @@ export default function SalaryTab() {
       ),
     },
     {
-      field: 'net', headerName: 'Net', width: 140, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'net', headerName: 'Net', width: 90, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
       renderCell: ({ row }) => <NetCell row={row} from={from} to={to} />,
     },
     {
-      field: 'status', headerName: 'Status', width: 140, sortable: false, filterable: false,
+      field: 'status', headerName: 'Status', width: 100, sortable: false, filterable: false,
       renderHeader: () => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           Status
@@ -192,12 +192,12 @@ export default function SalaryTab() {
       },
     },
     {
-      field: 'actions', headerName: 'Actions', width: 150, align: 'right', headerAlign: 'right',
+      field: 'actions', headerName: 'Actions', width: 115, align: 'right', headerAlign: 'right',
       sortable: false, filterable: false,
       renderCell: ({ row }) => {
         const disabled = rowStatus(row) === 'Not set'
         return (
-          <Box sx={{ display: 'flex', gap: 0.25, justifyContent: 'flex-end' }}>
+          <Box sx={{ display: 'flex', gap: 0, justifyContent: 'flex-end' }}>
             <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Pay'}>
               <span>
                 <IconButton size="small" color="success" disabled={disabled} onClick={() => setPayTarget(row)}>
