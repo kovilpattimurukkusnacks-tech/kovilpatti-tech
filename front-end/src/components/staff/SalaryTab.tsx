@@ -246,7 +246,7 @@ export default function SalaryTab() {
         <SalaryKpiCard label="Pending This Month" value={totals.pending} icon={Clock} accent={totals.pending > 0 ? 'danger' : undefined} />
       </Box>
 
-      <Paper className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
+      <Paper className="data-page-paper" sx={{ borderRadius: 2.5, backgroundColor: '#FFFBE6 !important' }} elevation={0}>
         <DataGrid
           className="data-page-grid"
           rows={rows}
@@ -257,6 +257,20 @@ export default function SalaryTab() {
           disableRowSelectionOnClick
           disableColumnMenu
           localeText={{ noRowsLabel: 'No staff configured yet.' }}
+          // Scoped to just this table (sx, not the shared .data-page-grid
+          // class other list pages rely on) — the shared class only creams
+          // the header row and data rows, leaving the grid's own root/filler
+          // background white wherever a row doesn't reach. Cover every
+          // internal container slot that can show through.
+          sx={{
+            backgroundColor: '#FFFBE6 !important',
+            '& .MuiDataGrid-main': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-virtualScroller': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-virtualScrollerContent': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-filler': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-scrollbarFiller': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-footerContainer': { backgroundColor: '#FFF8DC !important' },
+          }}
         />
       </Paper>
 
