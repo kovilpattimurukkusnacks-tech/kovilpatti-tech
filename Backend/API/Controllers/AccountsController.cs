@@ -62,6 +62,15 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<ActionResult<IReadOnlyList<AccountsUtilityRowDto>>> Utilities([FromQuery] AccountsFilters filters, CancellationToken ct)
         => Ok(await accounts.GetUtilitiesAsync(filters, ct));
 
+    /// <summary>
+    /// Company-wide Inventory-role staff salary total in the date range
+    /// (18-Jul-2026). Only From/To are honoured — godowns aren't shop-scoped
+    /// like the rest of Accounts. Feeds Net Profit as its own line item.
+    /// </summary>
+    [HttpGet("godown-expenses")]
+    public async Task<ActionResult<AccountsGodownExpensesDto>> GodownExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetGodownExpensesAsync(filters, ct));
+
     // ──────── XLSX export endpoints ────────
     //
     // Each export passes the raw typed value (decimal / long / DateTimeOffset

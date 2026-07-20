@@ -164,6 +164,25 @@ LANGUAGE sql STABLE AS $$
   ORDER BY u.full_name;
 $$;
 
+-- ============== Accounts hook — Godown Expenses ===================
+
+-- Company-wide total of Inventory-role staff Pay/Deduct in range.
+-- Godowns aren't shop-scoped the way Accounts' per-shop breakdown is, so
+-- this feeds the overall Net Profit figure as its own line (alongside,
+-- not blended into, per-shop Staff Salary/Utilities).
+CREATE OR REPLACE FUNCTION fn_accounts_godown_expenses(
+  p_from date,
+  p_to   date
+)
+RETURNS numeric
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(SUM(amount), 0)::numeric(14,2)
+  FROM staff_salary_other_transactions
+  WHERE is_deleted = false
+    AND txn_date >= p_from
+    AND txn_date <= p_to;
+$$;
+
 -- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------

@@ -131,7 +131,7 @@ export default function DeductSalaryDialog({
           <Box sx={{ fontSize: 12, color: '#64748b' }}>
             {staff.inAccounts
               ? 'This reduces the net Staff Salary figure for this staff in Accounts for this month.'
-              : 'This staff member has no shop assigned — this deduction is tracked here only and will not appear in Accounts.'}
+              : 'This staff member has no shop assigned — this reduces the company-wide Godown Expenses figure in Accounts instead of a per-shop line.'}
           </Box>
 
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}

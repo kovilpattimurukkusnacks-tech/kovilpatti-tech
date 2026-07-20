@@ -24,6 +24,7 @@ export const accountsKeys = {
   adjustments: (f: AccountsFilters) => ['accounts', 'adjustments',  f] as const,
   inTransit:   (f: AccountsFilters) => ['accounts', 'in-transit',   f] as const,
   utilities:   (f: AccountsFilters) => ['accounts', 'utilities',    f] as const,
+  godownExpenses: (f: AccountsFilters) => ['accounts', 'godown-expenses', f] as const,
 }
 
 export function useAccountsSummary(filters: AccountsFilters) {
@@ -91,6 +92,17 @@ export function useAccountsUtilities(filters: AccountsFilters) {
   return useQuery({
     queryKey: accountsKeys.utilities(filters),
     queryFn:  () => accountsApi.utilities(filters),
+    staleTime: STALE_TIME,
+  })
+}
+
+/** Company-wide Inventory-role staff salary total (18-Jul-2026) — godowns
+ *  aren't shop-scoped, so this is a single figure feeding Net Profit as its
+ *  own line item, separate from the per-shop Utilities breakdown above. */
+export function useAccountsGodownExpenses(filters: AccountsFilters) {
+  return useQuery({
+    queryKey: accountsKeys.godownExpenses(filters),
+    queryFn:  () => accountsApi.godownExpenses(filters),
     staleTime: STALE_TIME,
   })
 }

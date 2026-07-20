@@ -51,4 +51,10 @@ public interface IAccountsRepository
         DateOnly from, DateOnly to,
         Guid[]? shopIds,
         CancellationToken ct = default);
+
+    /// Company-wide total of Inventory-role staff Pay/Deduct in range — no
+    /// shop/inventory/category filter, godowns aren't scoped that way.
+    Task<decimal> GetGodownExpensesAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default);
 }

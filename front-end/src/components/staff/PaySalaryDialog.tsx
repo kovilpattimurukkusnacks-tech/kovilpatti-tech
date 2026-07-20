@@ -129,8 +129,8 @@ export default function PaySalaryDialog({
           <TextField label="Note (optional)" value={note} onChange={e => setNote(e.target.value)} size="small" placeholder="e.g. July salary, part payment" disabled={submitting} />
 
           {!staff.inAccounts && (
-            <Box sx={{ fontSize: 12, color: '#C62828', fontWeight: 600 }}>
-              This staff member has no shop assigned — this payment is tracked here only and will not appear in Accounts.
+            <Box sx={{ fontSize: 12, color: '#8A6D3B', fontWeight: 600 }}>
+              This staff member has no shop assigned — this payment posts to the company-wide Godown Expenses line in Accounts instead of a per-shop line.
             </Box>
           )}
 

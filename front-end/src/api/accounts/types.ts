@@ -197,6 +197,14 @@ export type AccountsInTransitDto = {
   specialAmount:       number
 }
 
+/** Company-wide total of Inventory-role staff Pay/Deduct in the date range
+ *  (18-Jul-2026). Godowns aren't shop-scoped, so this is a single figure —
+ *  not a per-shop breakdown like AccountsUtilityRowDto — that feeds Net
+ *  Profit as its own line item alongside Shop Expenses. */
+export type AccountsGodownExpensesDto = {
+  amount: number
+}
+
 /** One row per (shop, utility category) in the selected date range. Powers
  *  the Net Profit KPI + Utilities columns (15-Jul-2026). Shops with zero
  *  utilities in range are absent — treat missing shops as ₹0. */

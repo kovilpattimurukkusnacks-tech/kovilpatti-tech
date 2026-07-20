@@ -10,7 +10,7 @@ import ProfitByShopChart from '../../components/dashboard/ProfitByShopChart'
 import ProfitByCategoryDonut from '../../components/dashboard/ProfitByCategoryDonut'
 import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import { dateRangeLabel } from '../../components/DateRangeFilter'
-import { useAccountsTrend, useAccountsUtilities } from '../../hooks/useAccounts'
+import { useAccountsTrend, useAccountsUtilities, useAccountsGodownExpenses } from '../../hooks/useAccounts'
 import { useShops } from '../../hooks/useShops'
 import { istToday } from '../../utils/istDate'
 import type { AccountsFilters, AccountsGrouping } from '../../api/accounts/types'
@@ -81,6 +81,9 @@ export default function AdminDashboard() {
 
   const trend     = useAccountsTrend(filters)
   const utilities = useAccountsUtilities(filters)
+  // Godown Expenses (18-Jul-2026) — company-wide Inventory staff salary,
+  // feeds Net Profit as its own line alongside Shop Expenses.
+  const godownExpenses = useAccountsGodownExpenses(filters)
 
   // Collapsed-panel pills: date range + one pill per selected shop (by name).
   const activePills: FilterPill[] = [
@@ -119,7 +122,8 @@ export default function AdminDashboard() {
         <DashboardHero
           data={trend.data}
           utilities={utilities.data}
-          loading={trend.isLoading || utilities.isLoading}
+          godownExpenses={godownExpenses.data?.amount}
+          loading={trend.isLoading || utilities.isLoading || godownExpenses.isLoading}
         />
 
         {/* All rupee values side by side, like the Accounts screen. */}

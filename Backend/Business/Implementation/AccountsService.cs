@@ -127,6 +127,16 @@ public class AccountsService(
             r.Category, r.Amount, r.Expense_Count)).ToList();
     }
 
+    public async Task<AccountsGodownExpensesDto> GetGodownExpensesAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Company-wide — only From/To are honoured, same narrowed surface
+        // as GetUtilitiesAsync above. Guard still validates the date range
+        // and re-checks the Admin role.
+        Guard(filters);
+        var amount = await accounts.GetGodownExpensesAsync(filters.From!.Value, filters.To!.Value, ct);
+        return new AccountsGodownExpensesDto(amount);
+    }
+
     // ──────── helpers ────────
 
     private void Guard(AccountsFilters filters)

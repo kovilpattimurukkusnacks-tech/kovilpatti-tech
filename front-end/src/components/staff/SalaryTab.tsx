@@ -117,7 +117,7 @@ export default function SalaryTab() {
       </Box>
 
       <Box sx={{ mb: 2, p: 1.5, borderRadius: 2, bgcolor: '#E8F5E9', border: '1px solid #2E7D32', fontSize: 13, color: '#1F1F1F' }}>
-        Every Pay / Deduct entry for a Shop User posts straight to the <b>Staff Salary</b> line in Admin Accounts — Net Profit updates automatically, no separate entry needed.
+        Every Pay / Deduct entry posts straight to Admin Accounts — Shop User entries post to the <b>Staff Salary</b> line per shop, Inventory entries post to the company-wide <b>Godown Expenses</b> line. Net Profit updates automatically, no separate entry needed.
       </Box>
 
       <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
@@ -146,7 +146,7 @@ export default function SalaryTab() {
                   <TableCell>
                     {row.shopName ?? row.inventoryName ?? '—'}
                     {!row.inAccounts && (
-                      <Box sx={{ fontSize: 10.5, color: '#C62828', fontWeight: 700 }}>not in Accounts</Box>
+                      <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700 }}>→ Godown Expenses in Accounts</Box>
                     )}
                   </TableCell>
                   <TableCell align="right">{formatINR(row.monthlyAmount)}</TableCell>
