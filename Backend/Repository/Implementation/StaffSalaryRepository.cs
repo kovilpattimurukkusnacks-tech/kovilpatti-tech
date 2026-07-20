@@ -53,4 +53,22 @@ public class StaffSalaryRepository(IDbConnectionFactory factory) : IStaffSalaryR
             p_note = note, p_txn_date = txnDate, p_user_id = userId,
         }, cancellationToken: ct));
     }
+
+    public async Task<bool> HasMonthlySalaryAsync(Guid staffId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_staff_salary_exists(@p_staff_id)";
+        return await conn.ExecuteScalarAsync<bool>(new CommandDefinition(
+            sql, new { p_staff_id = staffId }, cancellationToken: ct));
+    }
+
+    public async Task<List<StaffSalaryTransaction>> GetTransactionsAsync(
+        Guid staffId, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_staff_salary_transactions_list(@p_staff_id, @p_from, @p_to)";
+        var rows = await conn.QueryAsync<StaffSalaryTransaction>(new CommandDefinition(
+            sql, new { p_staff_id = staffId, p_from = from, p_to = to }, cancellationToken: ct));
+        return rows.ToList();
+    }
 }

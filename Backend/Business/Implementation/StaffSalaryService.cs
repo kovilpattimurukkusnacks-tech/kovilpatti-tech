@@ -50,6 +50,7 @@ public class StaffSalaryService(
         if (!validation.IsValid) throw new ValidationException(validation.Errors);
 
         var staff = await GetManageableStaffAsync(request.StaffId, ct);
+        await EnsureMonthlySalarySetAsync(staff.Id, ct);
         var userId = RequireUserId();
         var note = ComposeModeNote(request.Mode, request.Note);
 
@@ -65,6 +66,7 @@ public class StaffSalaryService(
         if (!validation.IsValid) throw new ValidationException(validation.Errors);
 
         var staff = await GetManageableStaffAsync(request.StaffId, ct);
+        await EnsureMonthlySalarySetAsync(staff.Id, ct);
         var userId = RequireUserId();
         var amount = -request.Amount;
 
@@ -81,6 +83,14 @@ public class StaffSalaryService(
         }
     }
 
+    public async Task<IReadOnlyList<StaffSalaryTransactionDto>> GetTransactionsAsync(
+        Guid staffId, DateOnly from, DateOnly to, CancellationToken ct = default)
+    {
+        await GetManageableStaffAsync(staffId, ct);
+        var rows = await staffSalaries.GetTransactionsAsync(staffId, from, to, ct);
+        return rows.Select(r => new StaffSalaryTransactionDto(r.Txn_Date, r.Amount, r.Note)).ToList();
+    }
+
     // ───────── Helpers ─────────
 
     /// Resolves the target staff member and confirms they're a manageable
@@ -92,6 +102,15 @@ public class StaffSalaryService(
         if (staff.Role == UserRole.Admin)
             throw new ForbiddenException("Cannot manage salary for an Admin account.");
         return staff;
+    }
+
+    /// Client req (18-Jul-2026): no Pay/Deduct until a monthly salary has
+    /// been set for this staff — Set Monthly Salary is a hard prerequisite,
+    /// not just a display convenience.
+    private async Task EnsureMonthlySalarySetAsync(Guid staffId, CancellationToken ct)
+    {
+        if (!await staffSalaries.HasMonthlySalaryAsync(staffId, ct))
+            throw new ForbiddenException("Set a monthly salary for this staff before recording a payment or deduction.");
     }
 
     private Guid RequireUserId()

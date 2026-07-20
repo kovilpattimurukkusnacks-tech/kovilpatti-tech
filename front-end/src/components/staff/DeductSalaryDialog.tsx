@@ -8,16 +8,10 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs from 'dayjs'
 import { MinusCircle, X } from 'lucide-react'
 import { istToday } from '../../utils/istDate'
+import AmountField from './AmountField'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
 
 const REASONS = ['Advance recovery', 'Fine / shortage', 'Other'] as const
-
-// Blocks the classic <input type="number"> footgun — browsers accept 'e'
-// (scientific notation) and +/- as valid characters even though the field
-// only ever holds a positive rupee amount.
-const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
-  if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
-}
 
 export default function DeductSalaryDialog({
   open, staff, submitting, submitError, onClose, onSave,
@@ -86,11 +80,7 @@ export default function DeductSalaryDialog({
           </Box>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField
-              label="Amount (₹)" type="number" value={amount} onChange={e => setAmount(e.target.value)}
-              onKeyDown={blockNonNumericKeys} required size="small" autoFocus disabled={submitting}
-              slotProps={{ htmlInput: { min: 0, step: '0.01' } }}
-            />
+            <AmountField label="Amount (₹)" value={amount} onChange={setAmount} required autoFocus disabled={submitting} />
             {/* freeSolo — the reasons below are suggestions, not a hard
                 list; a shop can type something else and it's stored as-is. */}
             <Autocomplete

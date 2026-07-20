@@ -8,16 +8,11 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs from 'dayjs'
 import { IndianRupee, X } from 'lucide-react'
 import { istToday } from '../../utils/istDate'
+import { formatINR } from '../../utils/format'
+import AmountField from './AmountField'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
 
 const MODES = ['Cash', 'UPI', 'Bank Transfer'] as const
-
-// Blocks the classic <input type="number"> footgun — browsers accept 'e'
-// (scientific notation) and +/- as valid characters even though the field
-// only ever holds a positive rupee amount.
-const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
-  if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
-}
 
 export default function PaySalaryDialog({
   open, staff, submitting, submitError, onClose, onSave,
@@ -31,6 +26,9 @@ export default function PaySalaryDialog({
 }) {
   const [amount, setAmount] = useState('')
   const [mode, setMode] = useState<string>('Cash')
+  const [upiId, setUpiId] = useState('')
+  const [accountNumber, setAccountNumber] = useState('')
+  const [ifsc, setIfsc] = useState('')
   const [txnDate, setTxnDate] = useState('')
   const [note, setNote] = useState('')
   const [err, setErr] = useState<string | null>(null)
@@ -39,21 +37,41 @@ export default function PaySalaryDialog({
     if (!open) return
     setAmount('')
     setMode('Cash')
+    setUpiId('')
+    setAccountNumber('')
+    setIfsc('')
     setTxnDate(istToday())
     setNote('')
     setErr(null)
   }, [open])
+
+  // How much of this month's monthly salary is still unpaid, so the admin
+  // doesn't have to do the subtraction themselves before clicking Pay.
+  const remaining = staff && staff.monthlyAmount > 0 ? staff.monthlyAmount - staff.net : null
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     const amt = Number(amount)
     if (!amount || amt <= 0) { setErr('Enter an amount'); return }
     if (!mode.trim())        { setErr('Enter a payment mode'); return }
+    if (mode === 'UPI' && !upiId.trim())                              { setErr('Enter the UPI ID'); return }
+    if (mode === 'Bank Transfer' && !accountNumber.trim())            { setErr('Enter the account number'); return }
+    if (mode === 'Bank Transfer' && !ifsc.trim())                     { setErr('Enter the IFSC code'); return }
     if (!txnDate)            { setErr('Enter a date'); return }
     setErr(null)
 
+    // Fold the mode-specific details into the note so they're saved and
+    // show up later in the Pay/Deduct history — no extra columns needed.
+    let composedNote = note.trim()
+    if (mode === 'UPI') {
+      composedNote = composedNote ? `${composedNote} (UPI ID: ${upiId.trim()})` : `UPI ID: ${upiId.trim()}`
+    } else if (mode === 'Bank Transfer') {
+      const bankDetail = `A/C: ${accountNumber.trim()}, IFSC: ${ifsc.trim()}`
+      composedNote = composedNote ? `${composedNote} (${bankDetail})` : bankDetail
+    }
+
     try {
-      await onSave({ amount: amt, mode: mode.trim(), txnDate, note: note.trim() })
+      await onSave({ amount: amt, mode: mode.trim(), txnDate, note: composedNote })
     } catch {
       // Surfaces via submitError prop
     }
@@ -85,12 +103,15 @@ export default function PaySalaryDialog({
             Recording a payment for <b>{staff.fullName}</b> ({staff.shopName ?? staff.inventoryName ?? '—'}).
           </Box>
 
+          {remaining != null && (
+            <Box sx={{ fontSize: 12.5, fontWeight: 700, color: remaining > 0 ? '#8A6D3B' : '#2E7D32' }}>
+              Monthly salary {formatINR(staff.monthlyAmount)} − paid so far {formatINR(staff.net)} ={' '}
+              {remaining > 0 ? `${formatINR(remaining)} remaining this month` : 'fully paid this month'}
+            </Box>
+          )}
+
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField
-              label="Amount (₹)" type="number" value={amount} onChange={e => setAmount(e.target.value)}
-              onKeyDown={blockNonNumericKeys} required size="small" autoFocus disabled={submitting}
-              slotProps={{ htmlInput: { min: 0, step: '0.01' } }}
-            />
+            <AmountField label="Amount (₹)" value={amount} onChange={setAmount} required autoFocus disabled={submitting} />
             {/* freeSolo — Cash/UPI/Bank Transfer are suggestions, not a hard
                 list; a shop can type e.g. "Cheque" and it's stored as-is. */}
             <Autocomplete
@@ -103,6 +124,25 @@ export default function PaySalaryDialog({
               renderInput={(params) => <TextField {...params} label="Mode" size="small" />}
             />
           </Box>
+
+          {mode === 'UPI' && (
+            <TextField
+              label="UPI ID" value={upiId} onChange={e => setUpiId(e.target.value)}
+              required size="small" disabled={submitting} placeholder="e.g. name@ybl"
+            />
+          )}
+          {mode === 'Bank Transfer' && (
+            <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
+              <TextField
+                label="Account Number" value={accountNumber} onChange={e => setAccountNumber(e.target.value)}
+                required size="small" disabled={submitting}
+              />
+              <TextField
+                label="IFSC Code" value={ifsc} onChange={e => setIfsc(e.target.value.toUpperCase())}
+                required size="small" disabled={submitting} placeholder="e.g. SBIN0001234"
+              />
+            </Box>
+          )}
 
           {/* Same MUI X DatePicker used across the app (ShopUtilities,
               Accounts filters) — not the OS-native date input. Explicit

@@ -1,16 +1,18 @@
 import { useMemo, useState } from 'react'
 import {
   Alert, Box, Button, Card, CardContent, Chip, MenuItem, Paper, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, Typography,
+  TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
 } from '@mui/material'
 import type { LucideIcon } from 'lucide-react'
-import { CircleCheck, Clock, MinusCircle, Wallet } from 'lucide-react'
+import { CircleCheck, Clock, Info, MinusCircle, Wallet } from 'lucide-react'
 import SetSalaryDialog from './SetSalaryDialog'
 import PaySalaryDialog from './PaySalaryDialog'
 import DeductSalaryDialog from './DeductSalaryDialog'
 import { istFirstOfThisMonth } from '../../utils/istDate'
 import { formatINR } from '../../utils/format'
-import { useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary } from '../../hooks/useStaffSalaries'
+import {
+  useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary, useStaffSalaryTransactions,
+} from '../../hooks/useStaffSalaries'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
 import { ValidationError } from '../../api/errors'
 
@@ -42,6 +44,19 @@ function rowStatus(row: StaffSalaryRowDto): Status {
 
 const STATUS_COLOR: Record<Status, 'success' | 'warning' | 'error' | 'default'> = {
   Paid: 'success', Partial: 'warning', Pending: 'error', 'Not set': 'default',
+}
+
+const STATUS_MEANING: Record<Status, string> = {
+  'Not set': 'No monthly salary configured yet for this staff.',
+  Pending:   'Monthly salary is set, but nothing has been paid this month yet.',
+  Partial:   'Some has been paid this month, but less than the monthly salary.',
+  Paid:      'Net paid this month has reached the monthly salary.',
+}
+
+// "2026-07-05" → "05 Jul"
+function fmtShortDate(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
 
 export default function SalaryTab() {
@@ -116,10 +131,6 @@ export default function SalaryTab() {
         <SalaryKpiCard label="Pending This Month" value={totals.pending} icon={Clock} accent={totals.pending > 0 ? 'danger' : undefined} />
       </Box>
 
-      <Box sx={{ mb: 2, p: 1.5, borderRadius: 2, bgcolor: '#E8F5E9', border: '1px solid #2E7D32', fontSize: 13, color: '#1F1F1F' }}>
-        Every Pay / Deduct entry posts straight to Admin Accounts — Shop User entries post to the <b>Staff Salary</b> line per shop, Inventory entries post to the company-wide <b>Godown Expenses</b> line. Net Profit updates automatically, no separate entry needed.
-      </Box>
-
       <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <Table size="small">
           <TableHead>
@@ -130,7 +141,25 @@ export default function SalaryTab() {
               <TableCell align="right">Paid</TableCell>
               <TableCell align="right">Deducted</TableCell>
               <TableCell align="right">Net</TableCell>
-              <TableCell>Status</TableCell>
+              <TableCell>
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  Status
+                  <Tooltip
+                    arrow
+                    title={
+                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12 }}>
+                        {(Object.keys(STATUS_MEANING) as Status[]).map(s => (
+                          <span key={s}><b>{s}</b> — {STATUS_MEANING[s]}</span>
+                        ))}
+                      </Box>
+                    }
+                  >
+                    <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
+                      <Info size={13} />
+                    </Box>
+                  </Tooltip>
+                </Box>
+              </TableCell>
               <TableCell align="right">Actions</TableCell>
             </TableRow>
           </TableHead>
@@ -154,14 +183,32 @@ export default function SalaryTab() {
                   <TableCell align="right" sx={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
                     {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
                   </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>{formatINR(row.net)}</TableCell>
+                  <NetCell row={row} from={from} to={to} />
                   <TableCell>
                     <Chip label={status} size="small" color={STATUS_COLOR[status]} variant={status === 'Not set' ? 'outlined' : 'filled'} />
                   </TableCell>
                   <TableCell align="right">
                     <Box sx={{ display: 'flex', gap: 0.75, justifyContent: 'flex-end' }}>
-                      <Button size="small" variant="outlined" color="success" onClick={() => setPayTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}>Pay</Button>
-                      <Button size="small" variant="outlined" color="error" onClick={() => setDeductTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}>Deduct</Button>
+                      <Tooltip title={status === 'Not set' ? 'Set a monthly salary for this staff first' : ''}>
+                        <span>
+                          <Button
+                            size="small" variant="outlined" color="success" disabled={status === 'Not set'}
+                            onClick={() => setPayTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
+                          >
+                            Pay
+                          </Button>
+                        </span>
+                      </Tooltip>
+                      <Tooltip title={status === 'Not set' ? 'Set a monthly salary for this staff first' : ''}>
+                        <span>
+                          <Button
+                            size="small" variant="outlined" color="error" disabled={status === 'Not set'}
+                            onClick={() => setDeductTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
+                          >
+                            Deduct
+                          </Button>
+                        </span>
+                      </Tooltip>
                     </Box>
                   </TableCell>
                 </TableRow>
@@ -203,6 +250,43 @@ export default function SalaryTab() {
         onSave={handleDeduct}
       />
     </Box>
+  )
+}
+
+// Net cell — hovering shows the dated Pay/Deduct history behind that
+// number (client req: "net amount ah hover panna, history varanum").
+// Lazy: the transactions query only fires once the tooltip actually opens.
+function NetCell({ row, from, to }: { row: StaffSalaryRowDto; from: string; to: string }) {
+  const [open, setOpen] = useState(false)
+  const txns = useStaffSalaryTransactions(row.staffId, from, to, open)
+
+  const content = txns.isLoading
+    ? 'Loading…'
+    : !txns.data || txns.data.length === 0
+      ? 'No transactions this month.'
+      : (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 220 }}>
+          {txns.data.map((t, i) => (
+            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, fontSize: 12 }}>
+              <span>{fmtShortDate(t.txnDate)}{t.note ? ` — ${t.note}` : ''}</span>
+              <span style={{ fontWeight: 700, color: t.amount < 0 ? '#FFCDD2' : '#C8E6C9', whiteSpace: 'nowrap' }}>
+                {t.amount < 0 ? '−' : '+'}{formatINR(Math.abs(t.amount))}
+              </span>
+            </Box>
+          ))}
+        </Box>
+      )
+
+  return (
+    <Tooltip
+      arrow
+      open={open}
+      onOpen={() => setOpen(true)}
+      onClose={() => setOpen(false)}
+      title={content}
+    >
+      <TableCell align="right" sx={{ fontWeight: 700, cursor: 'help' }}>{formatINR(row.net)}</TableCell>
+    </Tooltip>
   )
 }
 

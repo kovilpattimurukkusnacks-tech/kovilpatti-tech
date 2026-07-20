@@ -183,6 +183,50 @@ LANGUAGE sql STABLE AS $$
     AND txn_date <= p_to;
 $$;
 
+-- ============== Staff Salary — guard + history (18-Jul-2026) =======
+
+-- A staff's monthly salary must be set before any Pay/Deduct is recorded
+-- against them (client req: "monthly salary set pannama, pay or deduct
+-- panna kudadhu" — no ledger entry without an expected amount first).
+CREATE OR REPLACE FUNCTION fn_staff_salary_exists(p_staff_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM staff_salaries WHERE staff_id = p_staff_id);
+$$;
+
+-- Per-staff Pay/Deduct history for the "hover the Net figure" breakdown —
+-- unions the two possible sources (ShopUser rows live in
+-- shop_utility_expenses, Inventory rows in staff_salary_other_transactions)
+-- into one signed, dated list.
+CREATE OR REPLACE FUNCTION fn_staff_salary_transactions_list(
+  p_staff_id uuid,
+  p_from     date,
+  p_to       date
+)
+RETURNS TABLE (
+  txn_date date,
+  amount   numeric,
+  note     varchar
+)
+LANGUAGE sql STABLE AS $$
+  SELECT e.expense_date AS txn_date, e.amount, e.note
+  FROM shop_utility_expenses e
+  WHERE e.staff_id     = p_staff_id
+    AND e.is_deleted   = false
+    AND e.category     = 'Staff Salary'
+    AND e.expense_date >= p_from
+    AND e.expense_date <= p_to
+  UNION ALL
+  SELECT t.txn_date, t.amount,
+         NULLIF(trim(BOTH ': ' FROM COALESCE(t.reason, '') || ': ' || COALESCE(t.note, '')), '') AS note
+  FROM staff_salary_other_transactions t
+  WHERE t.staff_id  = p_staff_id
+    AND t.is_deleted = false
+    AND t.txn_date  >= p_from
+    AND t.txn_date  <= p_to
+  ORDER BY txn_date DESC;
+$$;
+
 -- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------

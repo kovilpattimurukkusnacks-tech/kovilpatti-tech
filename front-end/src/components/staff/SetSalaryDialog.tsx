@@ -8,14 +8,8 @@ import { DatePicker } from '@mui/x-date-pickers/DatePicker'
 import dayjs from 'dayjs'
 import { Wallet, X } from 'lucide-react'
 import { istToday } from '../../utils/istDate'
+import AmountField from './AmountField'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
-
-// Blocks the classic <input type="number"> footgun — browsers accept 'e'
-// (scientific notation) and +/- as valid characters even though the field
-// only ever holds a positive rupee amount.
-const blockNonNumericKeys = (e: React.KeyboardEvent<HTMLInputElement>) => {
-  if (['e', 'E', '+', '-'].includes(e.key)) e.preventDefault()
-}
 
 export default function SetSalaryDialog({
   open, staff, submitting, submitError, onClose, onSave,
@@ -99,11 +93,10 @@ export default function SetSalaryDialog({
           </TextField>
 
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField
-              label="Monthly Salary (₹)" type="number" value={monthlyAmount}
-              onChange={e => setMonthlyAmount(e.target.value)} onKeyDown={blockNonNumericKeys}
-              required size="small" disabled={submitting}
-              slotProps={{ htmlInput: { min: 0, step: '0.01' } }}
+            <AmountField
+              label="Monthly Salary (₹)" value={monthlyAmount}
+              onChange={setMonthlyAmount}
+              required disabled={submitting}
             />
             {/* Same MUI X DatePicker used across the app (ShopUtilities,
                 Accounts filters) — not the OS-native date input. Explicit
