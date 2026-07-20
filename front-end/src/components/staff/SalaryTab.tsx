@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, MenuItem, Paper, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, Tooltip, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, IconButton, MenuItem, Paper, TextField, Tooltip, Typography,
 } from '@mui/material'
+import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import type { LucideIcon } from 'lucide-react'
-import { CircleCheck, Clock, Gift, Info, MinusCircle, Wallet } from 'lucide-react'
+import { CircleCheck, Clock, Gift, IndianRupee, Info, MinusCircle, Wallet } from 'lucide-react'
 import SetSalaryDialog from './SetSalaryDialog'
 import PaySalaryDialog from './PaySalaryDialog'
 import DeductSalaryDialog from './DeductSalaryDialog'
@@ -47,12 +47,6 @@ function rowStatus(row: StaffSalaryRowDto): Status {
 const STATUS_COLOR: Record<Status, 'success' | 'warning' | 'error' | 'default'> = {
   Paid: 'success', Partial: 'warning', Pending: 'error', 'Not set': 'default',
 }
-
-// Vertical divider between header columns — matches the column separator
-// every DataGrid-based list page (Staff Details tab, Products, Shops, …)
-// already shows by default; this table uses plain MUI Table so it needs
-// the same line added explicitly. Not applied to the last column.
-const HEAD_SEP_SX = { borderRight: '1px solid rgba(31, 31, 31, 0.18)' }
 
 const STATUS_MEANING: Record<Status, string> = {
   'Not set': 'No monthly salary configured yet for this staff.',
@@ -121,6 +115,110 @@ export default function SalaryTab() {
     setBonusTarget(null)
   }
 
+  // Same DataGrid + data-page-grid/data-page-paper convention every other
+  // list page in the app uses (Staff Details tab, Products, Shops, …) —
+  // client req: this table read as inconsistent/unclear next to the plain
+  // MUI Table it had before; DataGrid gives it the same column alignment,
+  // single-line header, and compact icon-button actions as everywhere else.
+  const columns = useMemo<GridColDef<StaffSalaryRowDto>[]>(() => [
+    {
+      field: 'fullName', headerName: 'Staff', flex: 1.1, minWidth: 150, sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <Box>
+          <Box sx={{ fontWeight: 700 }}>{row.fullName}</Box>
+          <Box sx={{ fontSize: 11, opacity: 0.65 }}>{row.role}</Box>
+        </Box>
+      ),
+    },
+    {
+      field: 'mappedTo', headerName: 'Mapped To', flex: 1.2, minWidth: 170, sortable: false, filterable: false,
+      valueGetter: (_v, row) => row.shopName ?? row.inventoryName ?? '—',
+      renderCell: ({ row }) => (
+        <Box>
+          <Box>{row.shopName ?? row.inventoryName ?? '—'}</Box>
+          {!row.inAccounts && (
+            <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700 }}>→ Godown Expenses in Accounts</Box>
+          )}
+        </Box>
+      ),
+    },
+    {
+      field: 'monthlyAmount', headerName: 'Monthly Salary', width: 140, align: 'right', headerAlign: 'right',
+      sortable: false, filterable: false,
+      valueFormatter: (value) => formatINR(value as number),
+    },
+    {
+      field: 'paid', headerName: 'Paid', width: 120, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <span style={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</span>
+      ),
+    },
+    {
+      field: 'deducted', headerName: 'Deducted', width: 130, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <span style={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
+          {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
+        </span>
+      ),
+    },
+    {
+      field: 'net', headerName: 'Net', width: 140, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      renderCell: ({ row }) => <NetCell row={row} from={from} to={to} />,
+    },
+    {
+      field: 'status', headerName: 'Status', width: 140, sortable: false, filterable: false,
+      renderHeader: () => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          Status
+          <Tooltip
+            arrow
+            title={
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12 }}>
+                {(Object.keys(STATUS_MEANING) as Status[]).map(s => (
+                  <span key={s}><b>{s}</b> — {STATUS_MEANING[s]}</span>
+                ))}
+              </Box>
+            }
+          >
+            <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
+              <Info size={13} />
+            </Box>
+          </Tooltip>
+        </Box>
+      ),
+      renderCell: ({ row }) => {
+        const status = rowStatus(row)
+        return <Chip label={status} size="small" color={STATUS_COLOR[status]} variant={status === 'Not set' ? 'outlined' : 'filled'} />
+      },
+    },
+    {
+      field: 'actions', headerName: 'Actions', width: 150, align: 'right', headerAlign: 'right',
+      sortable: false, filterable: false,
+      renderCell: ({ row }) => {
+        const disabled = rowStatus(row) === 'Not set'
+        return (
+          <Box sx={{ display: 'flex', gap: 0.25, justifyContent: 'flex-end' }}>
+            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Pay'}>
+              <span>
+                <IconButton size="small" color="success" disabled={disabled} onClick={() => setPayTarget(row)}>
+                  <IndianRupee className="w-4 h-4" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Deduct'}>
+              <span>
+                <IconButton size="small" color="error" disabled={disabled} onClick={() => setDeductTarget(row)}>
+                  <MinusCircle className="w-4 h-4" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <BonusIconButton row={row} disabled={disabled} onClick={() => setBonusTarget(row)} />
+          </Box>
+        )
+      },
+    },
+  ], [from, to])
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
@@ -148,102 +246,19 @@ export default function SalaryTab() {
         <SalaryKpiCard label="Pending This Month" value={totals.pending} icon={Clock} accent={totals.pending > 0 ? 'danger' : undefined} />
       </Box>
 
-      {/* Cream background scoped to just this table (sx, not the shared
-          .data-page-paper class) — every other data table in the app
-          (Staff Details tab, Products, Shops, …) stays on the standard
-          white card look; only this Salary tab is going cream. */}
-      <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5, backgroundColor: '#FFFBE6 !important' }} elevation={0}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell sx={HEAD_SEP_SX}>Staff</TableCell>
-              <TableCell sx={HEAD_SEP_SX}>Mapped To</TableCell>
-              <TableCell align="right" sx={HEAD_SEP_SX}>Monthly Salary</TableCell>
-              <TableCell align="right" sx={HEAD_SEP_SX}>Paid</TableCell>
-              <TableCell align="right" sx={HEAD_SEP_SX}>Deducted</TableCell>
-              <TableCell align="right" sx={HEAD_SEP_SX}>Net</TableCell>
-              <TableCell sx={HEAD_SEP_SX}>
-                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-                  Status
-                  <Tooltip
-                    arrow
-                    title={
-                      <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12 }}>
-                        {(Object.keys(STATUS_MEANING) as Status[]).map(s => (
-                          <span key={s}><b>{s}</b> — {STATUS_MEANING[s]}</span>
-                        ))}
-                      </Box>
-                    }
-                  >
-                    <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
-                      <Info size={13} />
-                    </Box>
-                  </Tooltip>
-                </Box>
-              </TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map(row => {
-              const status = rowStatus(row)
-              return (
-                <TableRow key={row.staffId} hover>
-                  <TableCell>
-                    <Box sx={{ fontWeight: 700 }}>{row.fullName}</Box>
-                    <Box sx={{ fontSize: 11, opacity: 0.65 }}>{row.role}</Box>
-                  </TableCell>
-                  <TableCell>
-                    {row.shopName ?? row.inventoryName ?? '—'}
-                    {!row.inAccounts && (
-                      <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700 }}>→ Godown Expenses in Accounts</Box>
-                    )}
-                  </TableCell>
-                  <TableCell align="right">{formatINR(row.monthlyAmount)}</TableCell>
-                  <TableCell align="right" sx={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</TableCell>
-                  <TableCell align="right" sx={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
-                    {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
-                  </TableCell>
-                  <NetCell row={row} from={from} to={to} />
-                  <TableCell>
-                    <Chip label={status} size="small" color={STATUS_COLOR[status]} variant={status === 'Not set' ? 'outlined' : 'filled'} />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Box sx={{ display: 'flex', gap: 0.75, justifyContent: 'flex-end' }}>
-                      <Tooltip title={status === 'Not set' ? 'Set a monthly salary for this staff first' : ''}>
-                        <span>
-                          <Button
-                            size="small" variant="outlined" color="success" disabled={status === 'Not set'}
-                            onClick={() => setPayTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
-                          >
-                            Pay
-                          </Button>
-                        </span>
-                      </Tooltip>
-                      <Tooltip title={status === 'Not set' ? 'Set a monthly salary for this staff first' : ''}>
-                        <span>
-                          <Button
-                            size="small" variant="outlined" color="error" disabled={status === 'Not set'}
-                            onClick={() => setDeductTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
-                          >
-                            Deduct
-                          </Button>
-                        </span>
-                      </Tooltip>
-                      <BonusButton row={row} disabled={status === 'Not set'} onClick={() => setBonusTarget(row)} />
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-            {rows.length === 0 && !salaryQuery.isLoading && (
-              <TableRow>
-                <TableCell colSpan={8} align="center" sx={{ py: 4, opacity: 0.6 }}>No staff configured yet.</TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      <Paper className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
+        <DataGrid
+          className="data-page-grid"
+          rows={rows}
+          columns={columns}
+          getRowId={r => r.staffId}
+          loading={salaryQuery.isLoading}
+          autoHeight
+          disableRowSelectionOnClick
+          disableColumnMenu
+          localeText={{ noRowsLabel: 'No staff configured yet.' }}
+        />
+      </Paper>
 
       <SetSalaryDialog
         open={setDialogOpen}
@@ -284,10 +299,11 @@ export default function SalaryTab() {
   )
 }
 
-// Bonus button — hovering shows when this staff last got a bonus (client
-// req: "oru user ku last ah epo bonus kuduthanga nu history madhiri
-// katanum"). Lazy: the last-bonus query only fires once the tooltip opens.
-function BonusButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
+// Bonus icon button — hovering shows when this staff last got a bonus
+// (client req: "oru user ku last ah epo bonus kuduthanga nu history
+// madhiri katanum"). Lazy: the last-bonus query only fires once the
+// tooltip actually opens.
+function BonusIconButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
   const [open, setOpen] = useState(false)
   const lastBonus = useStaffLastBonus(row.staffId, open)
 
@@ -302,13 +318,9 @@ function BonusButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disab
   return (
     <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
       <span>
-        <Button
-          size="small" variant="outlined" color="warning" disabled={disabled}
-          startIcon={<Gift size={14} />}
-          onClick={onClick} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}
-        >
-          Bonus
-        </Button>
+        <IconButton size="small" disabled={disabled} onClick={onClick} sx={{ color: disabled ? undefined : '#C28A00' }}>
+          <Gift className="w-4 h-4" />
+        </IconButton>
       </span>
     </Tooltip>
   )
@@ -339,14 +351,8 @@ function NetCell({ row, from, to }: { row: StaffSalaryRowDto; from: string; to: 
       )
 
   return (
-    <Tooltip
-      arrow
-      open={open}
-      onOpen={() => setOpen(true)}
-      onClose={() => setOpen(false)}
-      title={content}
-    >
-      <TableCell align="right" sx={{ fontWeight: 700, cursor: 'help' }}>{formatINR(row.net)}</TableCell>
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
+      <span style={{ fontWeight: 700, cursor: 'help' }}>{formatINR(row.net)}</span>
     </Tooltip>
   )
 }
