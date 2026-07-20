@@ -143,18 +143,20 @@ export default function SalaryTab() {
       ),
     },
     {
-      field: 'monthlyAmount', headerName: 'Monthly Salary', width: 100, align: 'right', headerAlign: 'right',
+      // Shortened from "Monthly Salary" — the full label was truncating
+      // to "MONTHLY S…" at a column width that actually fits the amount.
+      field: 'monthlyAmount', headerName: 'Salary', width: 120, align: 'center', headerAlign: 'center',
       sortable: false, filterable: false,
       valueFormatter: (value) => formatINR(value as number),
     },
     {
-      field: 'paid', headerName: 'Paid', width: 80, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'paid', headerName: 'Paid', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
       renderCell: ({ row }) => (
         <span style={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</span>
       ),
     },
     {
-      field: 'deducted', headerName: 'Deducted', width: 90, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'deducted', headerName: 'Deducted', width: 120, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
       renderCell: ({ row }) => (
         <span style={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
           {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
@@ -162,11 +164,11 @@ export default function SalaryTab() {
       ),
     },
     {
-      field: 'net', headerName: 'Net', width: 90, align: 'right', headerAlign: 'right', sortable: false, filterable: false,
+      field: 'net', headerName: 'Net', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
       renderCell: ({ row }) => <NetCell row={row} from={from} to={to} />,
     },
     {
-      field: 'status', headerName: 'Status', width: 100, sortable: false, filterable: false,
+      field: 'status', headerName: 'Status', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
       renderHeader: () => (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
           Status
