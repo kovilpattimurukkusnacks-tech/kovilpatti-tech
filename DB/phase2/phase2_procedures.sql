@@ -1171,7 +1171,10 @@ $$;
 -- 5. STATUS TRANSITIONS
 -- ============================================================
 
--- Pending → Approved (admin)
+-- Pending | On-Hold → Approved (admin / inventory)
+-- On-Hold accepted as a from-state (18-Jul-2026): inventory approves a held
+-- request directly once the late special stock arrives. Clears the hold audit
+-- fields so an approved request no longer looks held.
 CREATE OR REPLACE FUNCTION fn_request_approve(
   p_id      uuid,
   p_user_id uuid
@@ -1183,16 +1186,46 @@ BEGIN
   SET status      = 'Approved',
       approved_at = now(),
       approved_by = p_user_id,
+      on_hold_at  = NULL,
+      on_hold_by  = NULL,
       updated_by  = p_user_id
   WHERE id = p_id
-    AND status = 'Pending'
+    AND status IN ('Pending', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
 $$;
 
 
--- Pending → Rejected (admin). Reason required.
+-- Pending | Approved → On-Hold (inventory user)
+-- Parks the WHOLE Order when it contains a late-arriving special item, instead
+-- of approving now. Held requests drop out of the cumulative kitchen print
+-- (Approved-only) until re-approved. Orders only — the request_type guard
+-- leaves the Return (Pending → Accepted) lifecycle untouched.
+CREATE OR REPLACE FUNCTION fn_request_hold(
+  p_id      uuid,
+  p_user_id uuid
+)
+RETURNS boolean
+LANGUAGE plpgsql AS $$
+BEGIN
+  UPDATE stock_requests
+  SET status     = 'On-Hold',
+      on_hold_at = now(),
+      on_hold_by = p_user_id,
+      updated_by = p_user_id
+  WHERE id = p_id
+    AND status IN ('Pending', 'Approved')
+    AND request_type = 'Order'
+    AND is_deleted = false;
+  RETURN FOUND;
+END
+$$;
+
+
+-- Pending | On-Hold → Rejected (admin). Reason required.
+-- On-Hold accepted 18-Jul-2026 so a held request can be rejected outright
+-- (e.g. the special item is no longer available).
 CREATE OR REPLACE FUNCTION fn_request_reject(
   p_id      uuid,
   p_user_id uuid,
@@ -1208,21 +1241,24 @@ BEGIN
   UPDATE stock_requests
   SET status           = 'Rejected',
       rejection_reason = p_reason,
+      on_hold_at       = NULL,
+      on_hold_by       = NULL,
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status = 'Pending'
+    AND status IN ('Pending', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
 $$;
 
 
--- Approved | Rejected | Cancelled → Pending (inventory user, admin)
--- "Undo" the Approve/Reject/Cancel decision before dispatch happens. Clears
--- the corresponding audit fields so the request looks like it was never
--- acted on; the next action writes fresh timestamps.
+-- Approved | Rejected | Cancelled | On-Hold → Pending (inventory user, admin)
+-- "Undo" the Approve/Reject/Cancel/Hold decision before dispatch happens.
+-- Clears the corresponding audit fields so the request looks like it was
+-- never acted on; the next action writes fresh timestamps.
 -- Cancelled → Pending added 01-Jul-2026 (client req: shop users sometimes
 -- cancel by mistake; admin needs to recover).
+-- On-Hold → Pending added 18-Jul-2026 (un-hold without approving).
 CREATE OR REPLACE FUNCTION fn_request_revoke(
   p_id      uuid,
   p_user_id uuid
@@ -1239,11 +1275,13 @@ BEGIN
       rejection_reason = NULL,
       cancelled_at     = NULL,
       cancelled_by     = NULL,
+      on_hold_at       = NULL,
+      on_hold_by       = NULL,
       draft_name       = NULL,     -- draft label was tied to Approved state
       pinned_at        = NULL,     -- pinning a Pending request is meaningless
       updated_by       = p_user_id
   WHERE id = p_id
-    AND status IN ('Approved', 'Rejected', 'Cancelled')
+    AND status IN ('Approved', 'Rejected', 'Cancelled', 'On-Hold')
     AND is_deleted = false;
   v_did_revoke := FOUND;
 
@@ -1733,7 +1771,8 @@ END
 $$;
 
 
--- Cancel from Pending or Approved (either shop user or admin, role-gated in BE)
+-- Cancel from Pending, Approved or On-Hold (shop user or admin, role-gated in BE)
+-- On-Hold added 18-Jul-2026 so a held request can be cancelled outright.
 CREATE OR REPLACE FUNCTION fn_request_cancel(
   p_id      uuid,
   p_user_id uuid
@@ -1745,9 +1784,11 @@ BEGIN
   SET status        = 'Cancelled',
       cancelled_at  = now(),
       cancelled_by  = p_user_id,
+      on_hold_at    = NULL,
+      on_hold_by    = NULL,
       updated_by    = p_user_id
   WHERE id = p_id
-    AND status IN ('Pending', 'Approved')
+    AND status IN ('Pending', 'Approved', 'On-Hold')
     AND is_deleted = false;
   RETURN FOUND;
 END
@@ -2115,7 +2156,9 @@ LANGUAGE sql STABLE AS $$
   INNER JOIN inventories i ON i.id = r.inventory_id
   WHERE  r.is_deleted = false
     AND  r.is_special = true
-    AND  r.status IN ('Pending', 'Approved', 'Dispatched')
+    -- On-Hold added 18-Jul-2026: a held special is still "open" and, since
+    -- it's waiting on late stock, is exactly what the godown needs to chase.
+    AND  r.status IN ('Pending', 'Approved', 'Dispatched', 'On-Hold')
     AND  (p_shop_id      IS NULL OR r.shop_id      = p_shop_id)
     AND  (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   ORDER BY r.submitted_at ASC;   -- oldest first — those need attention most

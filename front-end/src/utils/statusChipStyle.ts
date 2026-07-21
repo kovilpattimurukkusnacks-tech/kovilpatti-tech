@@ -34,6 +34,9 @@ export const STATUS_COLOR: Record<
   // Returns' terminal state — green-success mirrors Received since the
   // goods have moved successfully (just in reverse).
   Accepted:   'success',
+  // Parked/waiting on a late special item → default + slate sx override
+  // below, so it reads as "paused" and doesn't clash with Pending's amber.
+  'On-Hold':  'default',
 }
 
 /**
@@ -61,6 +64,16 @@ export const STATUS_CHIP_SX: Partial<Record<RequestStatus, SxProps<Theme>>> = {
     borderColor: '#8A6D3B',
     color: '#8A6D3B',
     backgroundColor: '#FFF8DC',
+    fontWeight: 700,
+    '& .MuiChip-label': { fontWeight: 700 },
+  },
+  'On-Hold': {
+    // Filled blue-grey 600 — a solid "parked / paused" chip so it reads as
+    // clearly coloured (an outlined blue-grey looked grey at chip size) and
+    // stays distinct from Pending's amber and Dispatched's purple.
+    backgroundColor: '#546E7A',
+    borderColor: '#546E7A',
+    color: '#FFFFFF',
     fontWeight: 700,
     '& .MuiChip-label': { fontWeight: 700 },
   },

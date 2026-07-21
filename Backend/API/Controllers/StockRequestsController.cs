@@ -159,6 +159,15 @@ public class StockRequestsController(IStockRequestService requests, ICurrentUser
     public async Task<ActionResult<StockRequestDto>> Revoke(Guid id, CancellationToken ct)
         => Ok(await requests.RevokeAsync(id, ct));
 
+    // ─── Hold (Inventory + Admin) ────────────────────────────
+    // Parks a Pending/Approved Order that contains a late-arriving special
+    // item as On-Hold. Held requests drop out of the cumulative kitchen print
+    // until inventory approves them (On-Hold → Approved via the approve route).
+    [HttpPatch("{id:guid}/hold")]
+    [Authorize(Roles = "Inventory,Admin")]
+    public async Task<ActionResult<StockRequestDto>> Hold(Guid id, CancellationToken ct)
+        => Ok(await requests.HoldAsync(id, ct));
+
     // ─── Inventory user: dispatch ────────────────────────────
     [HttpPatch("{id:guid}/dispatch")]
     [Authorize(Roles = "Inventory,Admin")]
