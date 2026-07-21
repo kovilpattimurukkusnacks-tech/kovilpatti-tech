@@ -57,6 +57,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const login = async (username: string, password: string): Promise<LoggedInUser> => {
     const res = await authApi.login({ username, password })
     tokenStore.set(res.token)
+    tokenStore.setRefresh(res.refreshToken)
     const user: LoggedInUser = {
       userId: res.userId,
       username: res.username,
@@ -74,6 +75,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }
 
   const logout = () => {
+    // Best-effort server-side revoke of the refresh token so it can't be
+    // reused. Fire-and-forget — we clear local state immediately regardless.
+    const rt = tokenStore.getRefresh()
+    if (rt) { void authApi.logout(rt).catch(() => { /* noop */ }) }
     tokenStore.clear()
     queryClient.clear()
     setCurrentUser(null)

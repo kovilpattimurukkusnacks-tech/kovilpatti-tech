@@ -32,7 +32,9 @@ const CATEGORIES = [
   { key: 'Electricity',   color: '#FFA000' /* theme.warning */ },
   { key: 'Rent',          color: '#C28A00' /* gold-1, GOLD_GRADIENT stop */ },
   { key: 'Water',         color: '#0277BD' /* theme.info */ },
-  { key: 'Staff Salary',  color: '#C62828' /* theme.error */ },
+  // 'Staff Salary' removed (15-Jul-2026) — now a structured screen on
+  // Admin's Staff page (Salary tab), which posts to the same ledger this
+  // category used to write to manually. Kept out here to avoid double-entry.
   { key: 'Maintenance',   color: '#FCD835' /* theme.secondary */ },
   { key: 'Internet/Wifi', color: '#2E7D32' /* theme.success */ },
   { key: 'Others',        color: '#3D3D3D' /* theme.text.secondary */ },
