@@ -1,6 +1,6 @@
 import { apiClient } from '../client'
 import { ApiError } from '../errors'
-import type { LoginRequest, LoginResponse } from './types'
+import type { LoginRequest, LoginResponse, RefreshResponse } from './types'
 
 // Login retry/backoff (29-Jun-2026, mobile-login flakiness diagnostic).
 // Mobile clients occasionally see login fail on the first attempt due to:
@@ -48,5 +48,19 @@ export const authApi = {
       }
     }
     throw lastErr
+  },
+
+  // Exchange a refresh token for a fresh access token (+ rotated refresh
+  // token). Used by AppContext for a proactive/manual renewal; the API
+  // client also refreshes automatically on 401 (see client.ts). No retry
+  // wrapper — a failed refresh means "session over", handled by the caller.
+  refresh(refreshToken: string): Promise<RefreshResponse> {
+    return apiClient.post<RefreshResponse>('/api/auth/refresh', { refreshToken })
+  },
+
+  // Revoke the refresh token server-side on logout. Best-effort — callers
+  // clear local state regardless of the outcome.
+  logout(refreshToken: string): Promise<void> {
+    return apiClient.post<void>('/api/auth/logout', { refreshToken })
   },
 }
