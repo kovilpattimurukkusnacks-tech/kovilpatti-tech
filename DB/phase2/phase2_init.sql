@@ -29,10 +29,25 @@ DO $$ BEGIN
     'Draft', 'Pending', 'Approved', 'Rejected', 'Dispatched', 'Received', 'Cancelled',
     -- 'Accepted' = terminal state for a Return (Order-equivalent of 'Received'
     -- but on the godown side, since the return moves goods INTO the godown).
-    'Accepted'
+    'Accepted',
+    -- 'On-Hold' (18-Jul-2026) = inventory parks a Pending/Approved Order that
+    -- contains a late-arriving special item, instead of approving it now.
+    -- Held requests are excluded from the cumulative kitchen print (which is
+    -- Approved-only) until inventory approves them (On-Hold -> Approved).
+    'On-Hold'
   );
 EXCEPTION
   WHEN duplicate_object THEN NULL;
+END $$;
+
+-- On-Hold enum value: added here for fresh deploys; existing deploys get it
+-- via DB/One shot scripts/phase2_onhold_status_migration.sql. The CREATE TYPE
+-- block above no-ops on an already-existing type, so ADD VALUE is required to
+-- backfill the value on an older enum.
+DO $$ BEGIN
+  ALTER TYPE request_status ADD VALUE IF NOT EXISTS 'On-Hold';
+EXCEPTION
+  WHEN others THEN NULL;
 END $$;
 
 -- request_type distinguishes Orders (shop → godown) from Returns (shop → godown
@@ -139,6 +154,11 @@ CREATE TABLE IF NOT EXISTS stock_requests (
   accepted_at       timestamptz,
   accepted_by       uuid           REFERENCES users(id) ON DELETE SET NULL,
 
+  -- On-Hold-specific: when/who parked the request (see 'On-Hold' enum note).
+  -- Cleared on approve so an approved request no longer looks held.
+  on_hold_at        timestamptz,
+  on_hold_by        uuid           REFERENCES users(id) ON DELETE SET NULL,
+
   -- A Return optionally references the Order it reverses. Free-form returns
   -- (no source) are allowed; accounts uses current MRP as fallback. Always
   -- NULL on Orders (enforced by chk_source_only_for_returns below).
@@ -210,7 +230,7 @@ CREATE INDEX IF NOT EXISTS idx_stock_requests_source_request
 -- cheap even as the requests table grows.
 CREATE INDEX IF NOT EXISTS idx_stock_requests_active_specials
   ON stock_requests(status, shop_id)
-  WHERE is_special = true AND is_deleted = false AND status IN ('Pending','Approved','Dispatched');
+  WHERE is_special = true AND is_deleted = false AND status IN ('Pending','Approved','Dispatched','On-Hold');
 
 -- One live draft per shop. Partial unique index — only enforces uniqueness
 -- on the Draft status (Pending/Dispatched/etc. rows are unaffected). Lets
