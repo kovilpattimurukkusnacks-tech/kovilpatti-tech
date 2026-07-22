@@ -318,11 +318,15 @@ DROP FUNCTION IF EXISTS fn_product_get(uuid);
 
 -- 14-Jul-2026 — barcode added (POS billing scan). RETURN-shape change →
 -- drop-first, same pattern as phase1_pagination.sql.
+-- 21-Jul-2026: signature gained p_include_inactive. Same rationale as
+-- fn_product_list_paged — hide inactive rows from shop/inventory pickers
+-- by default. Old shape dropped explicitly to avoid overload ambiguity.
 DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
 
 CREATE OR REPLACE FUNCTION fn_product_list(
-  p_search      varchar DEFAULT NULL,
-  p_category_id int     DEFAULT NULL
+  p_search           varchar DEFAULT NULL,
+  p_category_id      int     DEFAULT NULL,
+  p_include_inactive boolean DEFAULT false
 )
 RETURNS TABLE (
   id                 uuid,
@@ -346,6 +350,8 @@ LANGUAGE sql STABLE AS $$
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
+    -- 21-Jul-2026: opt-in active filter — see fn_product_list_paged.
+    AND (p_include_inactive = true OR p.active = true)
     -- Tokenised search (10-Jul-2026, client feedback). MUST STAY IN SYNC
     -- with the identical predicate in fn_product_list_paged + fn_product_count
     -- (phase1_pagination.sql). Splits p_search on any non-alnum separator

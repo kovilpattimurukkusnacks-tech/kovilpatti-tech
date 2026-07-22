@@ -18,4 +18,7 @@ public interface IAccountsService
     Task<IReadOnlyList<AccountsAdjustmentRowDto>>   GetAdjustmentsAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<AccountsInTransitDto>                      GetInTransitAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<IReadOnlyList<AccountsUtilityRowDto>>      GetUtilitiesAsync(AccountsFilters filters, CancellationToken ct = default);
+    Task<AccountsGodownExpensesDto>                 GetGodownExpensesAsync(AccountsFilters filters, CancellationToken ct = default);
+    Task<IReadOnlyList<AccountsInventoryExpenseRowDto>> GetInventoryExpensesAsync(AccountsFilters filters, CancellationToken ct = default);
+    Task<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>> GetGodownExpensesByInventoryAsync(AccountsFilters filters, CancellationToken ct = default);
 }

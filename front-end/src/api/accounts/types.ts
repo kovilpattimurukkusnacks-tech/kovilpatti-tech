@@ -197,6 +197,14 @@ export type AccountsInTransitDto = {
   specialAmount:       number
 }
 
+/** Company-wide total of Inventory-role staff Pay/Deduct in the date range
+ *  (18-Jul-2026). Godowns aren't shop-scoped, so this is a single figure —
+ *  not a per-shop breakdown like AccountsUtilityRowDto — that feeds Net
+ *  Profit as its own line item alongside Shop Expenses. */
+export type AccountsGodownExpensesDto = {
+  amount: number
+}
+
 /** One row per (shop, utility category) in the selected date range. Powers
  *  the Net Profit KPI + Utilities columns (15-Jul-2026). Shops with zero
  *  utilities in range are absent — treat missing shops as ₹0. */
@@ -210,4 +218,29 @@ export type AccountsUtilityRowDto = {
   category:     string
   amount:       number
   expenseCount: number
+}
+
+/** One row per (inventory, category) — godown/inventory operational
+ *  expenses (21-Jul-2026). Mirror of AccountsUtilityRowDto but scoped
+ *  to a godown instead of a shop. Feeds the "Inventory Expenses" line
+ *  on the admin Accounts screen. Godowns with zero expenses in range
+ *  are absent — treat missing as ₹0. */
+export type AccountsInventoryExpenseRowDto = {
+  inventoryId:   string
+  inventoryCode: string
+  inventoryName: string
+  category:      string
+  amount:        number
+  expenseCount:  number
+}
+
+/** Per-inventory staff-salary rollup (21-Jul-2026) — powers the "By
+ *  Godown" panel on the admin Accounts screen. Same source data as
+ *  AccountsGodownExpensesDto's scalar total, grouped by godown.
+ *  Missing inventories = ₹0 salary spend in range. */
+export type AccountsGodownExpenseByInventoryRowDto = {
+  inventoryId:   string
+  inventoryCode: string
+  inventoryName: string
+  amount:        number
 }

@@ -10,7 +10,7 @@ import ProfitByShopChart from '../../components/dashboard/ProfitByShopChart'
 import ProfitByCategoryDonut from '../../components/dashboard/ProfitByCategoryDonut'
 import { FilterPanel, type FilterPill } from '../../components/FilterBar'
 import { dateRangeLabel } from '../../components/DateRangeFilter'
-import { useAccountsTrend, useAccountsUtilities } from '../../hooks/useAccounts'
+import { useAccountsTrend, useAccountsUtilities, useAccountsGodownExpenses, useAccountsInventoryExpenses } from '../../hooks/useAccounts'
 import { useShops } from '../../hooks/useShops'
 import { istToday } from '../../utils/istDate'
 import type { AccountsFilters, AccountsGrouping } from '../../api/accounts/types'
@@ -81,6 +81,14 @@ export default function AdminDashboard() {
 
   const trend     = useAccountsTrend(filters)
   const utilities = useAccountsUtilities(filters)
+  // Godown Expenses (18-Jul-2026) — company-wide Inventory staff salary,
+  // feeds Net Profit as its own line alongside Shop Expenses.
+  const godownExpenses = useAccountsGodownExpenses(filters)
+  // Inventory operational expenses (21-Jul-2026) — logged via inventory
+  // user's Godown Expenses screen. Rolled into the SAME "Godown Expenses"
+  // KPI tile as the staff salary above so the owner sees ONE combined
+  // godown deduction — matches the "two lines: Shop + Inv" ask.
+  const inventoryExpenses = useAccountsInventoryExpenses(filters)
 
   // Collapsed-panel pills: date range + one pill per selected shop (by name).
   const activePills: FilterPill[] = [
@@ -119,7 +127,9 @@ export default function AdminDashboard() {
         <DashboardHero
           data={trend.data}
           utilities={utilities.data}
-          loading={trend.isLoading || utilities.isLoading}
+          godownExpenses={godownExpenses.data?.amount}
+          inventoryExpenses={inventoryExpenses.data}
+          loading={trend.isLoading || utilities.isLoading || godownExpenses.isLoading || inventoryExpenses.isLoading}
         />
 
         {/* All rupee values side by side, like the Accounts screen. */}

@@ -64,6 +64,48 @@ DROP TRIGGER IF EXISTS trg_shop_utility_expenses_updated ON shop_utility_expense
 CREATE TRIGGER trg_shop_utility_expenses_updated BEFORE UPDATE ON shop_utility_expenses
   FOR EACH ROW EXECUTE FUNCTION set_updated_at();
 
+-- ------------------------------------------------------------
+-- 3. inventory_expenses (21-Jul-2026 client req)
+--    Same shape as shop_utility_expenses but scoped to a godown /
+--    inventory (warehouse rent, loading charges, packing material,
+--    transport fuel, staff salary, etc.). Categories reuse the same
+--    autocomplete list as the shop side — godowns pay Rent /
+--    Electricity / Salary / Maintenance too. Scope: Inventory user
+--    can log for their own godown; Admin explicitly NOT allowed per
+--    client spec (owner delegates entirely to godown staff).
+--
+--    Tallied on the admin Accounts screen as a separate line from
+--    Shop Expenses so the client sees the split ("₹X went to shops,
+--    ₹Y went to godown"). Net Profit = Gross P&L − Shop Expenses
+--    − Inventory Expenses.
+-- ------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS inventory_expenses (
+  id            uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
+  inventory_id  uuid          NOT NULL REFERENCES inventories(id) ON DELETE RESTRICT,
+
+  category      varchar(50)   NOT NULL,
+  amount        numeric(10,2) NOT NULL,
+  note          varchar(500),
+  expense_date  date          NOT NULL,
+
+  is_deleted    boolean       NOT NULL DEFAULT false,
+  created_at    timestamptz   NOT NULL DEFAULT now(),
+  created_by    uuid          REFERENCES users(id) ON DELETE SET NULL,
+  updated_at    timestamptz   NOT NULL DEFAULT now(),
+  updated_by    uuid          REFERENCES users(id) ON DELETE SET NULL,
+
+  CONSTRAINT chk_inventory_expenses_amount_positive CHECK (amount > 0),
+  CONSTRAINT chk_inventory_expenses_category_not_blank CHECK (length(trim(category)) > 0)
+);
+
+CREATE INDEX IF NOT EXISTS idx_inventory_expenses_inventory_date
+  ON inventory_expenses(inventory_id, expense_date DESC)
+  WHERE is_deleted = false;
+
+DROP TRIGGER IF EXISTS trg_inventory_expenses_updated ON inventory_expenses;
+CREATE TRIGGER trg_inventory_expenses_updated BEFORE UPDATE ON inventory_expenses
+  FOR EACH ROW EXECUTE FUNCTION set_updated_at();
+
 COMMIT;
 
 -- ============================================================

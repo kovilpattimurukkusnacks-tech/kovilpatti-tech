@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
 import type {
   StaffSalaryRowDto, StaffSalaryDto, SetStaffSalaryRequest, PaySalaryRequest, DeductSalaryRequest,
+  StaffSalaryTransactionDto,
 } from './types'
 
 export const staffSalariesApi = {
@@ -12,4 +13,8 @@ export const staffSalariesApi = {
     apiClient.post<void>('/api/staff-salaries/pay', req),
   deduct: (req: DeductSalaryRequest) =>
     apiClient.post<void>('/api/staff-salaries/deduct', req),
+  transactions: (staffId: string, from: string, to: string) =>
+    apiClient.get<StaffSalaryTransactionDto[]>(`/api/staff-salaries/${staffId}/transactions?from=${from}&to=${to}`),
+  lastBonus: (staffId: string) =>
+    apiClient.get<StaffSalaryTransactionDto | null>(`/api/staff-salaries/${staffId}/last-bonus`),
 }

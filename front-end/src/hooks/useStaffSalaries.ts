@@ -9,12 +9,36 @@ export const staffSalariesKeys = {
   // Scoped per (from, to) so switching the month filter caches independently.
   list: (from: string, to: string) =>
     [...staffSalariesKeys.all, 'list', from, to] as const,
+  transactions: (staffId: string, from: string, to: string) =>
+    [...staffSalariesKeys.all, 'transactions', staffId, from, to] as const,
+  lastBonus: (staffId: string) =>
+    [...staffSalariesKeys.all, 'last-bonus', staffId] as const,
 }
 
 export function useStaffSalaries(from: string, to: string) {
   return useQuery({
     queryKey: staffSalariesKeys.list(from, to),
     queryFn: () => staffSalariesApi.list(from, to),
+  })
+}
+
+/** Lazy — only fetches once `enabled` (the hover/open trigger). Small,
+ *  per-staff history list for the "hover the Net figure" breakdown. */
+export function useStaffSalaryTransactions(staffId: string, from: string, to: string, enabled: boolean) {
+  return useQuery({
+    queryKey: staffSalariesKeys.transactions(staffId, from, to),
+    queryFn: () => staffSalariesApi.transactions(staffId, from, to),
+    enabled,
+  })
+}
+
+/** Lazy — most recent Bonus given to this staff (all-time), for the
+ *  "last bonus given" hover note on the Bonus button. */
+export function useStaffLastBonus(staffId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: staffSalariesKeys.lastBonus(staffId),
+    queryFn: () => staffSalariesApi.lastBonus(staffId),
+    enabled,
   })
 }
 

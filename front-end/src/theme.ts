@@ -1,4 +1,8 @@
 import { createTheme } from '@mui/material/styles'
+// Side-effect import — augments the Theme['components'] type with the
+// MUI X Date Pickers component keys (MuiPickerPopper, etc.) so the
+// `components:` block below type-checks.
+import '@mui/x-date-pickers/themeAugmentation'
 
 // ── Brand gradients ─────────────────────────────────────────────
 // Reusable gold gradients shared by the MUI theme + any component
@@ -58,6 +62,26 @@ export const theme = createTheme({
           backgroundColor: 'transparent',
           backdropFilter: 'none',
         },
+      },
+    },
+    // Floating "popup" surfaces — Select's dropdown menu, Autocomplete's
+    // suggestion list, the MUI X DatePicker calendar — otherwise inherit
+    // MuiPaper's white default above (fine for cards/table wrappers, wrong
+    // for a dropdown floating over the app's cream background). Cream to
+    // match every dialog/card instead of reading as a different app.
+    MuiMenu: {
+      styleOverrides: {
+        paper: { backgroundColor: '#FFFBE6' },
+      },
+    },
+    MuiAutocomplete: {
+      styleOverrides: {
+        paper: { backgroundColor: '#FFFBE6' },
+      },
+    },
+    MuiPickerPopper: {
+      styleOverrides: {
+        paper: { backgroundColor: '#FFFBE6' },
       },
     },
     MuiOutlinedInput: {

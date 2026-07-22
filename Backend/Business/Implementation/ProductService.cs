@@ -20,7 +20,9 @@ public class ProductService(
 ) : IProductService
 {
     public async Task<PagedResult<ProductDto>> ListAsync(
-        string? search, int[]? categoryIds, string[]? types, int page, int pageSize, CancellationToken ct = default)
+        string? search, int[]? categoryIds, string[]? types, int page, int pageSize,
+        bool includeInactive = false,
+        CancellationToken ct = default)
     {
         // Defensive clamp — controller already defaults, but a 0 page or pageSize would break LIMIT/OFFSET.
         var safePage     = page     < 1   ? 1   : page;
@@ -31,7 +33,14 @@ public class ProductService(
         var cats  = categoryIds is { Length: > 0 } ? categoryIds : null;
         var typs  = types       is { Length: > 0 } ? types       : null;
 
-        var (rows, total) = await products.ListPagedAsync(search, cats, typs, safePage, safePageSize, ct);
+        // 21-Jul-2026: only Admin may include inactive rows. Shop / inventory
+        // callers get the flag silently forced to false — defence against a
+        // client tampering the query param to see inactive products (which
+        // would let them re-add a "retired" product to a stock request).
+        var effectiveIncludeInactive = includeInactive && currentUser.Role == RoleNames.Admin;
+
+        var (rows, total) = await products.ListPagedAsync(
+            search, cats, typs, safePage, safePageSize, effectiveIncludeInactive, ct);
         var items = rows.Select(MapToDto).ToList();
         return new PagedResult<ProductDto>(items, total, safePage, safePageSize);
     }
@@ -220,7 +229,7 @@ public class ProductService(
         // product codes once so each row is an O(1) lookup instead of an
         // N+1 round-trip. Same-file dup is tracked in a second HashSet that
         // we populate as we iterate.
-        var existingProducts = await products.ListAsync(null, null, ct);
+        var existingProducts = await products.ListAsync(null, null, ct: ct);
         var existingCodes = new HashSet<string>(
             existingProducts.Select(p => p.Code),
             StringComparer.Ordinal);

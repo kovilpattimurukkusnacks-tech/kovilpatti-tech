@@ -49,3 +49,12 @@ export type DeductSalaryRequest = {
   txnDate: string
   note?: string | null
 }
+
+/** One row in a staff's Pay/Deduct history — powers the "hover the Net
+ *  figure" breakdown. Amount is signed (+Pay / −Deduct). */
+export type StaffSalaryTransactionDto = {
+  /** YYYY-MM-DD */
+  txnDate: string
+  amount: number
+  note: string | null
+}

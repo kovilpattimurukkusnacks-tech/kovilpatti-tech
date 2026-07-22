@@ -1,10 +1,18 @@
-import { Box, Card, CardContent, Divider, Skeleton, Typography } from '@mui/material'
-import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet } from 'lucide-react'
+import { Box, Card, CardContent, Divider, Skeleton, Tooltip, Typography } from '@mui/material'
+import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet, Warehouse } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
-import { totalUtilities } from '../../hooks/useAccounts'
+import { totalInventoryExpenses, totalUtilities } from '../../hooks/useAccounts'
 import { LOSS_RED, PROFIT_GREEN } from './ProfitLossChart'
+import {
+  BreakdownCard,
+  BreakdownDivider,
+  BreakdownRow,
+  BreakdownSumTotal,
+  brandTooltipSlotProps,
+} from './BreakdownTooltip'
 import type {
+  AccountsInventoryExpenseRowDto,
   AccountsSummaryDto,
   AccountsUtilityRowDto,
   AccountsView,
@@ -22,6 +30,17 @@ type Props = {
    *  the Shop Expenses card can render its per-category hover tooltip
    *  without a second prop. Total is computed internally. */
   utilityRows?: AccountsUtilityRowDto[]
+  /** Company-wide Inventory-role staff salary total for the range
+   *  (18-Jul-2026) — godowns aren't shop-scoped, so this is a single
+   *  figure, not a breakdown. Subtracts from Net Profit as its own line,
+   *  separate from (not blended into) Shop Expenses. */
+  godownExpenseAmount?: number
+  /** Raw per-inventory-per-category operational expense rows
+   *  (21-Jul-2026). Combined with `godownExpenseAmount` under the
+   *  same "Godown Expenses" tile — accepted as rows (not a scalar)
+   *  so the tile can render a per-category hover tooltip without
+   *  a second prop, matching the shop-side pattern. */
+  inventoryExpenseRows?: AccountsInventoryExpenseRowDto[]
 }
 
 /**
@@ -45,40 +64,47 @@ type Props = {
  * Requested→Dispatched gap. The edits total + log live on the
  * Adjustments log table instead. (Tried 06-Jun-2026, removed.)
  */
-export default function KpiStrip({ data, loading, view = 'all', utilityRows }: Props) {
+export default function KpiStrip({ data, loading, view = 'all', utilityRows, godownExpenseAmount, inventoryExpenseRows }: Props) {
   // Bento layout is only meaningful on the composite 'all' view AND when
   // shop expenses have been fetched — that's when the Net P&L hero has
   // enough information to render its mini breakdown. Everything else
   // falls back to the classic grid.
   if (view === 'all' && utilityRows != null) {
-    return <BentoLayout data={data} loading={loading} utilityRows={utilityRows} />
+    return <BentoLayout data={data} loading={loading} utilityRows={utilityRows} godownExpenseAmount={godownExpenseAmount} inventoryExpenseRows={inventoryExpenseRows} />
   }
-  return <ClassicGrid data={data} loading={loading} view={view} utilityRows={utilityRows} />
+  return <ClassicGrid data={data} loading={loading} view={view} utilityRows={utilityRows} godownExpenseAmount={godownExpenseAmount} inventoryExpenseRows={inventoryExpenseRows} />
 }
 
 // ══════════════════ Bento (all view) ══════════════════
 
-function BentoLayout({ data, loading, utilityRows }: {
+function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventoryExpenseRows }: {
   data: AccountsSummaryDto | undefined
   loading: boolean
   utilityRows: AccountsUtilityRowDto[]
+  godownExpenseAmount?: number
+  inventoryExpenseRows?: AccountsInventoryExpenseRowDto[]
 }) {
   // Derived values — computed once, used across the hero + supporting cards.
   const utilitiesTotal = totalUtilities(utilityRows)
+  const inventoryExpenseAmount = totalInventoryExpenses(inventoryExpenseRows)
+  // 21-Jul-2026: godown-side total = staff salary (godownExpenseAmount) +
+  // operational expenses (inventoryExpenseAmount). Combined in one tile.
+  const godownTotal = (godownExpenseAmount ?? 0) + inventoryExpenseAmount
   const gross = data ? data.netAmount - data.purchaseAmount : undefined
-  const netProfit = gross != null ? gross - utilitiesTotal : undefined
+  const netProfit = gross != null ? gross - utilitiesTotal - godownTotal : undefined
 
   return (
     <Box
       sx={{
         display: 'grid',
-        // Hero (2fr) + three 1fr supporting cols on md+. On sm the hero
-        // spans two cols above a 2×3 supporting grid. On xs everything
+        // Hero (1.4fr) + four 1fr supporting cols on md+ (widened from three
+        // to fit the new Godown Expenses card, 18-Jul-2026). On sm the hero
+        // spans two cols above a 2-wide supporting grid. On xs everything
         // stacks single-column with the hero on top.
         gridTemplateColumns: {
           xs: '1fr',
           sm: '1fr 1fr',
-          md: '1.6fr repeat(3, 1fr)',
+          md: '1.4fr repeat(4, 1fr)',
         },
         gridTemplateAreas: {
           xs: `
@@ -88,17 +114,19 @@ function BentoLayout({ data, loading, utilityRows }: {
             "ret"
             "pur"
             "uti"
+            "god"
             "net"
           `,
           sm: `
             "hero hero"
             "req  disp"
             "ret  pur"
-            "uti  net"
+            "uti  god"
+            "net  net"
           `,
           md: `
-            "hero req  disp ret"
-            "hero pur  uti  net"
+            "hero req  disp ret  pur"
+            "hero uti  god  net  .  "
           `,
         },
         gap: 2,
@@ -109,6 +137,7 @@ function BentoLayout({ data, loading, utilityRows }: {
           netProfit={netProfit}
           gross={gross}
           utilities={utilitiesTotal}
+          godownExpenses={godownTotal}
           loading={loading}
         />
       </Box>
@@ -161,6 +190,21 @@ function BentoLayout({ data, loading, utilityRows }: {
           loading={loading}
         />
       </Box>
+      <Box sx={{ gridArea: 'god' }}>
+        <GodownExpensesTooltip
+          staffSalary={godownExpenseAmount ?? 0}
+          inventoryRows={inventoryExpenseRows ?? []}
+          total={godownTotal}
+        >
+          <KpiCard
+            label="Godown Expenses"
+            value={godownTotal}
+            secondary="staff + operational"
+            icon={<Warehouse size={18} />}
+            loading={loading}
+          />
+        </GodownExpensesTooltip>
+      </Box>
       <Box sx={{ gridArea: 'net' }}>
         <KpiCard
           label="Net (at MRP)"
@@ -174,6 +218,76 @@ function BentoLayout({ data, loading, utilityRows }: {
   )
 }
 
+// ══════════════════ Godown Expenses tooltip ══════════════════
+
+/** Card-level hover tooltip on the Godown Expenses Bento tile — shows
+ *  the per-category rollup that makes up the combined figure:
+ *  Staff Salary (from staff_salary_other_transactions) at the top when
+ *  non-zero, then each operational category (Rent / Electricity / …)
+ *  aggregated across all godowns, sorted biggest bill first, then a
+ *  "Total Godown Expenses" sum row. Mirror of the shop-side per-row
+ *  UtilitiesTooltip on ShopBreakdownTable, but aggregate-level.
+ *
+ *  Skipped when the total is zero — an empty tooltip on an empty tile
+ *  reads as broken. */
+function GodownExpensesTooltip({ staffSalary, inventoryRows, total, children }: {
+  staffSalary: number
+  inventoryRows: AccountsInventoryExpenseRowDto[]
+  total: number
+  children: React.ReactNode
+}) {
+  // Aggregate operational rows by category across every godown. Same
+  // ×N chip pattern as UtilitiesTooltip when the same category was
+  // logged multiple times in the range (across any godown).
+  const catMap = new Map<string, { amount: number; count: number }>()
+  for (const r of inventoryRows) {
+    const prev = catMap.get(r.category) ?? { amount: 0, count: 0 }
+    prev.amount += r.amount
+    prev.count  += r.expenseCount
+    catMap.set(r.category, prev)
+  }
+  const catRows = Array.from(catMap.entries())
+    .map(([category, v]) => ({ category, amount: v.amount, count: v.count }))
+    .sort((a, b) => b.amount - a.amount)
+
+  if (total <= 0) {
+    // Nothing to break down — render the tile bare, no floating card.
+    return <>{children}</>
+  }
+
+  return (
+    <Tooltip
+      arrow
+      placement="top"
+      enterDelay={200}
+      leaveDelay={100}
+      title={
+        <BreakdownCard title="Godown Expenses Breakdown">
+          {staffSalary > 0 && (
+            <BreakdownRow op="" label="Staff Salary" value={staffSalary} tone="input" />
+          )}
+          {catRows.map(r => (
+            <BreakdownRow
+              key={r.category}
+              op=""
+              label={r.count > 1 ? `${r.category}  ×${r.count}` : r.category}
+              value={r.amount}
+              tone="input"
+            />
+          ))}
+          <BreakdownDivider />
+          <BreakdownSumTotal label="Total Godown Expenses" value={total} />
+        </BreakdownCard>
+      }
+      slotProps={brandTooltipSlotProps}
+    >
+      <Box sx={{ height: '100%' }}>
+        {children}
+      </Box>
+    </Tooltip>
+  )
+}
+
 /** The bento's anchor card. Big signed Net P&L number, with an inline
  *  Gross P&L + Utilities breakdown below so the client sees WHY it's
  *  positive/negative without hovering.
@@ -181,10 +295,11 @@ function BentoLayout({ data, loading, utilityRows }: {
  *  Profit → gold gradient background (brand hero treatment).
  *  Loss   → red border + red-tinted background so a loss period reads
  *           at a glance across the room. Number stays large regardless. */
-function NetProfitHero({ netProfit, gross, utilities, loading }: {
+function NetProfitHero({ netProfit, gross, utilities, godownExpenses, loading }: {
   netProfit: number | undefined
   gross: number | undefined
   utilities: number
+  godownExpenses: number
   loading: boolean
 }) {
   const isLoss  = netProfit != null && netProfit < 0
@@ -243,7 +358,7 @@ function NetProfitHero({ netProfit, gross, utilities, loading }: {
           fontSize: 12, fontWeight: 600, color: isLoss ? '#8B0000CC' : '#1F1F1F99',
           letterSpacing: 0.3,
         }}>
-          after shop expenses
+          after shop &amp; godown expenses
         </Typography>
 
         {/* Push the mini breakdown to the bottom of the flex column. */}
@@ -273,6 +388,12 @@ function NetProfitHero({ netProfit, gross, utilities, loading }: {
               <MiniLine
                 label="Shop Expenses"
                 signed={-utilities}   /* shop expenses always subtract */
+                onLossHero={isLoss}
+                muted
+              />
+              <MiniLine
+                label="Godown Expenses"
+                signed={-godownExpenses}   /* godown expenses always subtract */
                 onLossHero={isLoss}
                 muted
               />
@@ -327,20 +448,25 @@ function MiniLine({ label, signed, onLossHero, muted = false }: {
 
 // ══════════════════ Classic grid (non-'all' views) ══════════════════
 
-function ClassicGrid({ data, loading, view, utilityRows }: {
+function ClassicGrid({ data, loading, view, utilityRows, godownExpenseAmount, inventoryExpenseRows }: {
   data: AccountsSummaryDto | undefined
   loading: boolean
   view: AccountsView
   utilityRows: AccountsUtilityRowDto[] | undefined
+  godownExpenseAmount: number | undefined
+  inventoryExpenseRows: AccountsInventoryExpenseRowDto[] | undefined
 }) {
   // Grand total driven by rows — same helper used by DashboardHero, so
   // both pages compute the total identically. Undefined when rows haven't
   // been fetched yet.
   const utilitiesTotal = utilityRows ? totalUtilities(utilityRows) : undefined
-  // Net Profit = Gross Profit (net_amount − purchase_amount) − Shop Expenses.
-  const netProfit = data == null || utilitiesTotal == null
+  // 21-Jul-2026: godown-side total = staff salary + operational expenses.
+  const inventoryExpenseAmount = totalInventoryExpenses(inventoryExpenseRows)
+  const godownTotal = (godownExpenseAmount ?? 0) + inventoryExpenseAmount
+  // Net Profit = Gross Profit (net_amount − purchase_amount) − Shop Expenses − Godown Expenses.
+  const netProfit = data == null || utilitiesTotal == null || godownExpenseAmount == null
     ? undefined
-    : (data.netAmount - data.purchaseAmount) - utilitiesTotal
+    : (data.netAmount - data.purchaseAmount) - utilitiesTotal - godownTotal
 
   const allCards = [
     {
@@ -392,25 +518,34 @@ function ClassicGrid({ data, loading, view, utilityRows }: {
       accent: undefined,
     },
     {
+      dim: 'godown' as const,
+      label: 'Godown Expenses',
+      // 21-Jul-2026: combined staff salary + operational expenses.
+      value: godownTotal,
+      secondary: 'staff + operational',
+      icon: <Warehouse size={18} />,
+      accent: undefined,
+    },
+    {
       dim: 'netProfit' as const,
       label: netProfit != null && netProfit < 0 ? 'Net Loss' : 'Net Profit',
       value: netProfit != null ? Math.abs(netProfit) : undefined,
-      secondary: 'after shop expenses',
+      secondary: 'after shop & godown expenses',
       icon: <Wallet size={18} />,
       accent: (netProfit != null && netProfit < 0 ? 'loss' : 'net') as 'net' | 'returns' | 'loss',
     },
   ]
 
   const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
-    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'netProfit'],
+    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'godown', 'netProfit'],
     requested:  ['requested'],
     dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
-    purchased:  ['purchased', 'net', 'utilities', 'netProfit'],
+    purchased:  ['purchased', 'net', 'utilities', 'godown', 'netProfit'],
   }
   const cards = allCards
     .filter(c => dimsByView[view].includes(c.dim))
-    .filter(c => (c.dim === 'utilities' || c.dim === 'netProfit') ? utilitiesTotal != null : true)
+    .filter(c => (c.dim === 'utilities' || c.dim === 'godown' || c.dim === 'netProfit') ? utilitiesTotal != null : true)
 
   const cols = Math.min(cards.length, 5)
   return (

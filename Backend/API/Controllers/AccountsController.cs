@@ -62,6 +62,36 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<ActionResult<IReadOnlyList<AccountsUtilityRowDto>>> Utilities([FromQuery] AccountsFilters filters, CancellationToken ct)
         => Ok(await accounts.GetUtilitiesAsync(filters, ct));
 
+    /// <summary>
+    /// Company-wide Inventory-role staff salary total in the date range
+    /// (18-Jul-2026). Only From/To are honoured — godowns aren't shop-scoped
+    /// like the rest of Accounts. Feeds Net Profit as its own line item.
+    /// </summary>
+    [HttpGet("godown-expenses")]
+    public async Task<ActionResult<AccountsGodownExpensesDto>> GodownExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetGodownExpensesAsync(filters, ct));
+
+    /// <summary>
+    /// Per-inventory-per-category operational expenses in the date range
+    /// (rent / electricity / salary / … logged via the Inventory Expenses
+    /// screen). Powers the "Inventory Expenses" KPI + Net Profit
+    /// derivation on the admin Accounts screen (21-Jul-2026).
+    /// Distinct from /godown-expenses above — that one is staff-salary
+    /// tracking, a different feature.
+    /// </summary>
+    [HttpGet("inventory-expenses")]
+    public async Task<ActionResult<IReadOnlyList<AccountsInventoryExpenseRowDto>>> InventoryExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetInventoryExpensesAsync(filters, ct));
+
+    /// <summary>
+    /// Per-inventory staff-salary rollup for the "By Godown" panel
+    /// (21-Jul-2026). Same source data as /godown-expenses (a scalar),
+    /// just grouped by godown.
+    /// </summary>
+    [HttpGet("godown-expenses-by-inventory")]
+    public async Task<ActionResult<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>>> GodownExpensesByInventory([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetGodownExpensesByInventoryAsync(filters, ct));
+
     // ──────── XLSX export endpoints ────────
     //
     // Each export passes the raw typed value (decimal / long / DateTimeOffset

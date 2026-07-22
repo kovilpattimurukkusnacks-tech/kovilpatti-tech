@@ -127,6 +127,44 @@ public class AccountsService(
             r.Category, r.Amount, r.Expense_Count)).ToList();
     }
 
+    public async Task<AccountsGodownExpensesDto> GetGodownExpensesAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Company-wide — only From/To are honoured, same narrowed surface
+        // as GetUtilitiesAsync above. Guard still validates the date range
+        // and re-checks the Admin role.
+        Guard(filters);
+        var amount = await accounts.GetGodownExpensesAsync(filters.From!.Value, filters.To!.Value, ct);
+        return new AccountsGodownExpensesDto(amount);
+    }
+
+    public async Task<IReadOnlyList<AccountsInventoryExpenseRowDto>> GetInventoryExpensesAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Inventory operational expenses (rent / electricity / salary /
+        // maintenance / …). Distinct from GetGodownExpensesAsync above
+        // (which is staff-salary tracking). Filter surface = From/To +
+        // InventoryIds only — inventory categories are a separate
+        // taxonomy from product categories, so p_cat_ids is meaningless.
+        Guard(filters);
+        var rows = await accounts.GetInventoryExpensesAsync(
+            filters.From!.Value, filters.To!.Value,
+            filters.InventoryIds, ct);
+        return rows.Select(r => new AccountsInventoryExpenseRowDto(
+            r.Inventory_Id, r.Inventory_Code, r.Inventory_Name,
+            r.Category, r.Amount, r.Expense_Count)).ToList();
+    }
+
+    public async Task<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>> GetGodownExpensesByInventoryAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Per-inventory staff salary breakdown for the "By Godown" table
+        // (21-Jul-2026). Same source as GetGodownExpensesAsync's scalar
+        // total; just grouped by users.inventory_id.
+        Guard(filters);
+        var rows = await accounts.GetGodownExpensesByInventoryAsync(
+            filters.From!.Value, filters.To!.Value, ct);
+        return rows.Select(r => new AccountsGodownExpenseByInventoryRowDto(
+            r.Inventory_Id, r.Inventory_Code, r.Inventory_Name, r.Amount)).ToList();
+    }
+
     // ──────── helpers ────────
 
     private void Guard(AccountsFilters filters)

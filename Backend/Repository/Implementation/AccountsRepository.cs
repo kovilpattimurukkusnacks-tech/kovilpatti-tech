@@ -177,4 +177,44 @@ public class AccountsRepository(IDbConnectionFactory factory) : IAccountsReposit
             cancellationToken: ct));
         return rows.ToList();
     }
+
+    public async Task<decimal> GetGodownExpensesAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_accounts_godown_expenses(@p_from, @p_to)";
+        return await conn.ExecuteScalarAsync<decimal>(new CommandDefinition(
+            sql, new { p_from = from, p_to = to }, cancellationToken: ct));
+    }
+
+    public async Task<IReadOnlyList<AccountsInventoryExpenseRow>> GetInventoryExpensesAsync(
+        DateOnly from, DateOnly to,
+        Guid[]? inventoryIds,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_accounts_inventory_expenses_breakdown(@p_from, @p_to, @p_inventory_ids)";
+        var rows = await conn.QueryAsync<AccountsInventoryExpenseRow>(new CommandDefinition(
+            sql,
+            new
+            {
+                p_from          = from,
+                p_to            = to,
+                p_inventory_ids = inventoryIds,
+            },
+            cancellationToken: ct));
+        return rows.ToList();
+    }
+
+    public async Task<IReadOnlyList<AccountsGodownExpenseByInventoryRow>> GetGodownExpensesByInventoryAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_accounts_godown_expenses_by_inventory(@p_from, @p_to)";
+        var rows = await conn.QueryAsync<AccountsGodownExpenseByInventoryRow>(new CommandDefinition(
+            sql, new { p_from = from, p_to = to }, cancellationToken: ct));
+        return rows.ToList();
+    }
 }

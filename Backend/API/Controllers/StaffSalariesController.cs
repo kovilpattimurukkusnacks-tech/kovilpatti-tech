@@ -37,4 +37,22 @@ public class StaffSalariesController(IStaffSalaryService staffSalaries) : Contro
         await staffSalaries.DeductAsync(request, ct);
         return NoContent();
     }
+
+    /// <summary>
+    /// Signed, dated Pay/Deduct history for one staff member — powers the
+    /// "hover the Net figure" breakdown on the Salary tab.
+    /// </summary>
+    [HttpGet("{staffId:guid}/transactions")]
+    public async Task<ActionResult<IReadOnlyList<StaffSalaryTransactionDto>>> Transactions(
+        Guid staffId, [FromQuery] DateOnly from, [FromQuery] DateOnly to, CancellationToken ct)
+        => Ok(await staffSalaries.GetTransactionsAsync(staffId, from, to, ct));
+
+    /// <summary>
+    /// Most recent Bonus given to this staff (all-time) — a Bonus is just a
+    /// Pay entry with mode "Bonus", so this scans for the newest one. Null
+    /// body (200) when none has ever been given.
+    /// </summary>
+    [HttpGet("{staffId:guid}/last-bonus")]
+    public async Task<ActionResult<StaffSalaryTransactionDto?>> LastBonus(Guid staffId, CancellationToken ct)
+        => Ok(await staffSalaries.GetLastBonusAsync(staffId, ct));
 }

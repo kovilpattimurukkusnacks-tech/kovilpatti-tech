@@ -25,4 +25,18 @@ public interface IStaffSalaryRepository
     Task<StaffSalaryOtherTransaction> CreateOtherTxnAsync(
         Guid staffId, decimal amount, string? reason, string? note, DateOnly txnDate, Guid userId,
         CancellationToken ct = default);
+
+    /// True once a monthly salary has been set for this staff — Pay/Deduct
+    /// require this first (client req: no ledger entry without an expected
+    /// amount).
+    Task<bool> HasMonthlySalaryAsync(Guid staffId, CancellationToken ct = default);
+
+    /// Signed, dated Pay/Deduct history for one staff member — powers the
+    /// "hover the Net figure" breakdown on the Salary tab.
+    Task<List<StaffSalaryTransaction>> GetTransactionsAsync(
+        Guid staffId, DateOnly from, DateOnly to, CancellationToken ct = default);
+
+    /// Most recent Bonus-tagged Pay entry for one staff (all-time, not
+    /// month-scoped) — null if none has ever been given.
+    Task<StaffSalaryTransaction?> GetLastBonusAsync(Guid staffId, CancellationToken ct = default);
 }

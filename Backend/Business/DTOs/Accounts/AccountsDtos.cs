@@ -143,6 +143,13 @@ public record AccountsInTransitDto(
     decimal         SpecialAmount
 );
 
+/// Company-wide total of Inventory-role staff Pay/Deduct in the date range
+/// (18-Jul-2026, client req: "inventory users also should pay salary" —
+/// should count as a real business expense, not just be tracked separately).
+/// Godowns aren't shop-scoped like the rest of Accounts, so this is its own
+/// line item feeding Net Profit rather than a per-shop utilities row.
+public record AccountsGodownExpensesDto(decimal Amount);
+
 /// One row per (shop, utility category) in the selected date range. Shops
 /// with zero utilities in range are absent — FE treats missing shops as ₹0.
 /// Used to derive the Net Profit KPI (Gross Profit − Utilities) and the
@@ -158,4 +165,30 @@ public record AccountsUtilityRowDto(
     string  Category,
     decimal Amount,
     long    ExpenseCount
+);
+
+/// One row per (inventory, category) in the selected date range —
+/// godown/inventory operational expenses (21-Jul-2026). Powers the
+/// "Inventory Expenses" line on the admin Accounts screen, mirror of
+/// Shop Expenses but for godowns. Distinct from the pre-existing
+/// AccountsGodownExpensesDto (that one is staff salary paid to
+/// Inventory-role users — a different feature entirely).
+public record AccountsInventoryExpenseRowDto(
+    Guid    InventoryId,
+    string  InventoryCode,
+    string  InventoryName,
+    string  Category,
+    decimal Amount,
+    long    ExpenseCount
+);
+
+/// Per-inventory staff-salary breakdown (21-Jul-2026) — same source
+/// as AccountsGodownExpensesDto's scalar total, but grouped by godown.
+/// Powers the "By Godown" panel on the admin Accounts screen. Inventories
+/// with zero salary spend in range are absent — FE treats missing as ₹0.
+public record AccountsGodownExpenseByInventoryRowDto(
+    Guid    InventoryId,
+    string  InventoryCode,
+    string  InventoryName,
+    decimal Amount
 );

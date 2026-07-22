@@ -3,17 +3,28 @@ import { Box, Card, CardContent, Skeleton, Tooltip, Typography } from '@mui/mate
 import { SparkLineChart } from '@mui/x-charts/SparkLineChart'
 import {
   ArrowDownRight, ArrowUpRight, Info,
-  IndianRupee, Percent, Receipt, ShoppingCart, TrendingUp, Wallet,
+  IndianRupee, Percent, Receipt, ShoppingCart, TrendingUp, Wallet, Warehouse,
 } from 'lucide-react'
 import type { AccountsTrendBucketDto, AccountsUtilityRowDto } from '../../api/accounts/types'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import { LOSS_RED, PROFIT_GREEN } from '../accounts/ProfitLossChart'
-import { totalUtilities } from '../../hooks/useAccounts'
+import { totalInventoryExpenses, totalUtilities } from '../../hooks/useAccounts'
+import type { AccountsInventoryExpenseRowDto } from '../../api/accounts/types'
 
 type Props = {
   data: AccountsTrendBucketDto[] | undefined
   utilities: AccountsUtilityRowDto[] | undefined
+  /** Company-wide Inventory-role staff salary total (18-Jul-2026) — a
+   *  single figure, not shop-scoped like `utilities`. Subtracts from Net
+   *  Profit as its own line, same as on the Accounts screen. */
+  godownExpenses: number | undefined
+  /** Per-inventory operational expenses (rent, electricity, salary from
+   *  the Godown Expenses screen — 21-Jul-2026). Rolled into the same
+   *  "Godown Expenses" tile as the staff-salary figure above so the
+   *  owner sees one combined godown-side deduction — matching the
+   *  client's "Shop Expenses + Inventory Expenses = two lines" ask. */
+  inventoryExpenses: AccountsInventoryExpenseRowDto[] | undefined
   loading: boolean
 }
 
@@ -37,8 +48,11 @@ type Props = {
  * reason — its shape would inherit Gross Profit's, which the user can see
  * on the neighbouring card.
  */
-export default function DashboardHero({ data, utilities, loading }: Props) {
-  const totals = useMemo(() => computeTotals(data, utilities), [data, utilities])
+export default function DashboardHero({ data, utilities, godownExpenses, inventoryExpenses, loading }: Props) {
+  const totals = useMemo(
+    () => computeTotals(data, utilities, godownExpenses, inventoryExpenses),
+    [data, utilities, godownExpenses, inventoryExpenses],
+  )
   const sparks = useMemo(() => computeSparks(data), [data])
 
   return (
@@ -77,7 +91,7 @@ export default function DashboardHero({ data, utilities, loading }: Props) {
         sparkColor={totals.net >= 0 ? PROFIT_GREEN : LOSS_RED}
         accent="hero"
         heroTone={totals.net >= 0 ? 'profit' : 'loss'}
-        tooltip="Net Profit = Gross Profit − Shop Expenses logged in this date range."
+        tooltip="Net Profit = Gross Profit − Shop Expenses − Godown Expenses logged in this date range."
       />
 
       {/* Row 2 — the components: Cost, Utilities, Margin. */}
@@ -99,6 +113,14 @@ export default function DashboardHero({ data, utilities, loading }: Props) {
         icon={<Receipt size={16} />}
         sparkColor="#B45309"
         tooltip="Total shop operating expenses (Rent, Electricity, Salary, …) logged in this date range. Counted by expense_date only — monthly bills logged as a single entry may under-count a partial-month view."
+      />
+      <KpiCard
+        label="Godown Expenses"
+        value={totals.godown}
+        loading={loading}
+        icon={<Warehouse size={16} />}
+        sparkColor="#6D4C41"
+        tooltip="Combined godown-side deductions in this date range: (1) Inventory-role staff salary paid/deducted, and (2) operational expenses (rent / electricity / maintenance / etc.) logged from the inventory user's Godown Expenses screen."
       />
       <KpiCard
         label="Gross Margin"
@@ -272,13 +294,20 @@ function DeltaRow({ delta, deltaTone }: { delta: DeltaSignal; deltaTone: 'normal
 function computeTotals(
   data: AccountsTrendBucketDto[] | undefined,
   utilities: AccountsUtilityRowDto[] | undefined,
+  godownExpenses: number | undefined,
+  inventoryExpenses: AccountsInventoryExpenseRowDto[] | undefined,
 ) {
   const rows = data ?? []
   const revenue   = rows.reduce((s, r) => s + r.netAmount,      0)
   const cost      = rows.reduce((s, r) => s + r.purchaseAmount, 0)
   const gross     = revenue - cost
   const util      = totalUtilities(utilities)
-  const net       = gross - util
+  // 21-Jul-2026: godown-side deductions = staff salary (godownExpenses)
+  // + operational expenses (inventoryExpenses). Summed here so the
+  // dashboard's "Godown Expenses" tile shows one combined figure,
+  // matching the client's "two lines: Shop + Inventory" mental model.
+  const godown    = (godownExpenses ?? 0) + totalInventoryExpenses(inventoryExpenses)
+  const net       = gross - util - godown
   const marginPct = revenue > 0 ? (gross / revenue) * 100 : 0
 
   // First-half vs second-half deltas — cheap proxy for "trending up" without
@@ -302,7 +331,7 @@ function computeTotals(
   })
 
   return {
-    revenue, cost, gross, utilities: util, net, marginPct,
+    revenue, cost, gross, utilities: util, godown, net, marginPct,
     revenueDelta: delta(revA, revB),
     costDelta:    delta(cosA, cosB),
     grossDelta:   delta(groA, groB),
