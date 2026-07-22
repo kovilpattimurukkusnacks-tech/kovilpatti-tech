@@ -50,6 +50,10 @@ export type ProductListFilters = {
   types?: string[]          // multi-select; empty/undefined = any
   page?: number             // 1-indexed for BE
   pageSize?: number
+  // 21-Jul-2026: admin management page opts in to see inactive rows too
+  // (so they can reactivate them). Undefined/false = only active. BE
+  // service silently ignores the flag for non-Admin callers.
+  includeInactive?: boolean
 }
 
 export type PagedResult<T> = {

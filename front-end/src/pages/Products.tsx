@@ -58,6 +58,11 @@ export default function Products() {
     ...filters,
     page: 1,
     pageSize: 500,
+    // 21-Jul-2026: admin needs to see inactive products too (so they can
+    // reactivate them from the grid). BE forces this to false for
+    // non-Admin callers, so a shop/inventory user who somehow lands here
+    // still only sees active rows.
+    includeInactive: true,
   })
   const categoriesQuery = useCategories()
   const create = useCreateProduct()
