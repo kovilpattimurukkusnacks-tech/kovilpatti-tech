@@ -66,4 +66,11 @@ public interface IAccountsRepository
         DateOnly from, DateOnly to,
         Guid[]? inventoryIds,
         CancellationToken ct = default);
+
+    /// Per-inventory staff-salary breakdown (21-Jul-2026) — same source
+    /// as GetGodownExpensesAsync's scalar total, but grouped by godown.
+    /// Powers the "By Godown" panel on the admin Accounts screen.
+    Task<IReadOnlyList<AccountsGodownExpenseByInventoryRow>> GetGodownExpensesByInventoryAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default);
 }

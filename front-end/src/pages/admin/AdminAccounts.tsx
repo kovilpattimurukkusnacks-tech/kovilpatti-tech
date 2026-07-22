@@ -9,6 +9,7 @@ import AccountsFilterBar from '../../components/accounts/AccountsFilterBar'
 import KpiStrip from '../../components/accounts/KpiStrip'
 import InTransitStrip from '../../components/accounts/InTransitStrip'
 import ShopBreakdownTable from '../../components/accounts/ShopBreakdownTable'
+import ByGodownTable from '../../components/accounts/ByGodownTable'
 import CategoryAndProductsTable from '../../components/accounts/CategoryAndProductsTable'
 import AdjustmentsLogTable from '../../components/accounts/AdjustmentsLogTable'
 import { useShops } from '../../hooks/useShops'
@@ -18,12 +19,12 @@ import {
   useAccountsByCategory,
   useAccountsByShop,
   useAccountsGodownExpenses,
+  useAccountsGodownExpensesByInventory,
   useAccountsInTransit,
   useAccountsInventoryExpenses,
   useAccountsSummary,
   useAccountsUtilities,
   useAccountsTopProducts,
-  totalInventoryExpenses,
 } from '../../hooks/useAccounts'
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
 
@@ -190,12 +191,16 @@ export default function AdminAccounts() {
   // maintenance etc. logged via the Godown Expenses screen. Combined
   // with the staff-salary figure above under the "Godown Expenses" tile.
   const inventoryExpenses = useAccountsInventoryExpenses(nonCategoryFilters)
+  // Per-godown staff salary rollup — feeds the "By godown" table
+  // alongside the operational per-inventory breakdown above.
+  const godownExpensesByInventory = useAccountsGodownExpensesByInventory(nonCategoryFilters)
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
   const firstError = summary.error || inTransit.error || byShop.error
                    || byCategory.error || topProducts.error || adjustments.error
                    || utilities.error || godownExpenses.error || inventoryExpenses.error
+                   || godownExpensesByInventory.error
 
   return (
     <Box sx={{ p: 3 }}>
@@ -227,7 +232,7 @@ export default function AdminAccounts() {
           view={filters.view}
           utilityRows={utilities.data}
           godownExpenseAmount={godownExpenses.data?.amount}
-          inventoryExpenseAmount={totalInventoryExpenses(inventoryExpenses.data)}
+          inventoryExpenseRows={inventoryExpenses.data}
         />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).
@@ -241,6 +246,12 @@ export default function AdminAccounts() {
           loading={byShop.isLoading}
           filters={filters}
           utilityRows={utilities.data}
+        />
+
+        <ByGodownTable
+          inventoryRows={inventoryExpenses.data}
+          salaryRows={godownExpensesByInventory.data}
+          loading={inventoryExpenses.isLoading || godownExpensesByInventory.isLoading}
         />
 
         <CategoryAndProductsTable

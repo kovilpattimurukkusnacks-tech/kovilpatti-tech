@@ -26,6 +26,7 @@ export const accountsKeys = {
   utilities:   (f: AccountsFilters) => ['accounts', 'utilities',    f] as const,
   godownExpenses: (f: AccountsFilters) => ['accounts', 'godown-expenses', f] as const,
   inventoryExpenses: (f: AccountsFilters) => ['accounts', 'inventory-expenses', f] as const,
+  godownExpensesByInventory: (f: AccountsFilters) => ['accounts', 'godown-expenses-by-inventory', f] as const,
 }
 
 export function useAccountsSummary(filters: AccountsFilters) {
@@ -116,6 +117,17 @@ export function useAccountsInventoryExpenses(filters: AccountsFilters) {
   return useQuery({
     queryKey: accountsKeys.inventoryExpenses(filters),
     queryFn:  () => accountsApi.inventoryExpenses(filters),
+    staleTime: STALE_TIME,
+  })
+}
+
+/** Per-inventory staff-salary rollup (21-Jul-2026) — feeds the "By
+ *  Godown" panel on the admin Accounts screen. Missing inventories
+ *  imply ₹0 salary spend in range. */
+export function useAccountsGodownExpensesByInventory(filters: AccountsFilters) {
+  return useQuery({
+    queryKey: accountsKeys.godownExpensesByInventory(filters),
+    queryFn:  () => accountsApi.godownExpensesByInventory(filters),
     staleTime: STALE_TIME,
   })
 }

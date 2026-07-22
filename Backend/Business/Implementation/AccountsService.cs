@@ -153,6 +153,18 @@ public class AccountsService(
             r.Category, r.Amount, r.Expense_Count)).ToList();
     }
 
+    public async Task<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>> GetGodownExpensesByInventoryAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Per-inventory staff salary breakdown for the "By Godown" table
+        // (21-Jul-2026). Same source as GetGodownExpensesAsync's scalar
+        // total; just grouped by users.inventory_id.
+        Guard(filters);
+        var rows = await accounts.GetGodownExpensesByInventoryAsync(
+            filters.From!.Value, filters.To!.Value, ct);
+        return rows.Select(r => new AccountsGodownExpenseByInventoryRowDto(
+            r.Inventory_Id, r.Inventory_Code, r.Inventory_Name, r.Amount)).ToList();
+    }
+
     // ──────── helpers ────────
 
     private void Guard(AccountsFilters filters)

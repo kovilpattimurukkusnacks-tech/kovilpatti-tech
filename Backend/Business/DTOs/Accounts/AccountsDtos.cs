@@ -181,3 +181,14 @@ public record AccountsInventoryExpenseRowDto(
     decimal Amount,
     long    ExpenseCount
 );
+
+/// Per-inventory staff-salary breakdown (21-Jul-2026) — same source
+/// as AccountsGodownExpensesDto's scalar total, but grouped by godown.
+/// Powers the "By Godown" panel on the admin Accounts screen. Inventories
+/// with zero salary spend in range are absent — FE treats missing as ₹0.
+public record AccountsGodownExpenseByInventoryRowDto(
+    Guid    InventoryId,
+    string  InventoryCode,
+    string  InventoryName,
+    decimal Amount
+);

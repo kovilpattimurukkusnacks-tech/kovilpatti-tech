@@ -183,6 +183,39 @@ LANGUAGE sql STABLE AS $$
     AND txn_date <= p_to;
 $$;
 
+-- 21-Jul-2026: per-inventory staff salary breakdown for the "By Godown"
+-- table on the admin Accounts screen. Same source data as
+-- fn_accounts_godown_expenses above, but grouped by the inventory each
+-- staff user belongs to (users.inventory_id).
+--
+-- Godowns with zero salary spend in range are absent — FE treats missing
+-- inventories as ₹0, matching fn_accounts_by_shop's convention.
+CREATE OR REPLACE FUNCTION fn_accounts_godown_expenses_by_inventory(
+  p_from date,
+  p_to   date
+)
+RETURNS TABLE (
+  inventory_id   uuid,
+  inventory_code varchar,
+  inventory_name varchar,
+  amount         numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT u.inventory_id,
+         i.code AS inventory_code,
+         i.name AS inventory_name,
+         COALESCE(SUM(t.amount), 0)::numeric(14,2) AS amount
+  FROM   staff_salary_other_transactions t
+  JOIN   users       u ON u.id = t.staff_id
+  JOIN   inventories i ON i.id = u.inventory_id
+  WHERE  t.is_deleted = false
+    AND  t.txn_date >= p_from
+    AND  t.txn_date <= p_to
+    AND  u.inventory_id IS NOT NULL
+  GROUP BY u.inventory_id, i.code, i.name
+  ORDER BY i.name;
+$$;
+
 -- ============== Staff Salary — guard + history (18-Jul-2026) =======
 
 -- A staff's monthly salary must be set before any Pay/Deduct is recorded

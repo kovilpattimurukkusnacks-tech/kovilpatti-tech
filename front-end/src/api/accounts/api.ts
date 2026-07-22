@@ -5,6 +5,7 @@ import type {
   AccountsAdjustmentRowDto,
   AccountsCategoryRowDto,
   AccountsFilters,
+  AccountsGodownExpenseByInventoryRowDto,
   AccountsGodownExpensesDto,
   AccountsInTransitDto,
   AccountsInventoryExpenseRowDto,
@@ -44,6 +45,7 @@ export const accountsApi = {
   utilities:   (f: AccountsFilters) => apiClient.get<AccountsUtilityRowDto[]>       (`/api/accounts/utilities${toQuery(f)}`),
   godownExpenses: (f: AccountsFilters) => apiClient.get<AccountsGodownExpensesDto>  (`/api/accounts/godown-expenses${toQuery(f)}`),
   inventoryExpenses: (f: AccountsFilters) => apiClient.get<AccountsInventoryExpenseRowDto[]>(`/api/accounts/inventory-expenses${toQuery(f)}`),
+  godownExpensesByInventory: (f: AccountsFilters) => apiClient.get<AccountsGodownExpenseByInventoryRowDto[]>(`/api/accounts/godown-expenses-by-inventory${toQuery(f)}`),
 }
 
 // ──────── XLSX exports ────────

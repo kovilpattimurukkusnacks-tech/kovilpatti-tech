@@ -233,3 +233,14 @@ export type AccountsInventoryExpenseRowDto = {
   amount:        number
   expenseCount:  number
 }
+
+/** Per-inventory staff-salary rollup (21-Jul-2026) — powers the "By
+ *  Godown" panel on the admin Accounts screen. Same source data as
+ *  AccountsGodownExpensesDto's scalar total, grouped by godown.
+ *  Missing inventories = ₹0 salary spend in range. */
+export type AccountsGodownExpenseByInventoryRowDto = {
+  inventoryId:   string
+  inventoryCode: string
+  inventoryName: string
+  amount:        number
+}

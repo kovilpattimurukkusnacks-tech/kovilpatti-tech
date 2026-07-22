@@ -20,4 +20,5 @@ public interface IAccountsService
     Task<IReadOnlyList<AccountsUtilityRowDto>>      GetUtilitiesAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<AccountsGodownExpensesDto>                 GetGodownExpensesAsync(AccountsFilters filters, CancellationToken ct = default);
     Task<IReadOnlyList<AccountsInventoryExpenseRowDto>> GetInventoryExpensesAsync(AccountsFilters filters, CancellationToken ct = default);
+    Task<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>> GetGodownExpensesByInventoryAsync(AccountsFilters filters, CancellationToken ct = default);
 }

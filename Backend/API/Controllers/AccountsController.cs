@@ -83,6 +83,15 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<ActionResult<IReadOnlyList<AccountsInventoryExpenseRowDto>>> InventoryExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
         => Ok(await accounts.GetInventoryExpensesAsync(filters, ct));
 
+    /// <summary>
+    /// Per-inventory staff-salary rollup for the "By Godown" panel
+    /// (21-Jul-2026). Same source data as /godown-expenses (a scalar),
+    /// just grouped by godown.
+    /// </summary>
+    [HttpGet("godown-expenses-by-inventory")]
+    public async Task<ActionResult<IReadOnlyList<AccountsGodownExpenseByInventoryRowDto>>> GodownExpensesByInventory([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetGodownExpensesByInventoryAsync(filters, ct));
+
     // ──────── XLSX export endpoints ────────
     //
     // Each export passes the raw typed value (decimal / long / DateTimeOffset
