@@ -153,6 +153,7 @@ export default function ByGodownTable({ inventoryRows, salaryRows, loading }: Pr
             sx={{
               border: 'none',
               backgroundColor: 'transparent',
+              '& .MuiDataGrid-row': { cursor: 'pointer' },
             }}
           />
         </Box>
@@ -197,6 +198,7 @@ function OperationalCell({ row, value }: { row: GodownRow; value: number }) {
         component="span"
         sx={{
           display: 'inline-flex', alignItems: 'center',
+          cursor: 'pointer',
           borderBottom: '1px dashed transparent',
           transition: 'border-color 120ms ease',
           '&:hover': { borderBottomColor: '#1F1F1F55' },

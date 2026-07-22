@@ -19,7 +19,7 @@ import {
 } from '../../hooks/useShopUtilityExpenses'
 import type { ShopUtilityExpenseDto } from '../../api/shop-utility-expenses/types'
 import { ValidationError } from '../../api/errors'
-import { formatINR } from '../../utils/format'
+import { formatAmountInput, formatINR, stripAmountFormat } from '../../utils/format'
 import { GOLD_GRADIENT } from '../../theme'
 
 // Well-known categories — plain text label + a colour pulled from the
@@ -359,7 +359,7 @@ export default function ShopUtilities() {
         onClose={(_e, reason) => { if (reason !== 'backdropClick') setDialogOpen(false) }}
         maxWidth="xs"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+        slotProps={{ paper: { sx: { borderRadius: 3, bgcolor: '#FFFBE6' } } }}
       >
         <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Shop Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -379,12 +379,12 @@ export default function ShopUtilities() {
 
           <TextField
             label="Amount (₹)"
-            type="number"
-            value={formAmount}
-            onChange={e => setFormAmount(e.target.value)}
+            type="text"
+            value={formatAmountInput(formAmount)}
+            onChange={e => setFormAmount(stripAmountFormat(e.target.value))}
             size="small"
             fullWidth
-            slotProps={{ htmlInput: { min: 0, step: '0.01' } }}
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
             label="Note (optional)"
