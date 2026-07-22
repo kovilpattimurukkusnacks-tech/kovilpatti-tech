@@ -224,7 +224,7 @@ LANGUAGE sql STABLE AS $$
     AND t.is_deleted = false
     AND t.txn_date  >= p_from
     AND t.txn_date  <= p_to
-  ORDER BY txn_date DESC;
+  ORDER BY txn_date ASC;
 $$;
 
 -- ============== Staff Salary — Bonus (18-Jul-2026) =================

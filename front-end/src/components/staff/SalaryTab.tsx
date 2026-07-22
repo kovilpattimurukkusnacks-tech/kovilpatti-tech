@@ -1,14 +1,15 @@
 import { useMemo, useState } from 'react'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, IconButton, MenuItem, Paper, TextField, Tooltip, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, MenuItem, Paper, TextField, Tooltip, Typography,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import type { LucideIcon } from 'lucide-react'
-import { CircleCheck, Clock, Gift, IndianRupee, Info, MinusCircle, Wallet } from 'lucide-react'
+import { CircleCheck, Clock, Gift, IndianRupee, MinusCircle, Wallet } from 'lucide-react'
 import SetSalaryDialog from './SetSalaryDialog'
 import PaySalaryDialog from './PaySalaryDialog'
 import DeductSalaryDialog from './DeductSalaryDialog'
 import BonusDialog from './BonusDialog'
+import { brandTooltipSlotProps } from '../accounts/BreakdownTooltip'
 import { istFirstOfThisMonth } from '../../utils/istDate'
 import { formatINR } from '../../utils/format'
 import {
@@ -60,6 +61,8 @@ function fmtShortDate(ymd: string): string {
   const [y, m, d] = ymd.split('-').map(Number)
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
 }
+
+const DISABLED_HINT = 'Set a monthly salary for this staff first'
 
 export default function SalaryTab() {
   const [selectedMonth, setSelectedMonth] = useState(() => istFirstOfThisMonth().slice(0, 7))
@@ -170,23 +173,24 @@ export default function SalaryTab() {
     {
       field: 'status', headerName: 'Status', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
       renderHeader: () => (
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
-          Status
-          <Tooltip
-            arrow
-            title={
-              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12 }}>
+        <Tooltip
+          arrow
+          slotProps={brandTooltipSlotProps}
+          title={
+            <BrandTooltipCard title="Status Meaning">
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.75 }}>
                 {(Object.keys(STATUS_MEANING) as Status[]).map(s => (
-                  <span key={s}><b>{s}</b> — {STATUS_MEANING[s]}</span>
+                  <Box key={s}>
+                    <Typography component="span" sx={{ fontSize: 12.5, fontWeight: 800 }}>{s}</Typography>
+                    <Typography component="span" sx={{ fontSize: 12.5, color: '#1F1F1FB3' }}> — {STATUS_MEANING[s]}</Typography>
+                  </Box>
                 ))}
               </Box>
-            }
-          >
-            <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
-              <Info size={13} />
-            </Box>
-          </Tooltip>
-        </Box>
+            </BrandTooltipCard>
+          }
+        >
+          <Box component="span">Status</Box>
+        </Tooltip>
       ),
       renderCell: ({ row }) => {
         const status = rowStatus(row)
@@ -194,27 +198,38 @@ export default function SalaryTab() {
       },
     },
     {
-      field: 'actions', headerName: 'Actions', width: 115, align: 'right', headerAlign: 'right',
+      // Widened + labeled buttons (was icon-only) — client req: name the
+      // actions and give them breathing room instead of 3 cramped icons.
+      field: 'actions', headerName: 'Actions', width: 300, align: 'right', headerAlign: 'right',
       sortable: false, filterable: false,
       renderCell: ({ row }) => {
         const disabled = rowStatus(row) === 'Not set'
+        const disabledTooltip = disabled ? <BrandTooltipText>{DISABLED_HINT}</BrandTooltipText> : ''
         return (
-          <Box sx={{ display: 'flex', gap: 0, justifyContent: 'flex-end' }}>
-            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Pay'}>
+          <Box sx={{ display: 'flex', gap: 1, justifyContent: 'flex-end' }}>
+            <Tooltip slotProps={brandTooltipSlotProps} title={disabledTooltip}>
               <span>
-                <IconButton size="small" color="success" disabled={disabled} onClick={() => setPayTarget(row)}>
-                  <IndianRupee className="w-4 h-4" />
-                </IconButton>
+                <Button
+                  size="small" variant="outlined" color="success" disabled={disabled}
+                  startIcon={<IndianRupee className="w-3.5 h-3.5" />}
+                  onClick={() => setPayTarget(row)} sx={{ textTransform: 'none', fontWeight: 600, px: 1.25 }}
+                >
+                  Pay
+                </Button>
               </span>
             </Tooltip>
-            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Deduct'}>
+            <Tooltip slotProps={brandTooltipSlotProps} title={disabledTooltip}>
               <span>
-                <IconButton size="small" color="error" disabled={disabled} onClick={() => setDeductTarget(row)}>
-                  <MinusCircle className="w-4 h-4" />
-                </IconButton>
+                <Button
+                  size="small" variant="outlined" color="error" disabled={disabled}
+                  startIcon={<MinusCircle className="w-3.5 h-3.5" />}
+                  onClick={() => setDeductTarget(row)} sx={{ textTransform: 'none', fontWeight: 600, px: 1.25 }}
+                >
+                  Deduct
+                </Button>
               </span>
             </Tooltip>
-            <BonusIconButton row={row} disabled={disabled} onClick={() => setBonusTarget(row)} />
+            <BonusButton row={row} disabled={disabled} onClick={() => setBonusTarget(row)} />
           </Box>
         )
       },
@@ -315,28 +330,97 @@ export default function SalaryTab() {
   )
 }
 
-// Bonus icon button — hovering shows when this staff last got a bonus
+// ══════════════════ Brand-styled tooltip cards ══════════════════
+// Same "Kovilpatti card grammar" as the Accounts Gross P&L / Net P&L
+// hover cards (BreakdownTooltip.tsx) — cream ground, 2px black border,
+// offset gold drop-shadow — so these tooltips read as the same app
+// instead of MUI's default small dark tooltip. Combine with
+// `slotProps={brandTooltipSlotProps}` on the <Tooltip> itself.
+
+function BrandTooltipCard({ title, subtitle, children }: {
+  title: string
+  subtitle?: string
+  children: React.ReactNode
+}) {
+  return (
+    <Box sx={{
+      minWidth: 250,
+      bgcolor: '#FFFBE6',
+      color: '#1F1F1F',
+      border: '2px solid #1F1F1F',
+      boxShadow: '4px 4px 0 0 #FCD835',
+      borderRadius: 1,
+      overflow: 'hidden',
+      fontVariantNumeric: 'tabular-nums',
+    }}>
+      <Box sx={{ px: 1.75, pt: 1.25, pb: subtitle ? 1 : 0.75, borderBottom: '2px solid #FCD835' }}>
+        <Typography sx={{ fontSize: 11, fontWeight: 800, letterSpacing: 1.2, textTransform: 'uppercase' }}>
+          {title}
+        </Typography>
+        {subtitle && (
+          <Typography sx={{ fontSize: 12.5, fontWeight: 700, color: '#1F1F1FB3', mt: 0.25 }}>
+            {subtitle}
+          </Typography>
+        )}
+      </Box>
+      <Box sx={{ px: 1.75, py: 1.25 }}>{children}</Box>
+    </Box>
+  )
+}
+
+// One-line variant for short hints (e.g. "why is this button disabled").
+function BrandTooltipText({ children }: { children: React.ReactNode }) {
+  return (
+    <Box sx={{
+      bgcolor: '#FFFBE6', color: '#1F1F1F', border: '2px solid #1F1F1F',
+      boxShadow: '3px 3px 0 0 #FCD835', borderRadius: 1,
+      px: 1.5, py: 0.85, fontSize: 12.5, fontWeight: 600, maxWidth: 220,
+    }}>
+      {children}
+    </Box>
+  )
+}
+
+// Bonus button — hovering shows when this staff last got a bonus
 // (client req: "oru user ku last ah epo bonus kuduthanga nu history
 // madhiri katanum"). Lazy: the last-bonus query only fires once the
 // tooltip actually opens.
-function BonusIconButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
+function BonusButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
   const [open, setOpen] = useState(false)
   const lastBonus = useStaffLastBonus(row.staffId, open)
 
   const content = disabled
-    ? 'Set a monthly salary for this staff first'
-    : lastBonus.isLoading
-      ? 'Loading…'
-      : !lastBonus.data
-        ? 'No bonus given yet.'
-        : `Last bonus: ${fmtShortDate(lastBonus.data.txnDate)} — ${formatINR(lastBonus.data.amount)}`
+    ? <BrandTooltipText>{DISABLED_HINT}</BrandTooltipText>
+    : (
+      <BrandTooltipCard title="Last Bonus" subtitle={row.fullName}>
+        {lastBonus.isLoading ? (
+          <Typography sx={{ fontSize: 12.5 }}>Loading…</Typography>
+        ) : !lastBonus.data ? (
+          <Typography sx={{ fontSize: 12.5, color: '#1F1F1FB3' }}>No bonus given yet.</Typography>
+        ) : (
+          <Box sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5 }}>
+            <Typography sx={{ fontSize: 12.5, color: '#1F1F1FB3' }}>{fmtShortDate(lastBonus.data.txnDate)}</Typography>
+            <Typography sx={{ fontSize: 13, fontWeight: 800, color: '#2E7D32' }}>+{formatINR(lastBonus.data.amount)}</Typography>
+          </Box>
+        )}
+      </BrandTooltipCard>
+    )
 
   return (
-    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content} slotProps={brandTooltipSlotProps}>
       <span>
-        <IconButton size="small" disabled={disabled} onClick={onClick} sx={{ color: disabled ? undefined : '#C28A00' }}>
-          <Gift className="w-4 h-4" />
-        </IconButton>
+        <Button
+          size="small" variant="outlined" disabled={disabled}
+          startIcon={<Gift className="w-3.5 h-3.5" />}
+          onClick={onClick}
+          sx={{
+            textTransform: 'none', fontWeight: 600, px: 1.25,
+            color: disabled ? undefined : '#C28A00',
+            borderColor: disabled ? undefined : '#C28A00',
+          }}
+        >
+          Bonus
+        </Button>
       </span>
     </Tooltip>
   )
@@ -349,26 +433,32 @@ function NetCell({ row, from, to }: { row: StaffSalaryRowDto; from: string; to: 
   const [open, setOpen] = useState(false)
   const txns = useStaffSalaryTransactions(row.staffId, from, to, open)
 
-  const content = txns.isLoading
-    ? 'Loading…'
-    : !txns.data || txns.data.length === 0
-      ? 'No transactions this month.'
-      : (
-        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 220 }}>
+  const content = (
+    <BrandTooltipCard title="History" subtitle={row.fullName}>
+      {txns.isLoading ? (
+        <Typography sx={{ fontSize: 12.5 }}>Loading…</Typography>
+      ) : !txns.data || txns.data.length === 0 ? (
+        <Typography sx={{ fontSize: 12.5, color: '#1F1F1FB3' }}>No transactions this month.</Typography>
+      ) : (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.6, minWidth: 220 }}>
           {txns.data.map((t, i) => (
-            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, fontSize: 12 }}>
-              <span>{fmtShortDate(t.txnDate)}{t.note ? ` — ${t.note}` : ''}</span>
-              <span style={{ fontWeight: 700, color: t.amount < 0 ? '#FFCDD2' : '#C8E6C9', whiteSpace: 'nowrap' }}>
+            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5 }}>
+              <Typography sx={{ fontSize: 12.5, color: '#1F1F1FB3' }}>
+                {fmtShortDate(t.txnDate)}{t.note ? ` — ${t.note}` : ''}
+              </Typography>
+              <Typography sx={{ fontSize: 12.5, fontWeight: 800, color: t.amount < 0 ? '#C62828' : '#2E7D32', whiteSpace: 'nowrap' }}>
                 {t.amount < 0 ? '−' : '+'}{formatINR(Math.abs(t.amount))}
-              </span>
+              </Typography>
             </Box>
           ))}
         </Box>
-      )
+      )}
+    </BrandTooltipCard>
+  )
 
   return (
-    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
-      <span style={{ fontWeight: 700, cursor: 'help' }}>{formatINR(row.net)}</span>
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content} slotProps={brandTooltipSlotProps}>
+      <span style={{ fontWeight: 700, cursor: 'pointer' }}>{formatINR(row.net)}</span>
     </Tooltip>
   )
 }
