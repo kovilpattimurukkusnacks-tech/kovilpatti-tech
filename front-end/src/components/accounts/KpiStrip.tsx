@@ -1,16 +1,9 @@
-import { Box, Card, CardContent, Divider, Skeleton, Tooltip, Typography } from '@mui/material'
+import { Box, Card, CardContent, Divider, Skeleton, Typography } from '@mui/material'
 import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet, Warehouse } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import { totalInventoryExpenses, totalUtilities } from '../../hooks/useAccounts'
 import { LOSS_RED, PROFIT_GREEN } from './ProfitLossChart'
-import {
-  BreakdownCard,
-  BreakdownDivider,
-  BreakdownRow,
-  BreakdownSumTotal,
-  brandTooltipSlotProps,
-} from './BreakdownTooltip'
 import type {
   AccountsInventoryExpenseRowDto,
   AccountsSummaryDto,
@@ -191,19 +184,13 @@ function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventor
         />
       </Box>
       <Box sx={{ gridArea: 'god' }}>
-        <GodownExpensesTooltip
-          staffSalary={godownExpenseAmount ?? 0}
-          inventoryRows={inventoryExpenseRows ?? []}
-          total={godownTotal}
-        >
-          <KpiCard
-            label="Godown Expenses"
-            value={godownTotal}
-            secondary="staff + operational"
-            icon={<Warehouse size={18} />}
-            loading={loading}
-          />
-        </GodownExpensesTooltip>
+        <KpiCard
+          label="Godown Expenses"
+          value={godownTotal}
+          secondary="staff + operational"
+          icon={<Warehouse size={18} />}
+          loading={loading}
+        />
       </Box>
       <Box sx={{ gridArea: 'net' }}>
         <KpiCard
@@ -215,76 +202,6 @@ function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventor
         />
       </Box>
     </Box>
-  )
-}
-
-// ══════════════════ Godown Expenses tooltip ══════════════════
-
-/** Card-level hover tooltip on the Godown Expenses Bento tile — shows
- *  the per-category rollup that makes up the combined figure:
- *  Staff Salary (from staff_salary_other_transactions) at the top when
- *  non-zero, then each operational category (Rent / Electricity / …)
- *  aggregated across all godowns, sorted biggest bill first, then a
- *  "Total Godown Expenses" sum row. Mirror of the shop-side per-row
- *  UtilitiesTooltip on ShopBreakdownTable, but aggregate-level.
- *
- *  Skipped when the total is zero — an empty tooltip on an empty tile
- *  reads as broken. */
-function GodownExpensesTooltip({ staffSalary, inventoryRows, total, children }: {
-  staffSalary: number
-  inventoryRows: AccountsInventoryExpenseRowDto[]
-  total: number
-  children: React.ReactNode
-}) {
-  // Aggregate operational rows by category across every godown. Same
-  // ×N chip pattern as UtilitiesTooltip when the same category was
-  // logged multiple times in the range (across any godown).
-  const catMap = new Map<string, { amount: number; count: number }>()
-  for (const r of inventoryRows) {
-    const prev = catMap.get(r.category) ?? { amount: 0, count: 0 }
-    prev.amount += r.amount
-    prev.count  += r.expenseCount
-    catMap.set(r.category, prev)
-  }
-  const catRows = Array.from(catMap.entries())
-    .map(([category, v]) => ({ category, amount: v.amount, count: v.count }))
-    .sort((a, b) => b.amount - a.amount)
-
-  if (total <= 0) {
-    // Nothing to break down — render the tile bare, no floating card.
-    return <>{children}</>
-  }
-
-  return (
-    <Tooltip
-      arrow
-      placement="top"
-      enterDelay={200}
-      leaveDelay={100}
-      title={
-        <BreakdownCard title="Godown Expenses Breakdown">
-          {staffSalary > 0 && (
-            <BreakdownRow op="" label="Staff Salary" value={staffSalary} tone="input" />
-          )}
-          {catRows.map(r => (
-            <BreakdownRow
-              key={r.category}
-              op=""
-              label={r.count > 1 ? `${r.category}  ×${r.count}` : r.category}
-              value={r.amount}
-              tone="input"
-            />
-          ))}
-          <BreakdownDivider />
-          <BreakdownSumTotal label="Total Godown Expenses" value={total} />
-        </BreakdownCard>
-      }
-      slotProps={brandTooltipSlotProps}
-    >
-      <Box sx={{ height: '100%' }}>
-        {children}
-      </Box>
-    </Tooltip>
   )
 }
 

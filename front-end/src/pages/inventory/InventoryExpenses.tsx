@@ -19,7 +19,7 @@ import {
 } from '../../hooks/useInventoryExpenses'
 import type { InventoryExpenseDto } from '../../api/inventory-expenses/types'
 import { ValidationError } from '../../api/errors'
-import { formatINR } from '../../utils/format'
+import { formatAmountInput, formatINR, stripAmountFormat } from '../../utils/format'
 import { GOLD_GRADIENT } from '../../theme'
 
 // Well-known godown expense categories — mirror of the shop-side list
@@ -321,7 +321,7 @@ export default function InventoryExpenses() {
         onClose={(_e, reason) => { if (reason !== 'backdropClick') setDialogOpen(false) }}
         maxWidth="xs"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+        slotProps={{ paper: { sx: { borderRadius: 3, bgcolor: '#FFFBE6' } } }}
       >
         <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Godown Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
@@ -338,12 +338,12 @@ export default function InventoryExpenses() {
 
           <TextField
             label="Amount (₹)"
-            type="number"
-            value={formAmount}
-            onChange={e => setFormAmount(e.target.value)}
+            type="text"
+            value={formatAmountInput(formAmount)}
+            onChange={e => setFormAmount(stripAmountFormat(e.target.value))}
             size="small"
             fullWidth
-            slotProps={{ htmlInput: { min: 0, step: '0.01' } }}
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
             label="Note (optional)"
