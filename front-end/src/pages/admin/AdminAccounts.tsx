@@ -19,9 +19,11 @@ import {
   useAccountsByShop,
   useAccountsGodownExpenses,
   useAccountsInTransit,
+  useAccountsInventoryExpenses,
   useAccountsSummary,
   useAccountsUtilities,
   useAccountsTopProducts,
+  totalInventoryExpenses,
 } from '../../hooks/useAccounts'
 import type { AccountsFilters, AccountsGrouping, AccountsTopProductsLimit, AccountsView } from '../../api/accounts/types'
 
@@ -184,12 +186,16 @@ export default function AdminAccounts() {
   // total, feeds Net Profit as its own line alongside (not blended into)
   // Shop Expenses. Same non-category filter set as utilities.
   const godownExpenses = useAccountsGodownExpenses(nonCategoryFilters)
+  // Inventory operational expenses (21-Jul-2026) — rent / electricity /
+  // maintenance etc. logged via the Godown Expenses screen. Combined
+  // with the staff-salary figure above under the "Godown Expenses" tile.
+  const inventoryExpenses = useAccountsInventoryExpenses(nonCategoryFilters)
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
   const firstError = summary.error || inTransit.error || byShop.error
                    || byCategory.error || topProducts.error || adjustments.error
-                   || utilities.error || godownExpenses.error
+                   || utilities.error || godownExpenses.error || inventoryExpenses.error
 
   return (
     <Box sx={{ p: 3 }}>
@@ -217,10 +223,11 @@ export default function AdminAccounts() {
 
         <KpiStrip
           data={summary.data}
-          loading={summary.isLoading || utilities.isLoading || godownExpenses.isLoading}
+          loading={summary.isLoading || utilities.isLoading || godownExpenses.isLoading || inventoryExpenses.isLoading}
           view={filters.view}
           utilityRows={utilities.data}
           godownExpenseAmount={godownExpenses.data?.amount}
+          inventoryExpenseAmount={totalInventoryExpenses(inventoryExpenses.data)}
         />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).

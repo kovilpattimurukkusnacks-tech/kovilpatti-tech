@@ -15,6 +15,7 @@ import Inventories from './pages/Inventories'
 import Shops from './pages/Shops'
 import Staff from './pages/Staff'
 import InventoryRequests from './pages/inventory/InventoryRequests'
+import InventoryExpenses from './pages/inventory/InventoryExpenses'
 import InventoryRequestDetail from './pages/inventory/InventoryRequestDetail'
 import ShopDashboard from './pages/shop/ShopDashboard'
 import ShopRequests from './pages/shop/ShopRequests'
@@ -103,6 +104,8 @@ const router = createBrowserRouter(
         <Route index element={<Navigate to="requests" replace />} />
         <Route path="requests" element={<InventoryRequests />} />
         <Route path="requests/:id" element={<InventoryRequestDetail />} />
+        {/* Godown expenses — 21-Jul-2026, mirror of /shop/expenses. */}
+        <Route path="expenses" element={<InventoryExpenses />} />
       </Route>
 
       {/* Print routes — standalone (no role layout) so they're paper-clean.

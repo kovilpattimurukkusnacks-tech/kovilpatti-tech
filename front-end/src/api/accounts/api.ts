@@ -7,6 +7,7 @@ import type {
   AccountsFilters,
   AccountsGodownExpensesDto,
   AccountsInTransitDto,
+  AccountsInventoryExpenseRowDto,
   AccountsProductRowDto,
   AccountsShopRowDto,
   AccountsSummaryDto,
@@ -42,6 +43,7 @@ export const accountsApi = {
   inTransit:   (f: AccountsFilters) => apiClient.get<AccountsInTransitDto>          (`/api/accounts/in-transit${toQuery(f)}`),
   utilities:   (f: AccountsFilters) => apiClient.get<AccountsUtilityRowDto[]>       (`/api/accounts/utilities${toQuery(f)}`),
   godownExpenses: (f: AccountsFilters) => apiClient.get<AccountsGodownExpensesDto>  (`/api/accounts/godown-expenses${toQuery(f)}`),
+  inventoryExpenses: (f: AccountsFilters) => apiClient.get<AccountsInventoryExpenseRowDto[]>(`/api/accounts/inventory-expenses${toQuery(f)}`),
 }
 
 // ──────── XLSX exports ────────

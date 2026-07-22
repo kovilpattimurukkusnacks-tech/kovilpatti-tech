@@ -137,6 +137,22 @@ public class AccountsService(
         return new AccountsGodownExpensesDto(amount);
     }
 
+    public async Task<IReadOnlyList<AccountsInventoryExpenseRowDto>> GetInventoryExpensesAsync(AccountsFilters filters, CancellationToken ct = default)
+    {
+        // Inventory operational expenses (rent / electricity / salary /
+        // maintenance / …). Distinct from GetGodownExpensesAsync above
+        // (which is staff-salary tracking). Filter surface = From/To +
+        // InventoryIds only — inventory categories are a separate
+        // taxonomy from product categories, so p_cat_ids is meaningless.
+        Guard(filters);
+        var rows = await accounts.GetInventoryExpensesAsync(
+            filters.From!.Value, filters.To!.Value,
+            filters.InventoryIds, ct);
+        return rows.Select(r => new AccountsInventoryExpenseRowDto(
+            r.Inventory_Id, r.Inventory_Code, r.Inventory_Name,
+            r.Category, r.Amount, r.Expense_Count)).ToList();
+    }
+
     // ──────── helpers ────────
 
     private void Guard(AccountsFilters filters)

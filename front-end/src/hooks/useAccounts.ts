@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query'
 import { accountsApi } from '../api/accounts/api'
-import type { AccountsFilters, AccountsUtilityRowDto } from '../api/accounts/types'
+import type { AccountsFilters, AccountsInventoryExpenseRowDto, AccountsUtilityRowDto } from '../api/accounts/types'
 
 /**
  * TanStack Query hooks for the Accounts dashboard. All queries are
@@ -25,6 +25,7 @@ export const accountsKeys = {
   inTransit:   (f: AccountsFilters) => ['accounts', 'in-transit',   f] as const,
   utilities:   (f: AccountsFilters) => ['accounts', 'utilities',    f] as const,
   godownExpenses: (f: AccountsFilters) => ['accounts', 'godown-expenses', f] as const,
+  inventoryExpenses: (f: AccountsFilters) => ['accounts', 'inventory-expenses', f] as const,
 }
 
 export function useAccountsSummary(filters: AccountsFilters) {
@@ -107,6 +108,18 @@ export function useAccountsGodownExpenses(filters: AccountsFilters) {
   })
 }
 
+/** Per-inventory-per-category godown operational expenses (21-Jul-2026,
+ *  client req) — mirror of useAccountsUtilities but for the godown side.
+ *  Feeds a separate "Inventory Expenses" line on the admin Accounts screen.
+ *  Distinct from useAccountsGodownExpenses above (which is staff salary). */
+export function useAccountsInventoryExpenses(filters: AccountsFilters) {
+  return useQuery({
+    queryKey: accountsKeys.inventoryExpenses(filters),
+    queryFn:  () => accountsApi.inventoryExpenses(filters),
+    staleTime: STALE_TIME,
+  })
+}
+
 // ══════════════════ Helper selectors ══════════════════
 //
 // Utility rows come in as one-per-(shop, category) — the callers usually
@@ -126,6 +139,24 @@ export function utilitiesByShop(
   const out = new Map<string, number>()
   for (const r of rows ?? []) {
     out.set(r.shopId, (out.get(r.shopId) ?? 0) + r.amount)
+  }
+  return out
+}
+
+/** Grand total across every (inventory, category) row — mirror of
+ *  totalUtilities for the godown-side breakdown (21-Jul-2026). */
+export function totalInventoryExpenses(rows: AccountsInventoryExpenseRowDto[] | undefined): number {
+  return (rows ?? []).reduce((sum, r) => sum + r.amount, 0)
+}
+
+/** Per-inventory rollup: inventoryId → total expense amount for that
+ *  godown. Absent inventories implicitly map to 0. */
+export function inventoryExpensesByInventory(
+  rows: AccountsInventoryExpenseRowDto[] | undefined,
+): Map<string, number> {
+  const out = new Map<string, number>()
+  for (const r of rows ?? []) {
+    out.set(r.inventoryId, (out.get(r.inventoryId) ?? 0) + r.amount)
   }
   return out
 }

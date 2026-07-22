@@ -166,3 +166,18 @@ public record AccountsUtilityRowDto(
     decimal Amount,
     long    ExpenseCount
 );
+
+/// One row per (inventory, category) in the selected date range —
+/// godown/inventory operational expenses (21-Jul-2026). Powers the
+/// "Inventory Expenses" line on the admin Accounts screen, mirror of
+/// Shop Expenses but for godowns. Distinct from the pre-existing
+/// AccountsGodownExpensesDto (that one is staff salary paid to
+/// Inventory-role users — a different feature entirely).
+public record AccountsInventoryExpenseRowDto(
+    Guid    InventoryId,
+    string  InventoryCode,
+    string  InventoryName,
+    string  Category,
+    decimal Amount,
+    long    ExpenseCount
+);

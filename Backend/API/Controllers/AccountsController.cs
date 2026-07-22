@@ -71,6 +71,18 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
     public async Task<ActionResult<AccountsGodownExpensesDto>> GodownExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
         => Ok(await accounts.GetGodownExpensesAsync(filters, ct));
 
+    /// <summary>
+    /// Per-inventory-per-category operational expenses in the date range
+    /// (rent / electricity / salary / … logged via the Inventory Expenses
+    /// screen). Powers the "Inventory Expenses" KPI + Net Profit
+    /// derivation on the admin Accounts screen (21-Jul-2026).
+    /// Distinct from /godown-expenses above — that one is staff-salary
+    /// tracking, a different feature.
+    /// </summary>
+    [HttpGet("inventory-expenses")]
+    public async Task<ActionResult<IReadOnlyList<AccountsInventoryExpenseRowDto>>> InventoryExpenses([FromQuery] AccountsFilters filters, CancellationToken ct)
+        => Ok(await accounts.GetInventoryExpensesAsync(filters, ct));
+
     // ──────── XLSX export endpoints ────────
     //
     // Each export passes the raw typed value (decimal / long / DateTimeOffset
