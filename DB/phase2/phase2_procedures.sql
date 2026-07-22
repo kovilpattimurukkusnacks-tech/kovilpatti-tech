@@ -998,27 +998,37 @@ $$;
 -- 08-Jul-2026: signature gained p_user_id so admin's draft on Shop A
 -- and Shop A user's own draft are addressed independently. Prior
 -- 1-arg shape dropped so both DB states re-apply cleanly.
+-- 22-Jul-2026: return shape realigned to fn_request_get after the
+-- latter picked up shop_contact_phone / accepted_* / request_type /
+-- total_adjustment_qty / source_request_* / is_special / special_label
+-- over time. Prior narrower shape caused "structure of query does not
+-- match function result type" 500s whenever a draft actually existed
+-- (empty-draft path skipped the SELECT * so it went unnoticed).
 DROP FUNCTION IF EXISTS fn_request_get_shop_draft(uuid);
 DROP FUNCTION IF EXISTS fn_request_get_shop_draft(uuid, uuid);
 
 CREATE OR REPLACE FUNCTION fn_request_get_shop_draft(p_shop_id uuid, p_user_id uuid)
 RETURNS TABLE (
-  id                    uuid,
-  code                  varchar,
-  shop_id               uuid,
-  shop_code             varchar,
-  shop_name             varchar,
-  inventory_id          uuid,
-  inventory_code        varchar,
-  inventory_name        varchar,
+  id                      uuid,
+  code                    varchar,
+  shop_id                 uuid,
+  shop_code               varchar,
+  shop_name               varchar,
+  shop_contact_phone      varchar,
+  inventory_id            uuid,
+  inventory_code          varchar,
+  inventory_name          varchar,
   submitted_by_name       varchar,
   approved_by_name        varchar,
   dispatched_by_name      varchar,
   received_by_name        varchar,
+  accepted_by_name        varchar,
   status                  varchar,
+  request_type            varchar,
   total_items             int,
   total_qty               int,
   total_dispatched_qty    int,
+  total_adjustment_qty    int,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -1031,8 +1041,14 @@ RETURNS TABLE (
   dispatched_at           timestamptz,
   dispatched_by           uuid,
   received_at             timestamptz,
+  accepted_at             timestamptz,
+  accepted_by             uuid,
   cancelled_at            timestamptz,
   cancelled_by            uuid,
+  source_request_id       uuid,
+  source_request_code     varchar,
+  is_special              boolean,
+  special_label           varchar,
   items                   jsonb
 )
 LANGUAGE plpgsql STABLE AS $$
