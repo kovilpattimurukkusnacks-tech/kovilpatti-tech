@@ -12,29 +12,27 @@ import { Pencil, Plus, Trash2 } from 'lucide-react'
 import PageHeader from '../../components/PageHeader'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { useApp } from '../../context/AppContext'
-import { useShop } from '../../hooks/useShops'
+import { useInventory } from '../../hooks/useInventories'
 import {
-  useShopUtilityExpenses, useCreateShopUtilityExpense,
-  useUpdateShopUtilityExpense, useDeleteShopUtilityExpense,
-} from '../../hooks/useShopUtilityExpenses'
-import type { ShopUtilityExpenseDto } from '../../api/shop-utility-expenses/types'
+  useInventoryExpenses, useCreateInventoryExpense,
+  useUpdateInventoryExpense, useDeleteInventoryExpense,
+} from '../../hooks/useInventoryExpenses'
+import type { InventoryExpenseDto } from '../../api/inventory-expenses/types'
 import { ValidationError } from '../../api/errors'
 import { formatAmountInput, formatINR, stripAmountFormat } from '../../utils/format'
 import { GOLD_GRADIENT } from '../../theme'
 
-// Well-known categories — plain text label + a colour pulled from the
-// existing MUI theme palette (theme.ts) rather than inventing new hex
-// values. No icons — plain text/colour only, no per-category pictograms.
-// This is a set of SUGGESTIONS, not a hard enum — the Add Expense form is a
-// free-typing Autocomplete (freeSolo) so a shop can log a category not in
-// this list; an unrecognised category just falls back to "Others" below.
+// Well-known godown expense categories — mirror of the shop-side list
+// (client picked "same as shop" on 21-Jul-2026, since godowns also pay
+// Rent / Electricity / Salary / Maintenance etc.). freeSolo Autocomplete
+// still lets the inventory user type anything godown-specific (Loading
+// Charges / Packing Material / Transport Fuel) — those unrecognised
+// values fall back to the "Others" icon/colour.
 const CATEGORIES = [
   { key: 'Electricity',   color: '#FFA000' /* theme.warning */ },
   { key: 'Rent',          color: '#C28A00' /* gold-1, GOLD_GRADIENT stop */ },
   { key: 'Water',         color: '#0277BD' /* theme.info */ },
-  // 'Staff Salary' removed (15-Jul-2026) — now a structured screen on
-  // Admin's Staff page (Salary tab), which posts to the same ledger this
-  // category used to write to manually. Kept out here to avoid double-entry.
+  { key: 'Staff Salary',  color: '#7B1FA2' /* theme.dispatched */ },
   { key: 'Maintenance',   color: '#FCD835' /* theme.secondary */ },
   { key: 'Internet/Wifi', color: '#2E7D32' /* theme.success */ },
   { key: 'Others',        color: '#3D3D3D' /* theme.text.secondary */ },
@@ -45,8 +43,6 @@ function categoryMeta(cat: string) {
   return CATEGORIES.find(c => c.key === cat) ?? CATEGORIES[CATEGORIES.length - 1]
 }
 
-// Same header-cell style as every other list table in the app
-// (ShopRequests.tsx, InventoryRequests.tsx, AdminRequests.tsx).
 const HEAD_SX = {
   fontWeight: 700,
   textTransform: 'uppercase' as const,
@@ -54,22 +50,17 @@ const HEAD_SX = {
   fontSize: 11,
 }
 
-// "2026-07-05" → "05 Jul 2026". Built from parts (not `new Date(ymd)`) so an
-// IST date string never shifts a day from a browser-local timezone parse.
 function fmtDate(ymd: string): string {
   const [y, m, d] = ymd.split('-').map(Number)
   return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
 }
 
-// "2026-07" → { from: '2026-07-01', to: '2026-07-31' } — passed straight
-// through to the list API's from/to range filter.
 function monthBounds(yyyyMm: string): { from: string; to: string } {
   const [y, m] = yyyyMm.split('-').map(Number)
-  const lastDay = new Date(y, m, 0).getDate() // day 0 of next month = last day of this one
+  const lastDay = new Date(y, m, 0).getDate()
   return { from: `${yyyyMm}-01`, to: `${yyyyMm}-${String(lastDay).padStart(2, '0')}` }
 }
 
-// Dropdown options — current month plus the previous 11, newest first.
 function monthOptions(count = 12): { value: string; label: string }[] {
   const now = new Date()
   return Array.from({ length: count }, (_, i) => {
@@ -79,32 +70,25 @@ function monthOptions(count = 12): { value: string; label: string }[] {
   })
 }
 
-export default function ShopUtilities() {
+export default function InventoryExpenses() {
   const { currentUser } = useApp()
-  const shopQuery = useShop(currentUser?.shopId ?? undefined)
-  const shopName = shopQuery.data?.name ?? 'your shop'
+  const inventoryQuery = useInventory(currentUser?.inventoryId ?? undefined)
+  const inventoryName = inventoryQuery.data?.name ?? 'your godown'
 
-  // Month filter — defaults to the current month. monthOptions() lists the
-  // current month + previous 11 for the dropdown.
   const [selectedMonth, setSelectedMonth] = useState(() => new Date().toISOString().slice(0, 7))
   const { from, to } = useMemo(() => monthBounds(selectedMonth), [selectedMonth])
   const months = useMemo(() => monthOptions(), [])
 
-  const expensesQuery = useShopUtilityExpenses(from, to)
+  const expensesQuery = useInventoryExpenses(from, to)
   const entries = useMemo(() => expensesQuery.data ?? [], [expensesQuery.data])
-  const createMutation = useCreateShopUtilityExpense()
-  const updateMutation = useUpdateShopUtilityExpense()
-  const deleteMutation = useDeleteShopUtilityExpense()
+  const createMutation = useCreateInventoryExpense()
+  const updateMutation = useUpdateInventoryExpense()
+  const deleteMutation = useDeleteInventoryExpense()
 
   const [dialogOpen, setDialogOpen] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
-  // Entry pending delete confirmation — trash icon opens this instead of
-  // deleting immediately.
-  const [deleteTarget, setDeleteTarget] = useState<ShopUtilityExpenseDto | null>(null)
+  const [deleteTarget, setDeleteTarget] = useState<InventoryExpenseDto | null>(null)
 
-  // Add/Edit form state — category starts blank (not pre-filled with a
-  // default) so the dropdown always opens clean and the shop has to
-  // actively pick or type one, rather than silently keeping "Electricity".
   const [formCategory, setFormCategory] = useState<Category>('')
   const [formAmount, setFormAmount] = useState('')
   const [formNote, setFormNote] = useState('')
@@ -131,7 +115,7 @@ export default function ShopUtilities() {
     setDialogOpen(true)
   }
 
-  function openEdit(entry: ShopUtilityExpenseDto) {
+  function openEdit(entry: InventoryExpenseDto) {
     setEditingId(entry.id)
     setFormCategory(entry.category)
     setFormAmount(String(entry.amount))
@@ -141,7 +125,7 @@ export default function ShopUtilities() {
     setDialogOpen(true)
   }
 
-  function handleDeleteClick(entry: ShopUtilityExpenseDto) {
+  function handleDeleteClick(entry: InventoryExpenseDto) {
     setDeleteTarget(entry)
   }
 
@@ -184,8 +168,8 @@ export default function ShopUtilities() {
   return (
     <div>
       <PageHeader
-        title="Shop Expenses"
-        subtitle={`Track ${shopName}'s operating expenses — electricity, rent, staff, and more.`}
+        title="Godown Expenses"
+        subtitle={`Track ${inventoryName}'s operating expenses — electricity, rent, staff, and more.`}
         action={
           <Button
             variant="contained"
@@ -199,8 +183,6 @@ export default function ShopUtilities() {
         }
       />
 
-      {/* Month filter — dropdown of the current month + previous 11,
-          newest first. Drives the from/to range passed to the list API. */}
       <Box sx={{ mb: 2 }}>
         <TextField
           select
@@ -218,13 +200,10 @@ export default function ShopUtilities() {
 
       {expensesQuery.isError && (
         <Alert severity="error" sx={{ mb: 2 }}>
-          Failed to load shop expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
+          Failed to load godown expenses. {expensesQuery.error instanceof Error ? expensesQuery.error.message : ''}
         </Alert>
       )}
 
-      {/* KPI strip — cream cards with a plain dark border, matching the
-          plain-Paper look used everywhere else (ShopRequests.tsx etc.) —
-          no drop-shadow outline. */}
       <Box
         sx={{
           display: 'grid',
@@ -233,8 +212,8 @@ export default function ShopUtilities() {
           mb: 3,
         }}
       >
-        <KpiCard label="Total Shop Expenses" value={formatINR(total)} />
-        <KpiCard label="Entries Logged" value={String(entries.length)} sub={shopName} />
+        <KpiCard label="Total Godown Expenses" value={formatINR(total)} />
+        <KpiCard label="Entries Logged" value={String(entries.length)} sub={inventoryName} />
         <KpiCard
           label="Largest Category"
           value={largestCategory?.category ?? '—'}
@@ -244,10 +223,6 @@ export default function ShopUtilities() {
       </Box>
 
       <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', md: '1.5fr 1fr' }, gap: 2, alignItems: 'flex-start' }}>
-        {/* Entries table — same Paper/row treatment as ShopRequests.tsx and
-            InventoryRequests.tsx (every list page reads the same): white
-            Paper frame, gold header row, CREAM (#FFFBE6) data rows — not
-            left to fall back to the default white Paper background. */}
         <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
           <TableContainer>
             <Table size="small">
@@ -275,9 +250,6 @@ export default function ShopUtilities() {
                           sx={{ bgcolor: '#FFF8DC', fontWeight: 600, fontSize: 11.5 }}
                         />
                       </TableCell>
-                      {/* Fixed width + ellipsis truncation — a wrapping note was
-                          making that one row taller than every other row, which
-                          is what broke the clean grid alignment across columns. */}
                       <TableCell
                         title={e.note || undefined}
                         sx={{
@@ -287,11 +259,6 @@ export default function ShopUtilities() {
                       >
                         {e.note || '—'}
                       </TableCell>
-                      {/* Real columns (not one merged cell) — native table layout keeps
-                          every row's date/amount flush regardless of digit count. Date
-                          left-aligned (reads as a normal date column, starts flush at
-                          the same left edge every row); Amount stays right-aligned
-                          (currency convention). */}
                       <TableCell sx={{ whiteSpace: 'nowrap', fontSize: 12.5, color: '#1F1F1F99', fontWeight: 600 }}>
                         {fmtDate(e.expenseDate)}
                       </TableCell>
@@ -314,8 +281,6 @@ export default function ShopUtilities() {
           </TableContainer>
         </Paper>
 
-        {/* Category breakdown — same plain-border card as the KPI strip
-            above, plain divided rows instead of a one-off per-row style. */}
         <Card sx={{ border: '2px solid #1F1F1F', boxShadow: 'none', background: '#FFFBE6' }}>
           <CardContent>
             <Box sx={{ fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.6, fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
@@ -351,9 +316,6 @@ export default function ShopUtilities() {
         </Card>
       </Box>
 
-      {/* Add / Edit dialog — backdrop click must not close it (only Cancel/
-          Save/Escape should); MUI's onClose fires for backdropClick too, so
-          that reason is ignored here. */}
       <Dialog
         open={dialogOpen}
         onClose={(_e, reason) => { if (reason !== 'backdropClick') setDialogOpen(false) }}
@@ -361,11 +323,8 @@ export default function ShopUtilities() {
         fullWidth
         slotProps={{ paper: { sx: { borderRadius: 3, bgcolor: '#FFFBE6' } } }}
       >
-        <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Shop Expense</DialogTitle>
+        <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Godown Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-          {/* Free-typing category — pick a suggestion or type a new one.
-              No fixed chip list; unrecognised text just falls back to the
-              "Others" icon/colour wherever it's displayed (categoryMeta). */}
           <Autocomplete
             freeSolo
             options={CATEGORIES.map(c => c.key)}
@@ -392,11 +351,8 @@ export default function ShopUtilities() {
             onChange={e => setFormNote(e.target.value)}
             size="small"
             fullWidth
-            placeholder="e.g. EB bill — July"
+            placeholder="e.g. Loading charges — July"
           />
-          {/* Same MUI X DatePicker used on the Accounts dashboard's date
-              filters (DateRangeFilter / AccountsFilterBar) — DD/MM/YYYY on
-              every machine, not the OS-locale-dependent native input. */}
           <LocalizationProvider dateAdapter={AdapterDayjs}>
             <DatePicker
               label="Date"
@@ -418,7 +374,6 @@ export default function ShopUtilities() {
         </DialogActions>
       </Dialog>
 
-      {/* Delete confirmation — trash icon no longer deletes immediately. */}
       <ConfirmDialog
         open={deleteTarget !== null}
         title="Delete this expense?"
@@ -434,9 +389,6 @@ export default function ShopUtilities() {
   )
 }
 
-// Matches components/accounts/KpiStrip.tsx's KpiCard exactly — same
-// CardContent padding, same Typography variants/weights/opacity, so this
-// page's KPI row is indistinguishable from the Accounts dashboard's.
 function KpiCard({ label, value, sub, highlight }: { label: string; value: string; sub?: string; highlight?: boolean }) {
   return (
     <Card sx={{ border: '2px solid #1F1F1F', boxShadow: 'none', background: highlight ? GOLD_GRADIENT : '#FFFBE6' }}>

@@ -219,3 +219,28 @@ export type AccountsUtilityRowDto = {
   amount:       number
   expenseCount: number
 }
+
+/** One row per (inventory, category) — godown/inventory operational
+ *  expenses (21-Jul-2026). Mirror of AccountsUtilityRowDto but scoped
+ *  to a godown instead of a shop. Feeds the "Inventory Expenses" line
+ *  on the admin Accounts screen. Godowns with zero expenses in range
+ *  are absent — treat missing as ₹0. */
+export type AccountsInventoryExpenseRowDto = {
+  inventoryId:   string
+  inventoryCode: string
+  inventoryName: string
+  category:      string
+  amount:        number
+  expenseCount:  number
+}
+
+/** Per-inventory staff-salary rollup (21-Jul-2026) — powers the "By
+ *  Godown" panel on the admin Accounts screen. Same source data as
+ *  AccountsGodownExpensesDto's scalar total, grouped by godown.
+ *  Missing inventories = ₹0 salary spend in range. */
+export type AccountsGodownExpenseByInventoryRowDto = {
+  inventoryId:   string
+  inventoryCode: string
+  inventoryName: string
+  amount:        number
+}

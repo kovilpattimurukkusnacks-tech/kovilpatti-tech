@@ -9,7 +9,8 @@ import type { AccountsTrendBucketDto, AccountsUtilityRowDto } from '../../api/ac
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import { LOSS_RED, PROFIT_GREEN } from '../accounts/ProfitLossChart'
-import { totalUtilities } from '../../hooks/useAccounts'
+import { totalInventoryExpenses, totalUtilities } from '../../hooks/useAccounts'
+import type { AccountsInventoryExpenseRowDto } from '../../api/accounts/types'
 
 type Props = {
   data: AccountsTrendBucketDto[] | undefined
@@ -18,6 +19,12 @@ type Props = {
    *  single figure, not shop-scoped like `utilities`. Subtracts from Net
    *  Profit as its own line, same as on the Accounts screen. */
   godownExpenses: number | undefined
+  /** Per-inventory operational expenses (rent, electricity, salary from
+   *  the Godown Expenses screen — 21-Jul-2026). Rolled into the same
+   *  "Godown Expenses" tile as the staff-salary figure above so the
+   *  owner sees one combined godown-side deduction — matching the
+   *  client's "Shop Expenses + Inventory Expenses = two lines" ask. */
+  inventoryExpenses: AccountsInventoryExpenseRowDto[] | undefined
   loading: boolean
 }
 
@@ -41,8 +48,11 @@ type Props = {
  * reason — its shape would inherit Gross Profit's, which the user can see
  * on the neighbouring card.
  */
-export default function DashboardHero({ data, utilities, godownExpenses, loading }: Props) {
-  const totals = useMemo(() => computeTotals(data, utilities, godownExpenses), [data, utilities, godownExpenses])
+export default function DashboardHero({ data, utilities, godownExpenses, inventoryExpenses, loading }: Props) {
+  const totals = useMemo(
+    () => computeTotals(data, utilities, godownExpenses, inventoryExpenses),
+    [data, utilities, godownExpenses, inventoryExpenses],
+  )
   const sparks = useMemo(() => computeSparks(data), [data])
 
   return (
@@ -110,7 +120,7 @@ export default function DashboardHero({ data, utilities, godownExpenses, loading
         loading={loading}
         icon={<Warehouse size={16} />}
         sparkColor="#6D4C41"
-        tooltip="Inventory-role staff salary paid/deducted in this date range. Company-wide — not broken out per shop like Shop Expenses, since godowns aren't shop-scoped."
+        tooltip="Combined godown-side deductions in this date range: (1) Inventory-role staff salary paid/deducted, and (2) operational expenses (rent / electricity / maintenance / etc.) logged from the inventory user's Godown Expenses screen."
       />
       <KpiCard
         label="Gross Margin"
@@ -285,13 +295,18 @@ function computeTotals(
   data: AccountsTrendBucketDto[] | undefined,
   utilities: AccountsUtilityRowDto[] | undefined,
   godownExpenses: number | undefined,
+  inventoryExpenses: AccountsInventoryExpenseRowDto[] | undefined,
 ) {
   const rows = data ?? []
   const revenue   = rows.reduce((s, r) => s + r.netAmount,      0)
   const cost      = rows.reduce((s, r) => s + r.purchaseAmount, 0)
   const gross     = revenue - cost
   const util      = totalUtilities(utilities)
-  const godown    = godownExpenses ?? 0
+  // 21-Jul-2026: godown-side deductions = staff salary (godownExpenses)
+  // + operational expenses (inventoryExpenses). Summed here so the
+  // dashboard's "Godown Expenses" tile shows one combined figure,
+  // matching the client's "two lines: Shop + Inventory" mental model.
+  const godown    = (godownExpenses ?? 0) + totalInventoryExpenses(inventoryExpenses)
   const net       = gross - util - godown
   const marginPct = revenue > 0 ? (gross / revenue) * 100 : 0
 

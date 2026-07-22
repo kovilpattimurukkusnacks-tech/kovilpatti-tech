@@ -55,6 +55,9 @@ public static class DependencyInjection
         // Phase 4 — shop utility / operating expenses
         services.AddScoped<IShopUtilityExpenseService, ShopUtilityExpenseService>();
 
+        // Phase 4 — godown / inventory operating expenses (21-Jul-2026)
+        services.AddScoped<IInventoryExpenseService, InventoryExpenseService>();
+
         // Phase 4 — staff salary
         services.AddScoped<IStaffSalaryService, StaffSalaryService>();
 
