@@ -1003,7 +1003,11 @@ public class StockRequestService(
     private async Task<Dictionary<Guid, Product>> ResolveAndValidateProducts(HashSet<Guid> ids, CancellationToken ct)
     {
         // Phase 1 product repo's ListAsync returns all non-deleted products. Filter to requested IDs.
-        var all = await products.ListAsync(null, null, ct);
+        // 21-Jul-2026: pass includeInactive=true — this helper validates that requested
+        // product IDs exist. If an item was marked inactive AFTER a request was submitted,
+        // we still need to resolve its details (name/price snapshot) so the request stays
+        // intact server-side. UI filtering happens elsewhere; this is a lookup, not a picker.
+        var all = await products.ListAsync(null, null, includeInactive: true, ct: ct);
         var map = all.Where(p => ids.Contains(p.Id)).ToDictionary(p => p.Id);
 
         var missing = ids.Where(id => !map.ContainsKey(id)).ToList();

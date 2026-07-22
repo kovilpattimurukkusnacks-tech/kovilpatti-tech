@@ -177,4 +177,14 @@ public class AccountsRepository(IDbConnectionFactory factory) : IAccountsReposit
             cancellationToken: ct));
         return rows.ToList();
     }
+
+    public async Task<decimal> GetGodownExpensesAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT fn_accounts_godown_expenses(@p_from, @p_to)";
+        return await conn.ExecuteScalarAsync<decimal>(new CommandDefinition(
+            sql, new { p_from = from, p_to = to }, cancellationToken: ct));
+    }
 }

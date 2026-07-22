@@ -29,12 +29,22 @@ DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
 -- 14-Jul-2026 — barcode added (POS billing scan); same drop-first dance.
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
 
+-- 21-Jul-2026: signature gained p_include_inactive. Client reported that
+-- admin toggling a product to `active=false` didn't hide it from the shop
+-- user's picker — the SP was filtering only on is_deleted. Default false
+-- means the shop / inventory picker sees ONLY active products; admin's
+-- product management page passes true so it can still see and reactivate
+-- inactive rows. Drop the pre-flag shape so a re-run doesn't leave a
+-- 5-arg overload alongside the new 6-arg one.
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
+
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
-  p_search       varchar    DEFAULT NULL,
-  p_category_ids int[]      DEFAULT NULL,
-  p_types        varchar[]  DEFAULT NULL,
-  p_page         int        DEFAULT 1,
-  p_page_size    int        DEFAULT 25
+  p_search           varchar    DEFAULT NULL,
+  p_category_ids     int[]      DEFAULT NULL,
+  p_types            varchar[]  DEFAULT NULL,
+  p_page             int        DEFAULT 1,
+  p_page_size        int        DEFAULT 25,
+  p_include_inactive boolean    DEFAULT false
 )
 RETURNS TABLE (
   id                 uuid,
@@ -58,6 +68,9 @@ LANGUAGE sql STABLE AS $$
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
+    -- 21-Jul-2026: hide inactive rows by default — only surface them when
+    -- the caller explicitly opts in (admin's product management page).
+    AND (p_include_inactive = true OR p.active = true)
     -- Tokenised search — see fn_product_list (phase1_procedures.sql) for
     -- the full rationale. MUST STAY IN SYNC with fn_product_count below +
     -- fn_product_list. 10-Jul-2026, client feedback: 'nat.kam' returned
@@ -79,16 +92,22 @@ LANGUAGE sql STABLE AS $$
 $$;
 
 
+-- 21-Jul-2026: mirror fn_request_list_paged's active-filter opt-in so the
+-- pagination row-count matches the visible list.
+DROP FUNCTION IF EXISTS fn_product_count(varchar, int[], varchar[]);
+
 CREATE OR REPLACE FUNCTION fn_product_count(
-  p_search       varchar    DEFAULT NULL,
-  p_category_ids int[]      DEFAULT NULL,
-  p_types        varchar[]  DEFAULT NULL
+  p_search           varchar    DEFAULT NULL,
+  p_category_ids     int[]      DEFAULT NULL,
+  p_types            varchar[]  DEFAULT NULL,
+  p_include_inactive boolean    DEFAULT false
 )
 RETURNS bigint
 LANGUAGE sql STABLE AS $$
   SELECT COUNT(*)
   FROM products p
   WHERE p.is_deleted = false
+    AND (p_include_inactive = true OR p.active = true)
     -- Tokenised search — MUST STAY IN SYNC with fn_product_list_paged above
     -- and fn_product_list (phase1_procedures.sql). Divergence here breaks
     -- pagination: page-1 shows X rows but count returns Y.

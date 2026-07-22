@@ -1,16 +1,20 @@
 import { useMemo, useState } from 'react'
 import {
-  Alert, Box, Button, Card, CardContent, Chip, MenuItem, Paper, Table, TableBody, TableCell,
-  TableContainer, TableHead, TableRow, TextField, Typography,
+  Alert, Box, Button, Card, CardContent, Chip, IconButton, MenuItem, Paper, TextField, Tooltip, Typography,
 } from '@mui/material'
+import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import type { LucideIcon } from 'lucide-react'
-import { CircleCheck, Clock, MinusCircle, Wallet } from 'lucide-react'
+import { CircleCheck, Clock, Gift, IndianRupee, Info, MinusCircle, Wallet } from 'lucide-react'
 import SetSalaryDialog from './SetSalaryDialog'
 import PaySalaryDialog from './PaySalaryDialog'
 import DeductSalaryDialog from './DeductSalaryDialog'
+import BonusDialog from './BonusDialog'
 import { istFirstOfThisMonth } from '../../utils/istDate'
 import { formatINR } from '../../utils/format'
-import { useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary } from '../../hooks/useStaffSalaries'
+import {
+  useStaffSalaries, useSetStaffSalary, usePaySalary, useDeductSalary,
+  useStaffSalaryTransactions, useStaffLastBonus,
+} from '../../hooks/useStaffSalaries'
 import type { StaffSalaryRowDto } from '../../api/staff-salaries/types'
 import { ValidationError } from '../../api/errors'
 
@@ -44,6 +48,19 @@ const STATUS_COLOR: Record<Status, 'success' | 'warning' | 'error' | 'default'> 
   Paid: 'success', Partial: 'warning', Pending: 'error', 'Not set': 'default',
 }
 
+const STATUS_MEANING: Record<Status, string> = {
+  'Not set': 'No monthly salary configured yet for this staff.',
+  Pending:   'Monthly salary is set, but nothing has been paid this month yet.',
+  Partial:   'Some has been paid this month, but less than the monthly salary.',
+  Paid:      'Net paid this month has reached the monthly salary.',
+}
+
+// "2026-07-05" → "05 Jul"
+function fmtShortDate(ymd: string): string {
+  const [y, m, d] = ymd.split('-').map(Number)
+  return new Date(y, m - 1, d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' })
+}
+
 export default function SalaryTab() {
   const [selectedMonth, setSelectedMonth] = useState(() => istFirstOfThisMonth().slice(0, 7))
   const { from, to } = useMemo(() => monthBounds(selectedMonth), [selectedMonth])
@@ -59,6 +76,7 @@ export default function SalaryTab() {
   const [setDialogOpen, setSetDialogOpen] = useState(false)
   const [payTarget, setPayTarget] = useState<StaffSalaryRowDto | null>(null)
   const [deductTarget, setDeductTarget] = useState<StaffSalaryRowDto | null>(null)
+  const [bonusTarget, setBonusTarget] = useState<StaffSalaryRowDto | null>(null)
 
   const totals = useMemo(() => {
     const totalPayroll = rows.reduce((sum, r) => sum + r.monthlyAmount, 0)
@@ -89,6 +107,120 @@ export default function SalaryTab() {
     setDeductTarget(null)
   }
 
+  // A Bonus is just a Pay entry with mode fixed to "Bonus" — reuses the
+  // exact same endpoint/ledger/tally as a regular payment, see BonusDialog.
+  const handleBonus = async (values: { amount: number; txnDate: string; note: string }) => {
+    if (!bonusTarget) return
+    await pay.mutateAsync({ staffId: bonusTarget.staffId, mode: 'Bonus', ...values })
+    setBonusTarget(null)
+  }
+
+  // Same DataGrid + data-page-grid/data-page-paper convention every other
+  // list page in the app uses (Staff Details tab, Products, Shops, …) —
+  // client req: this table read as inconsistent/unclear next to the plain
+  // MUI Table it had before; DataGrid gives it the same column alignment,
+  // single-line header, and compact icon-button actions as everywhere else.
+  const columns = useMemo<GridColDef<StaffSalaryRowDto>[]>(() => [
+    {
+      field: 'fullName', headerName: 'Staff', flex: 1, minWidth: 100, sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <Box>
+          <Box sx={{ fontWeight: 700 }}>{row.fullName}</Box>
+          <Box sx={{ fontSize: 11, opacity: 0.65 }}>{row.role}</Box>
+        </Box>
+      ),
+    },
+    {
+      field: 'mappedTo', headerName: 'Mapped To', flex: 1, minWidth: 105, sortable: false, filterable: false,
+      valueGetter: (_v, row) => row.shopName ?? row.inventoryName ?? '—',
+      renderCell: ({ row }) => (
+        <Box>
+          <Box>{row.shopName ?? row.inventoryName ?? '—'}</Box>
+          {!row.inAccounts && (
+            <Box sx={{ fontSize: 10.5, color: '#8A6D3B', fontWeight: 700, lineHeight: 1.2 }}>→ Godown Expenses</Box>
+          )}
+        </Box>
+      ),
+    },
+    {
+      // Shortened from "Monthly Salary" — the full label was truncating
+      // to "MONTHLY S…" at a column width that actually fits the amount.
+      field: 'monthlyAmount', headerName: 'Salary', width: 120, align: 'center', headerAlign: 'center',
+      sortable: false, filterable: false,
+      valueFormatter: (value) => formatINR(value as number),
+    },
+    {
+      field: 'paid', headerName: 'Paid', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <span style={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</span>
+      ),
+    },
+    {
+      field: 'deducted', headerName: 'Deducted', width: 120, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
+      renderCell: ({ row }) => (
+        <span style={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
+          {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
+        </span>
+      ),
+    },
+    {
+      field: 'net', headerName: 'Net', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
+      renderCell: ({ row }) => <NetCell row={row} from={from} to={to} />,
+    },
+    {
+      field: 'status', headerName: 'Status', width: 110, align: 'center', headerAlign: 'center', sortable: false, filterable: false,
+      renderHeader: () => (
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+          Status
+          <Tooltip
+            arrow
+            title={
+              <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, fontSize: 12 }}>
+                {(Object.keys(STATUS_MEANING) as Status[]).map(s => (
+                  <span key={s}><b>{s}</b> — {STATUS_MEANING[s]}</span>
+                ))}
+              </Box>
+            }
+          >
+            <Box component="span" sx={{ display: 'inline-flex', color: '#1F1F1F80', cursor: 'help' }}>
+              <Info size={13} />
+            </Box>
+          </Tooltip>
+        </Box>
+      ),
+      renderCell: ({ row }) => {
+        const status = rowStatus(row)
+        return <Chip label={status} size="small" color={STATUS_COLOR[status]} variant={status === 'Not set' ? 'outlined' : 'filled'} />
+      },
+    },
+    {
+      field: 'actions', headerName: 'Actions', width: 115, align: 'right', headerAlign: 'right',
+      sortable: false, filterable: false,
+      renderCell: ({ row }) => {
+        const disabled = rowStatus(row) === 'Not set'
+        return (
+          <Box sx={{ display: 'flex', gap: 0, justifyContent: 'flex-end' }}>
+            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Pay'}>
+              <span>
+                <IconButton size="small" color="success" disabled={disabled} onClick={() => setPayTarget(row)}>
+                  <IndianRupee className="w-4 h-4" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <Tooltip title={disabled ? 'Set a monthly salary for this staff first' : 'Deduct'}>
+              <span>
+                <IconButton size="small" color="error" disabled={disabled} onClick={() => setDeductTarget(row)}>
+                  <MinusCircle className="w-4 h-4" />
+                </IconButton>
+              </span>
+            </Tooltip>
+            <BonusIconButton row={row} disabled={disabled} onClick={() => setBonusTarget(row)} />
+          </Box>
+        )
+      },
+    },
+  ], [from, to])
+
   return (
     <Box>
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', gap: 1.5, mb: 2, flexWrap: 'wrap' }}>
@@ -116,65 +248,33 @@ export default function SalaryTab() {
         <SalaryKpiCard label="Pending This Month" value={totals.pending} icon={Clock} accent={totals.pending > 0 ? 'danger' : undefined} />
       </Box>
 
-      <Box sx={{ mb: 2, p: 1.5, borderRadius: 2, bgcolor: '#E8F5E9', border: '1px solid #2E7D32', fontSize: 13, color: '#1F1F1F' }}>
-        Every Pay / Deduct entry for a Shop User posts straight to the <b>Staff Salary</b> line in Admin Accounts — Net Profit updates automatically, no separate entry needed.
-      </Box>
-
-      <TableContainer component={Paper} className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
-        <Table size="small">
-          <TableHead>
-            <TableRow>
-              <TableCell>Staff</TableCell>
-              <TableCell>Mapped To</TableCell>
-              <TableCell align="right">Monthly Salary</TableCell>
-              <TableCell align="right">Paid</TableCell>
-              <TableCell align="right">Deducted</TableCell>
-              <TableCell align="right">Net</TableCell>
-              <TableCell>Status</TableCell>
-              <TableCell align="right">Actions</TableCell>
-            </TableRow>
-          </TableHead>
-          <TableBody>
-            {rows.map(row => {
-              const status = rowStatus(row)
-              return (
-                <TableRow key={row.staffId} hover>
-                  <TableCell>
-                    <Box sx={{ fontWeight: 700 }}>{row.fullName}</Box>
-                    <Box sx={{ fontSize: 11, opacity: 0.65 }}>{row.role}</Box>
-                  </TableCell>
-                  <TableCell>
-                    {row.shopName ?? row.inventoryName ?? '—'}
-                    {!row.inAccounts && (
-                      <Box sx={{ fontSize: 10.5, color: '#C62828', fontWeight: 700 }}>not in Accounts</Box>
-                    )}
-                  </TableCell>
-                  <TableCell align="right">{formatINR(row.monthlyAmount)}</TableCell>
-                  <TableCell align="right" sx={{ color: row.paid > 0 ? '#2E7D32' : undefined }}>{formatINR(row.paid)}</TableCell>
-                  <TableCell align="right" sx={{ color: row.deducted < 0 ? '#C62828' : undefined }}>
-                    {row.deducted < 0 ? `− ${formatINR(Math.abs(row.deducted))}` : formatINR(row.deducted)}
-                  </TableCell>
-                  <TableCell align="right" sx={{ fontWeight: 700 }}>{formatINR(row.net)}</TableCell>
-                  <TableCell>
-                    <Chip label={status} size="small" color={STATUS_COLOR[status]} variant={status === 'Not set' ? 'outlined' : 'filled'} />
-                  </TableCell>
-                  <TableCell align="right">
-                    <Box sx={{ display: 'flex', gap: 0.75, justifyContent: 'flex-end' }}>
-                      <Button size="small" variant="outlined" color="success" onClick={() => setPayTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}>Pay</Button>
-                      <Button size="small" variant="outlined" color="error" onClick={() => setDeductTarget(row)} sx={{ textTransform: 'none', minWidth: 0, px: 1.25 }}>Deduct</Button>
-                    </Box>
-                  </TableCell>
-                </TableRow>
-              )
-            })}
-            {rows.length === 0 && !salaryQuery.isLoading && (
-              <TableRow>
-                <TableCell colSpan={8} align="center" sx={{ py: 4, opacity: 0.6 }}>No staff configured yet.</TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
-      </TableContainer>
+      <Paper className="data-page-paper" sx={{ borderRadius: 2.5, backgroundColor: '#FFFBE6 !important' }} elevation={0}>
+        <DataGrid
+          className="data-page-grid"
+          rows={rows}
+          columns={columns}
+          getRowId={r => r.staffId}
+          loading={salaryQuery.isLoading}
+          autoHeight
+          disableRowSelectionOnClick
+          disableColumnMenu
+          localeText={{ noRowsLabel: 'No staff configured yet.' }}
+          // Scoped to just this table (sx, not the shared .data-page-grid
+          // class other list pages rely on) — the shared class only creams
+          // the header row and data rows, leaving the grid's own root/filler
+          // background white wherever a row doesn't reach. Cover every
+          // internal container slot that can show through.
+          sx={{
+            backgroundColor: '#FFFBE6 !important',
+            '& .MuiDataGrid-main': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-virtualScroller': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-virtualScrollerContent': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-filler': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-scrollbarFiller': { backgroundColor: '#FFFBE6 !important' },
+            '& .MuiDataGrid-footerContainer': { backgroundColor: '#FFF8DC !important' },
+          }}
+        />
+      </Paper>
 
       <SetSalaryDialog
         open={setDialogOpen}
@@ -202,7 +302,74 @@ export default function SalaryTab() {
         onClose={() => setDeductTarget(null)}
         onSave={handleDeduct}
       />
+
+      <BonusDialog
+        open={!!bonusTarget}
+        staff={bonusTarget}
+        submitting={pay.isPending}
+        submitError={mutationErrorMessage(pay.error)}
+        onClose={() => setBonusTarget(null)}
+        onSave={handleBonus}
+      />
     </Box>
+  )
+}
+
+// Bonus icon button — hovering shows when this staff last got a bonus
+// (client req: "oru user ku last ah epo bonus kuduthanga nu history
+// madhiri katanum"). Lazy: the last-bonus query only fires once the
+// tooltip actually opens.
+function BonusIconButton({ row, disabled, onClick }: { row: StaffSalaryRowDto; disabled: boolean; onClick: () => void }) {
+  const [open, setOpen] = useState(false)
+  const lastBonus = useStaffLastBonus(row.staffId, open)
+
+  const content = disabled
+    ? 'Set a monthly salary for this staff first'
+    : lastBonus.isLoading
+      ? 'Loading…'
+      : !lastBonus.data
+        ? 'No bonus given yet.'
+        : `Last bonus: ${fmtShortDate(lastBonus.data.txnDate)} — ${formatINR(lastBonus.data.amount)}`
+
+  return (
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
+      <span>
+        <IconButton size="small" disabled={disabled} onClick={onClick} sx={{ color: disabled ? undefined : '#C28A00' }}>
+          <Gift className="w-4 h-4" />
+        </IconButton>
+      </span>
+    </Tooltip>
+  )
+}
+
+// Net cell — hovering shows the dated Pay/Deduct history behind that
+// number (client req: "net amount ah hover panna, history varanum").
+// Lazy: the transactions query only fires once the tooltip actually opens.
+function NetCell({ row, from, to }: { row: StaffSalaryRowDto; from: string; to: string }) {
+  const [open, setOpen] = useState(false)
+  const txns = useStaffSalaryTransactions(row.staffId, from, to, open)
+
+  const content = txns.isLoading
+    ? 'Loading…'
+    : !txns.data || txns.data.length === 0
+      ? 'No transactions this month.'
+      : (
+        <Box sx={{ display: 'flex', flexDirection: 'column', gap: 0.5, minWidth: 220 }}>
+          {txns.data.map((t, i) => (
+            <Box key={i} sx={{ display: 'flex', justifyContent: 'space-between', gap: 1.5, fontSize: 12 }}>
+              <span>{fmtShortDate(t.txnDate)}{t.note ? ` — ${t.note}` : ''}</span>
+              <span style={{ fontWeight: 700, color: t.amount < 0 ? '#FFCDD2' : '#C8E6C9', whiteSpace: 'nowrap' }}>
+                {t.amount < 0 ? '−' : '+'}{formatINR(Math.abs(t.amount))}
+              </span>
+            </Box>
+          ))}
+        </Box>
+      )
+
+  return (
+    <Tooltip arrow open={open} onOpen={() => setOpen(true)} onClose={() => setOpen(false)} title={content}>
+      <span style={{ fontWeight: 700, cursor: 'help' }}>{formatINR(row.net)}</span>
+    </Tooltip>
   )
 }
 

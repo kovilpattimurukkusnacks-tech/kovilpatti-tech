@@ -17,6 +17,7 @@ import {
   useAccountsAdjustments,
   useAccountsByCategory,
   useAccountsByShop,
+  useAccountsGodownExpenses,
   useAccountsInTransit,
   useAccountsSummary,
   useAccountsUtilities,
@@ -179,12 +180,16 @@ export default function AdminAccounts() {
   // table. Uses the same non-category filter set (utility categories are
   // a separate taxonomy from product categories).
   const utilities   = useAccountsUtilities(nonCategoryFilters)
+  // Godown Expenses (18-Jul-2026) — company-wide Inventory staff salary
+  // total, feeds Net Profit as its own line alongside (not blended into)
+  // Shop Expenses. Same non-category filter set as utilities.
+  const godownExpenses = useAccountsGodownExpenses(nonCategoryFilters)
 
   // Surface the first error encountered. Validation failures on the BE
   // (e.g. range > 366 days) come back as ApiError 400.
   const firstError = summary.error || inTransit.error || byShop.error
                    || byCategory.error || topProducts.error || adjustments.error
-                   || utilities.error
+                   || utilities.error || godownExpenses.error
 
   return (
     <Box sx={{ p: 3 }}>
@@ -212,9 +217,10 @@ export default function AdminAccounts() {
 
         <KpiStrip
           data={summary.data}
-          loading={summary.isLoading || utilities.isLoading}
+          loading={summary.isLoading || utilities.isLoading || godownExpenses.isLoading}
           view={filters.view}
           utilityRows={utilities.data}
+          godownExpenseAmount={godownExpenses.data?.amount}
         />
 
         {/* In-Transit: order-side metric (dispatched but not yet received).

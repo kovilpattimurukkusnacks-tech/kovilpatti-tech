@@ -164,6 +164,101 @@ LANGUAGE sql STABLE AS $$
   ORDER BY u.full_name;
 $$;
 
+-- ============== Accounts hook — Godown Expenses ===================
+
+-- Company-wide total of Inventory-role staff Pay/Deduct in range.
+-- Godowns aren't shop-scoped the way Accounts' per-shop breakdown is, so
+-- this feeds the overall Net Profit figure as its own line (alongside,
+-- not blended into, per-shop Staff Salary/Utilities).
+CREATE OR REPLACE FUNCTION fn_accounts_godown_expenses(
+  p_from date,
+  p_to   date
+)
+RETURNS numeric
+LANGUAGE sql STABLE AS $$
+  SELECT COALESCE(SUM(amount), 0)::numeric(14,2)
+  FROM staff_salary_other_transactions
+  WHERE is_deleted = false
+    AND txn_date >= p_from
+    AND txn_date <= p_to;
+$$;
+
+-- ============== Staff Salary — guard + history (18-Jul-2026) =======
+
+-- A staff's monthly salary must be set before any Pay/Deduct is recorded
+-- against them (client req: "monthly salary set pannama, pay or deduct
+-- panna kudadhu" — no ledger entry without an expected amount first).
+CREATE OR REPLACE FUNCTION fn_staff_salary_exists(p_staff_id uuid)
+RETURNS boolean
+LANGUAGE sql STABLE AS $$
+  SELECT EXISTS (SELECT 1 FROM staff_salaries WHERE staff_id = p_staff_id);
+$$;
+
+-- Per-staff Pay/Deduct history for the "hover the Net figure" breakdown —
+-- unions the two possible sources (ShopUser rows live in
+-- shop_utility_expenses, Inventory rows in staff_salary_other_transactions)
+-- into one signed, dated list.
+CREATE OR REPLACE FUNCTION fn_staff_salary_transactions_list(
+  p_staff_id uuid,
+  p_from     date,
+  p_to       date
+)
+RETURNS TABLE (
+  txn_date date,
+  amount   numeric,
+  note     varchar
+)
+LANGUAGE sql STABLE AS $$
+  SELECT e.expense_date AS txn_date, e.amount, e.note
+  FROM shop_utility_expenses e
+  WHERE e.staff_id     = p_staff_id
+    AND e.is_deleted   = false
+    AND e.category     = 'Staff Salary'
+    AND e.expense_date >= p_from
+    AND e.expense_date <= p_to
+  UNION ALL
+  SELECT t.txn_date, t.amount,
+         NULLIF(trim(BOTH ': ' FROM COALESCE(t.reason, '') || ': ' || COALESCE(t.note, '')), '') AS note
+  FROM staff_salary_other_transactions t
+  WHERE t.staff_id  = p_staff_id
+    AND t.is_deleted = false
+    AND t.txn_date  >= p_from
+    AND t.txn_date  <= p_to
+  ORDER BY txn_date DESC;
+$$;
+
+-- ============== Staff Salary — Bonus (18-Jul-2026) =================
+
+-- A Bonus is recorded through the existing Pay flow with mode='Bonus'
+-- (no new table/column — same reuse as Cash/UPI/Bank Transfer, just
+-- another freeSolo mode value), so this just needs to find the most
+-- recent such entry for the "last bonus given" note on the Bonus button.
+CREATE OR REPLACE FUNCTION fn_staff_salary_last_bonus(p_staff_id uuid)
+RETURNS TABLE (
+  txn_date date,
+  amount   numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT txn_date, amount FROM (
+    SELECT e.expense_date AS txn_date, e.amount
+    FROM shop_utility_expenses e
+    WHERE e.staff_id   = p_staff_id
+      AND e.is_deleted = false
+      AND e.category   = 'Staff Salary'
+      AND e.amount > 0
+      AND e.note ILIKE '%via Bonus%'
+    UNION ALL
+    SELECT t.txn_date, t.amount
+    FROM staff_salary_other_transactions t
+    WHERE t.staff_id   = p_staff_id
+      AND t.is_deleted  = false
+      AND t.amount > 0
+      AND t.note ILIKE '%via Bonus%'
+  ) x
+  ORDER BY txn_date DESC
+  LIMIT 1;
+$$;
+
 -- ============================================================
 -- VERIFY
 -- ------------------------------------------------------------
