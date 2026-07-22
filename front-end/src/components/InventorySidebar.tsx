@@ -1,11 +1,17 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { ClipboardList, LogOut, Warehouse } from 'lucide-react'
+import { ClipboardList, LogOut, Warehouse, Wallet } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useInventory } from '../hooks/useInventories'
 import './Sidebar.css'
 
 const navItems = [
   { to: '/inventory/requests', label: 'Incoming Requests', icon: ClipboardList },
+  // Godown Expenses — 21-Jul-2026 client req. Same self-service pattern
+  // as the shop side's /shop/expenses: inventory user logs rent /
+  // electricity / salary / maintenance / etc. per month. Rolls up into
+  // the admin Accounts screen as a separate "Inventory Expenses" line
+  // alongside Shop Expenses.
+  { to: '/inventory/expenses', label: 'Godown Expenses', icon: Wallet },
 ]
 
 type Props = { onNavigate?: () => void }

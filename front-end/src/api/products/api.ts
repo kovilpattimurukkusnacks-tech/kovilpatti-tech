@@ -15,6 +15,9 @@ function toQueryString(filters?: ProductListFilters): string {
   }
   if (filters.page != null)     params.set('page', String(filters.page))
   if (filters.pageSize != null) params.set('pageSize', String(filters.pageSize))
+  // 21-Jul-2026: only serialise when true so the URL stays clean on
+  // the default (shop / inventory) path.
+  if (filters.includeInactive)  params.set('includeInactive', 'true')
   const qs = params.toString()
   return qs ? `?${qs}` : ''
 }

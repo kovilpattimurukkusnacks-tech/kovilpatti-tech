@@ -57,4 +57,20 @@ public interface IAccountsRepository
     Task<decimal> GetGodownExpensesAsync(
         DateOnly from, DateOnly to,
         CancellationToken ct = default);
+
+    /// Per-inventory-per-category operational expenses from
+    /// inventory_expenses (21-Jul-2026). Powers the "Inventory Expenses"
+    /// line on the admin Accounts screen. Distinct from GetGodownExpensesAsync
+    /// above (which is staff-salary tracking, a different feature).
+    Task<IReadOnlyList<AccountsInventoryExpenseRow>> GetInventoryExpensesAsync(
+        DateOnly from, DateOnly to,
+        Guid[]? inventoryIds,
+        CancellationToken ct = default);
+
+    /// Per-inventory staff-salary breakdown (21-Jul-2026) — same source
+    /// as GetGodownExpensesAsync's scalar total, but grouped by godown.
+    /// Powers the "By Godown" panel on the admin Accounts screen.
+    Task<IReadOnlyList<AccountsGodownExpenseByInventoryRow>> GetGodownExpensesByInventoryAsync(
+        DateOnly from, DateOnly to,
+        CancellationToken ct = default);
 }

@@ -24,13 +24,18 @@ public class ProductsController(IProductService products) : ControllerBase
         [FromQuery(Name = "categoryId")] int? legacyCategoryId,
         [FromQuery] int page = 1,
         [FromQuery] int pageSize = 10,
+        // 21-Jul-2026: opt-in for the admin product management page to see
+        // inactive rows too. Service silently forces false for non-Admin
+        // callers — a rogue shop client can't leak inactive products by
+        // tampering the URL.
+        [FromQuery] bool includeInactive = false,
         CancellationToken ct = default)
     {
         var cats = ParseIntCsv(categoryIds);
         if (cats is null && legacyCategoryId.HasValue) cats = new[] { legacyCategoryId.Value };
 
         var typeArr = ParseStringCsv(types);
-        return Ok(await products.ListAsync(search, cats, typeArr, page, pageSize, ct));
+        return Ok(await products.ListAsync(search, cats, typeArr, page, pageSize, includeInactive, ct));
     }
 
     private static int[]? ParseIntCsv(string? raw)
