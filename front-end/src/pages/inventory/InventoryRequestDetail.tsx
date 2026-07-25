@@ -52,16 +52,16 @@ export default function InventoryRequestDetail() {
   // column; partial accept allowed if godown counts less).
   const acceptReturnMutation = useAcceptReturn()
 
-  // Per-item "to dispatch" quantities. Starts at requested_qty; inventory can
-  // ship less if they're out of stock (clamped to ≤ requested_qty).
-  const [dispatchQtys, setDispatchQtys] = useState<Map<string, number>>(new Map())
-  // 25-Jul-2026: partial-weight dispatch companion. When a line's id is
-  // in this map, the godown is shipping a partial pack (grams) instead of
-  // integer packets — the packet input is hidden and dispatchQtys entry
-  // (if any) is cleared. Value stored as the RAW typed string so mid-
-  // typing "3." doesn't lose its trailing dot on re-render; payload
-  // construction parses to number. Empty map = every line packet-mode.
-  const [dispatchWeightsG, setDispatchWeightsG] = useState<Map<string, string>>(new Map())
+  // Per-item "to dispatch" quantities. RAW text so decimals mid-typing
+  // ("3." → "3.5") don't lose the trailing dot on re-render.
+  //
+  // 25-Jul-2026 (v2): unified decimal input replaced the earlier
+  // Full/Partial toggle. For weight-unit SKUs (g/kg), the godown can
+  // type 10, 10.5, 10.25, etc. — an integer value ships as packet count
+  // (dispatched_qty); a fractional value ships as partial weight
+  // (dispatched_weight_g = value × pack_g). Non-weight SKUs stay
+  // integer-only (input rejects decimals for them).
+  const [dispatchQtys, setDispatchQtys] = useState<Map<string, string>>(new Map())
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
   // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
   // Same risk as the Shop side — dispatch row sits the discard button
@@ -126,31 +126,34 @@ export default function InventoryRequestDetail() {
     const isDispatchable = status === 'Pending' || status === 'Approved'
     if (!isDispatchable) {
       setDispatchQtys(new Map())
-      setDispatchWeightsG(new Map())
       setIsDraftDirty(false)
       return
     }
-    // 25-Jul-2026: seed BOTH packet-count and partial-weight maps from the
-    // saved draft (or the persisted finalised value). Only one column will
-    // be populated per line — the XOR CHECK on the DB guarantees that —
-    // so the two maps never overlap.
-    const qtyMap    = new Map<string, number>()
-    const weightMap = new Map<string, string>()
+    // 25-Jul-2026: seed the unified input map from whichever leg the DB
+    // has for this line. Partial-weight rows are re-projected back into
+    // "packet units" (weight_g / pack_g) so the input shows what the
+    // godown originally typed (e.g. "10.5" from a 10500g partial on a
+    // 1kg pack). Packet-count rows seed as-is.
+    const map = new Map<string, string>()
     for (const item of request.items ?? []) {
-      if (item.draftDispatchedWeightG != null) {
-        weightMap.set(item.id, String(item.draftDispatchedWeightG))
-      } else if (item.dispatchedWeightG != null) {
-        weightMap.set(item.id, String(item.dispatchedWeightG))
-      } else if (item.draftDispatchedQty != null) {
-        qtyMap.set(item.id, item.draftDispatchedQty)
-      } else if (item.dispatchedQty != null) {
-        qtyMap.set(item.id, item.dispatchedQty)
+      const packG = packSizeInGrams(item.weightValue, item.weightUnit)
+      const draftG      = item.draftDispatchedWeightG
+      const finalisedG  = item.dispatchedWeightG
+      const draftQty    = item.draftDispatchedQty
+      const finalisedQty = item.dispatchedQty
+      if (draftG != null && packG != null) {
+        map.set(item.id, String(draftG / packG))
+      } else if (finalisedG != null && packG != null) {
+        map.set(item.id, String(finalisedG / packG))
+      } else if (draftQty != null) {
+        map.set(item.id, String(draftQty))
+      } else if (finalisedQty != null) {
+        map.set(item.id, String(finalisedQty))
       }
       // No default seed for Approved — inputs stay empty until the godown
       // types a qty, matching the Pending flow.
     }
-    setDispatchQtys(qtyMap)
-    setDispatchWeightsG(weightMap)
+    setDispatchQtys(map)
     setIsDraftDirty(false)
     // 02-Jul-2026: dependencies MUST be [id, status] only — NOT the whole
     // request object. Auto-save mutations refetch the request and hand us a
@@ -191,8 +194,14 @@ export default function InventoryRequestDetail() {
       // fallback) so Pending-state (nothing typed yet) shows ₹0, not the
       // requested total. On Approved the seed populates every entry so
       // this still resolves to full requested amount by default.
-      const typed = dispatchQtys.get(it.id)
-      if (typed != null) {
+      //
+      // 25-Jul-2026: parseFloat on the raw text so decimal packet counts
+      // (10.5 = half a pack shorter than 11 requested) contribute
+      // fractionally to the value. Fixes the bug where "500g" (encoded
+      // as 0.5 packs after v2) showed ₹0 in the header total.
+      const raw = dispatchQtys.get(it.id)
+      const typed = raw != null && raw !== '' ? parseFloat(raw) : null
+      if (typed != null && Number.isFinite(typed)) {
         dispatchTotal += typed * it.unitPrice
         if (!isInvLine) {
           dispatchTotalShop += typed * it.unitPrice
@@ -207,11 +216,7 @@ export default function InventoryRequestDetail() {
   // Inventory user must enter a number on every line before dispatching (0
   // is fine — that's an out-of-stock declaration). An empty input removes
   // the entry from dispatchQtys, so a missing key = not filled in.
-  // 25-Jul-2026: partial-weight rows count as filled when dispatchWeightsG
-  // has the id — either input path satisfies the "declared" requirement.
-  const allLinesFilled = items.length > 0 && items.every(it =>
-    dispatchQtys.has(it.id) || dispatchWeightsG.has(it.id)
-  )
+  const allLinesFilled = items.length > 0 && items.every(it => dispatchQtys.has(it.id))
 
   // Card-per-category grouping. Computed unconditionally so hooks order
   // stays stable across loading / error renders.
@@ -306,11 +311,11 @@ export default function InventoryRequestDetail() {
       // any persisted draft (draft_dispatched_qty AND
       // draft_dispatched_weight_g) on the same call.
       const itemsPayload = items.map(it => {
-        const grams = partialGramsFor(it.id)
+        const parsed = inputToPayload(it.id, it)
         return {
           id: it.id,
-          dispatchedQty:     grams != null ? null : (dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null),
-          dispatchedWeightG: grams,
+          dispatchedQty:     parsed?.dispatchedQty     ?? null,
+          dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
         }
       })
       // If NOTHING is set AND nothing to clear → skip the network round-trip
@@ -318,9 +323,11 @@ export default function InventoryRequestDetail() {
       // so leaving isDraftDirty=true would falsely trigger the unsaved-changes
       // guard on navigate. 07-Jul-2026.
       const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
+      // 25-Jul-2026: erased-lines-to-clear detection now covers BOTH DB
+      // legs — a persisted draft (qty OR weight) that no longer has an
+      // input entry should get cleared on save.
       const hasDraftToClear = items.some(it =>
-        (it.draftDispatchedQty      != null && !dispatchQtys.has(it.id))
-     || (it.draftDispatchedWeightG != null && !dispatchWeightsG.has(it.id))
+        (it.draftDispatchedQty != null || it.draftDispatchedWeightG != null) && !dispatchQtys.has(it.id)
       )
       if (!hasAnyValue && !hasDraftToClear) {
         if (changeCountRef.current === startCount) setIsDraftDirty(false)
@@ -363,69 +370,45 @@ export default function InventoryRequestDetail() {
     // re-enabling the Save as Draft button.
     setIsDraftDirty(true)
     changeCountRef.current += 1
-    // Empty field = clear the override. The dispatch payload (and the line
-    // total) then falls back to requested_qty for that item. This is what
-    // lets the user erase the existing number and re-type — if we stored 0
-    // here, the field would re-render as "0" and trap the user.
+    // Store the RAW text so mid-typing decimals ("3." → "3.5") keep the
+    // trailing dot on re-render. Empty string DELETES the entry so the
+    // line falls back to the pre-fill/empty state (same as before).
     if (raw === '') {
       setDispatchQtys(prev => { const n = new Map(prev); n.delete(itemId); return n })
       return
     }
-    const n = parseInt(raw, 10)
-    if (Number.isNaN(n) || n < 0) return
-    // Upper-bound cap removed — inventory can dispatch any positive qty,
-    // even above requested_qty (forced case-sizes, rounding up, etc.).
-    setDispatchQtys(prev => { const m = new Map(prev); m.set(itemId, n); return m })
+    setDispatchQtys(prev => { const m = new Map(prev); m.set(itemId, raw); return m })
   }
 
-  // 25-Jul-2026: partial-weight handlers.
+  // 25-Jul-2026 (v2): convert one input value into the (qty, weight_g)
+  // pair we send to the BE. Integer values become dispatched_qty (packet
+  // mode); non-integer values become dispatched_weight_g = value × pack_g
+  // (partial mode). Returns null when the raw text can't be parsed.
   //
-  // Setting a grams value implicitly clears the packet-count value for
-  // that same line (XOR — the DB CHECK enforces this too). Clearing the
-  // grams value drops the line back to packet-count mode.
-  const setItemWeightG = (itemId: string, raw: string) => {
-    setIsDraftDirty(true)
-    changeCountRef.current += 1
-    // Empty string stays IN the map — that's the "partial mode with blank
-    // input" state (user erased mid-edit but hasn't switched back to Full).
-    // Toggle back to Full via the mode chip if they want to leave partial.
-    setDispatchWeightsG(prev => { const m = new Map(prev); m.set(itemId, raw); return m })
-    // Clear the packet-count entry so the two maps never both hold a value
-    // for the same line — matches the XOR shape on the wire + DB.
-    setDispatchQtys(prev => { const n = new Map(prev); n.delete(itemId); return n })
-  }
-
-  // Toggle a line between Full-pack and Partial-weight modes. Called from
-  // the small mode-toggle above each g/kg product's qty input.
-  const toggleItemMode = (itemId: string, mode: 'packets' | 'grams', packG: number) => {
-    setIsDraftDirty(true)
-    changeCountRef.current += 1
-    if (mode === 'packets') {
-      // Switching FROM partial → drop the line out of the grams map
-      // entirely (that's how we distinguish packet-mode vs
-      // partial-with-blank-input). No auto-conversion to avoid a
-      // surprising "3500g became 3 packets, but I wanted 4" round-off.
-      setDispatchWeightsG(prev => { const n = new Map(prev); n.delete(itemId); return n })
-    } else {
-      // Switching TO partial → seed grams with the current packet-count-
-      // equivalent so the field is never blank on toggle. User can then
-      // adjust down to the actual partial. Falls back to packG (one pack)
-      // when the packet input hasn't been typed yet.
-      const currentPackets = dispatchQtys.get(itemId)
-      const seedGrams = currentPackets != null ? currentPackets * packG : packG
-      setDispatchWeightsG(prev => { const m = new Map(prev); m.set(itemId, String(seedGrams)); return m })
-      setDispatchQtys(prev => { const n = new Map(prev); n.delete(itemId); return n })
+  // Used by every payload builder (auto-save draft, manual save-draft,
+  // finalise dispatch) so the parse rule stays consistent.
+  const inputToPayload = (itemId: string, item: { weightValue: number | null; weightUnit: string | null }): {
+    dispatchedQty: number | null
+    dispatchedWeightG: number | null
+  } | null => {
+    if (!dispatchQtys.has(itemId)) return null
+    const raw = dispatchQtys.get(itemId) ?? ''
+    if (raw.trim() === '') return null
+    const parsed = parseFloat(raw)
+    if (!Number.isFinite(parsed) || parsed < 0) return null
+    if (Number.isInteger(parsed)) {
+      return { dispatchedQty: parsed, dispatchedWeightG: null }
     }
-  }
-
-  // Helper: partial-weight numeric value for a line (0 when the map entry
-  // is blank or unparseable). Used across every payload builder so the
-  // parse rule stays consistent.
-  const partialGramsFor = (itemId: string): number | null => {
-    if (!dispatchWeightsG.has(itemId)) return null
-    const raw = dispatchWeightsG.get(itemId) ?? ''
-    const n = parseFloat(raw)
-    return Number.isFinite(n) && n > 0 ? n : null
+    // Decimal input → partial-weight mode. Requires a weight-based pack
+    // size (g/kg) — non-weight SKUs shouldn't accept decimals in the
+    // first place (input validator rejects them at type-time).
+    const packG = packSizeInGrams(item.weightValue, item.weightUnit)
+    if (packG == null) return null
+    // Round to 3 decimals of a gram to avoid parseFloat imprecision
+    // creeping into the DB (numeric(10,3) column).
+    const grams = Math.round(parsed * packG * 1000) / 1000
+    if (grams <= 0) return null
+    return { dispatchedQty: null, dispatchedWeightG: grams }
   }
 
   const handleDispatch = async () => {
@@ -433,15 +416,11 @@ export default function InventoryRequestDetail() {
     // only, packet rows send dispatchedQty only. Lines the user never
     // touched fall back to requestedQty in packet mode (existing default).
     const itemsPayload = items.map(it => {
-      const grams = partialGramsFor(it.id)
-      if (grams != null) {
-        return { id: it.id, dispatchedQty: null, dispatchedWeightG: grams }
-      }
-      return {
-        id: it.id,
-        dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-        dispatchedWeightG: null,
-      }
+      const parsed = inputToPayload(it.id, it)
+      if (parsed != null) return { id: it.id, ...parsed }
+      // Fallback — line never touched by godown; ship requestedQty as a
+      // packet-count default (preserves the pre-partial-weight behaviour).
+      return { id: it.id, dispatchedQty: it.requestedQty, dispatchedWeightG: null }
     })
     try {
       await dispatchMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
@@ -458,10 +437,16 @@ export default function InventoryRequestDetail() {
   // Accept Return — same payload mechanics as Dispatch but the API DTO uses
   // `acceptedQty` (BE maps to dispatched_qty column underneath).
   const handleAccept = async () => {
-    const itemsPayload = items.map(it => ({
-      id: it.id,
-      acceptedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-    }))
+    // Returns stay integer-only for MVP — parse the raw text as int; fall
+    // back to requestedQty when the godown didn't retype.
+    const itemsPayload = items.map(it => {
+      const raw = dispatchQtys.get(it.id)
+      const n = raw != null && raw !== '' ? parseInt(raw, 10) : NaN
+      return {
+        id: it.id,
+        acceptedQty: Number.isFinite(n) ? n : it.requestedQty,
+      }
+    })
     try {
       await acceptReturnMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
     } finally {
@@ -484,17 +469,16 @@ export default function InventoryRequestDetail() {
     // item; erased ones go with both fields null so the SP clears their
     // persisted draft. 25-Jul-2026: XOR payload mirrors handleDispatch.
     const itemsPayload = items.map(it => {
-      const grams = partialGramsFor(it.id)
+      const parsed = inputToPayload(it.id, it)
       return {
         id: it.id,
-        dispatchedQty:     grams != null ? null : (dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null),
-        dispatchedWeightG: grams,
+        dispatchedQty:     parsed?.dispatchedQty     ?? null,
+        dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
       }
     })
     const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
     const hasDraftToClear = items.some(it =>
-      (it.draftDispatchedQty      != null && !dispatchQtys.has(it.id))
-   || (it.draftDispatchedWeightG != null && !dispatchWeightsG.has(it.id))
+      (it.draftDispatchedQty != null || it.draftDispatchedWeightG != null) && !dispatchQtys.has(it.id)
     )
     if (!hasAnyValue && !hasDraftToClear) return
     try {
@@ -673,7 +657,14 @@ export default function InventoryRequestDetail() {
                   </TableCell>
                 </TableRow>
                 {wg.items.map(item => {
-                  const currentDispatch = dispatchQtys.get(item.id) ?? item.dispatchedQty ?? item.requestedQty
+                  // 25-Jul-2026 (v2): parse raw text so decimal packet counts
+                  // (10.5 = half short of 11 requested) render correctly in
+                  // both the running total AND the short/over row tint.
+                  const rawInput = dispatchQtys.get(item.id)
+                  const typedNum = rawInput != null && rawInput !== '' ? parseFloat(rawInput) : NaN
+                  const currentDispatch = Number.isFinite(typedNum)
+                    ? typedNum
+                    : (item.dispatchedQty ?? item.requestedQty)
                   const lineTotal = currentDispatch * item.unitPrice
                   // Short / over flags drive both the qty input chrome and
                   // the row-level tint + line-total colour. The `canEditQty`
@@ -743,89 +734,36 @@ export default function InventoryRequestDetail() {
                       )}
                       <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
                         {canEditQty ? (() => {
-                          // 25-Jul-2026: partial-weight dispatch mode. Only
-                          // g/kg SKUs get the Full/Partial toggle — non-weight
-                          // products (unit=pack/piece/…) stay packet-only.
-                          const packG = packSizeInGrams(item.weightValue, item.weightUnit)
-                          const supportsPartial = packG != null && isWeightUnit(item.weightUnit)
-                          const isPartial = dispatchWeightsG.has(item.id)
-                          const currentGramsRaw = dispatchWeightsG.get(item.id) ?? ''
+                          // 25-Jul-2026 (v2): single decimal input. Integer
+                          // input → packet-count dispatch (unchanged). Decimal
+                          // input (e.g. 10.5 on an 11-pack ask) → BE stores as
+                          // dispatched_weight_g = value × pack_g so the shop
+                          // gets 10.5 kg of a 1 kg SKU. Non-weight SKUs
+                          // (unit ≠ g/kg) reject the decimal at input time.
+                          const supportsDecimal = isWeightUnit(item.weightUnit)
+                          const raw = dispatchQtys.get(item.id) ?? ''
+                          const parsedVal = raw !== '' ? parseFloat(raw) : NaN
+                          const hasFraction = Number.isFinite(parsedVal) && !Number.isInteger(parsedVal)
                           return (
-                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
-                          {supportsPartial && (
-                            <Box sx={{ display: 'flex', gap: 0.25 }}>
-                              <Button
-                                size="small"
-                                variant={!isPartial ? 'contained' : 'outlined'}
-                                onClick={() => toggleItemMode(item.id, 'packets', packG!)}
-                                sx={{ minWidth: 0, px: 0.75, py: 0.15, fontSize: 10, textTransform: 'none', lineHeight: 1.2 }}
-                              >Full</Button>
-                              <Button
-                                size="small"
-                                variant={isPartial ? 'contained' : 'outlined'}
-                                onClick={() => toggleItemMode(item.id, 'grams', packG!)}
-                                sx={{ minWidth: 0, px: 0.75, py: 0.15, fontSize: 10, textTransform: 'none', lineHeight: 1.2 }}
-                              >Partial</Button>
-                            </Box>
-                          )}
-                          {isPartial ? (
-                            <TextField
-                              type="text"
-                              size="small"
-                              value={currentGramsRaw}
-                              onChange={e => {
-                                const v = e.target.value
-                                // Accept digits + at most one decimal point.
-                                if (v === '' || /^\d+(\.\d*)?$/.test(v)) {
-                                  setItemWeightG(item.id, v)
-                                }
-                              }}
-                              onKeyDown={e => { if (['e', 'E', '+', '-', ','].includes(e.key)) e.preventDefault() }}
-                              onFocus={e => (e.target as HTMLInputElement).select()}
-                              slotProps={{
-                                htmlInput: {
-                                  inputMode: 'decimal',
-                                  className: 'disp-qty-input',
-                                  style: { textAlign: 'center', padding: '4px 8px' },
-                                },
-                                input: {
-                                  endAdornment: (
-                                    <InputAdornment position="end" sx={{ ml: 0.25 }}>
-                                      <Box sx={{ fontSize: 10, fontWeight: 700, color: '#7C4A00' }}>g</Box>
-                                    </InputAdornment>
-                                  ),
-                                },
-                              }}
-                              sx={{
-                                width: 96,
-                                '& .MuiOutlinedInput-root': {
-                                  bgcolor: '#FFF3B8',
-                                  '& fieldset': { borderColor: '#C28A00', borderWidth: 1.5 },
-                                },
-                              }}
-                            />
-                          ) : (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
                           <TextField
-                            /* type="text" + inputMode="numeric" — no native
-                               spinner (that's the white-bg one we couldn't
-                               tame). Mobile keyboards still open numeric.
-                               Custom +/- buttons below sit in an
-                               InputAdornment so they inherit the wrapper's
-                               state colour cleanly. */
                             type="text"
                             size="small"
-                            value={dispatchQtys.get(item.id) ?? ''}
+                            value={raw}
                             onChange={e => {
-                              // Digits only — reject anything else at the
-                              // input layer since we no longer get type=number
-                              // filtering. Empty string = "cleared".
                               const v = e.target.value
-                              if (v === '' || /^\d+$/.test(v)) {
+                              // Weight-unit SKUs accept decimals; non-weight
+                              // SKUs stay integer-only (rejects '.' at type-time).
+                              const pattern = supportsDecimal ? /^\d+(\.\d*)?$/ : /^\d+$/
+                              if (v === '' || pattern.test(v)) {
                                 setItemQty(item.id, v, item.requestedQty)
                               }
                             }}
                             onKeyDown={e => {
-                              if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault()
+                              const blockedKeys = supportsDecimal
+                                ? ['e', 'E', '+', '-', ',']
+                                : ['e', 'E', '+', '-', '.', ',']
+                              if (blockedKeys.includes(e.key)) e.preventDefault()
                               if (e.key === 'Enter') {
                                 e.preventDefault()
                                 const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('.disp-qty-input'))
@@ -840,13 +778,13 @@ export default function InventoryRequestDetail() {
                               el.select()
                             }}
                             slotProps={{
-                              htmlInput: { inputMode: 'numeric', className: 'disp-qty-input', style: { textAlign: 'center', padding: '4px 8px' } },
+                              htmlInput: {
+                                inputMode: supportsDecimal ? 'decimal' : 'numeric',
+                                className: 'disp-qty-input',
+                                style: { textAlign: 'center', padding: '4px 8px' },
+                              },
                               input: {
                                 endAdornment: (
-                                  // Compact +/- stack; only visible on hover
-                                  // of the whole cell (see :hover rule in
-                                  // parent sx). Buttons inherit the wrapper's
-                                  // cream/red/amber bg via transparent bg.
                                   <InputAdornment position="end" sx={{ ml: 0, mr: -0.5 }}>
                                     <Box
                                       className="qty-stepper"
@@ -856,7 +794,7 @@ export default function InventoryRequestDetail() {
                                         size="small"
                                         tabIndex={-1}
                                         onClick={() => {
-                                          const cur = dispatchQtys.get(item.id) ?? 0
+                                          const cur = Number.isFinite(parsedVal) ? parsedVal : 0
                                           setItemQty(item.id, String(cur + 1), item.requestedQty)
                                         }}
                                         sx={{ p: 0, height: 12, width: 16, borderRadius: 0, color: '#1F1F1F' }}
@@ -867,7 +805,7 @@ export default function InventoryRequestDetail() {
                                         size="small"
                                         tabIndex={-1}
                                         onClick={() => {
-                                          const cur = dispatchQtys.get(item.id) ?? 0
+                                          const cur = Number.isFinite(parsedVal) ? parsedVal : 0
                                           if (cur > 0) setItemQty(item.id, String(cur - 1), item.requestedQty)
                                         }}
                                         sx={{ p: 0, height: 12, width: 16, borderRadius: 0, color: '#1F1F1F' }}
@@ -882,17 +820,28 @@ export default function InventoryRequestDetail() {
                             sx={{
                               width: 86,
                               '& .MuiOutlinedInput-root': {
-                                bgcolor: isShort ? '#FFEBEE' : isOver ? '#FFE0B2' : '#FFF8DC',
-                                '& fieldset': { borderColor: isShort ? '#C62828' : isOver ? '#E65100' : '#1F1F1F' },
+                                bgcolor: hasFraction
+                                  ? '#FFF3B8'  // amber-cream for decimal (partial) input
+                                  : isShort ? '#FFEBEE' : isOver ? '#FFE0B2' : '#FFF8DC',
+                                '& fieldset': {
+                                  borderColor: hasFraction
+                                    ? '#C28A00'
+                                    : isShort ? '#C62828' : isOver ? '#E65100' : '#1F1F1F',
+                                  borderWidth: hasFraction ? 1.5 : 1,
+                                },
                               },
-                              // Reveal the +/- stack when the input is hovered
-                              // or focused. Kept hidden otherwise so the
-                              // resting cell is clean state-colour only.
                               '&:hover .qty-stepper, & .Mui-focused ~ .qty-stepper, & .MuiOutlinedInput-root.Mui-focused .qty-stepper': {
                                 opacity: 1,
                               },
                             }}
                           />
+                          {/* Helper text under the input when the user typed
+                              a fraction — shows the physical dispatch
+                              interpretation (e.g. "10.5 = 10.5 kg"). */}
+                          {hasFraction && supportsDecimal && item.weightValue != null && (
+                            <Box sx={{ fontSize: 10, color: '#7C4A00', fontWeight: 700, lineHeight: 1.1 }}>
+                              = {(parsedVal * Number(item.weightValue)).toFixed(2)} {item.weightUnit}
+                            </Box>
                           )}
                         </Box>
                           )
@@ -1548,11 +1497,18 @@ export default function InventoryRequestDetail() {
           ? async () => {
               // Full-manifest payload (matches auto-save + handleSaveDraft)
               // so erased items clear their persisted draft on the DB side.
-              const itemsPayload = items.map(it => ({
-                id: it.id,
-                dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
-              }))
-              const hasAnyValue = itemsPayload.some(p => p.dispatchedQty != null)
+              // 25-Jul-2026 (v2): inputToPayload converts decimal packet
+              // counts into dispatched_weight_g so partial rows survive
+              // the "Save as Draft on nav-away" prompt too.
+              const itemsPayload = items.map(it => {
+                const parsed = inputToPayload(it.id, it)
+                return {
+                  id: it.id,
+                  dispatchedQty:     parsed?.dispatchedQty     ?? null,
+                  dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
+                }
+              })
+              const hasAnyValue = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
               if (!hasAnyValue) {
                 throw new Error('Enter at least one quantity before saving.')
               }
