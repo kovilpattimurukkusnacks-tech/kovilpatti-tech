@@ -155,15 +155,15 @@ LANGUAGE sql STABLE AS $$
        -- reported short-receipt reduces the ledger by exactly the missing
        -- amount without an admin qty-edit round-trip.
       COALESCE(SUM(CASE WHEN f.request_type = 'Order'
-                        THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS dispatched_amount,
+                        THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price END), 0) AS dispatched_amount,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
-                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price END), 0) AS returns_amount,
+                        THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price END), 0) AS returns_amount,
       -- Cost side at the line's frozen purchase_price_snapshot (COALESCE to
       -- 0 when the product had no purchase price at insert).
       COALESCE(SUM(CASE WHEN f.request_type = 'Order'
-                        THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS dispatched_cost,
+                        THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS dispatched_cost,
       COALESCE(SUM(CASE WHEN f.request_type = 'Return'
-                        THEN COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS returns_cost
+                        THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0) END), 0) AS returns_cost
     FROM finalised f
     JOIN stock_request_items it ON it.request_id = f.id
     LEFT JOIN products        p ON p.id          = it.product_id
@@ -258,8 +258,8 @@ LANGUAGE sql STABLE AS $$
            -- dispatched_qty as accepted-qty).
            (SELECT COALESCE(SUM(
               CASE WHEN r.request_type = 'Order'
-                   THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
-                   ELSE COALESCE(it.dispatched_qty, it.requested_qty)
+                   THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
+                   ELSE fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
               END * COALESCE(it.purchase_price_snapshot, 0)), 0)
             FROM stock_request_items it
             WHERE it.request_id = r.id) AS cost_amount,
@@ -268,7 +268,7 @@ LANGUAGE sql STABLE AS $$
            -- floored at 0 per line, valued at the MRP snapshot.
            (SELECT COALESCE(SUM(
               GREATEST(it.requested_qty
-                       - COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty), 0)
+                       - fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit), 0)
               * it.unit_price), 0)
             FROM stock_request_items it
             WHERE it.request_id = r.id
@@ -441,15 +441,15 @@ LANGUAGE sql STABLE AS $$
            SUM(it.requested_qty)::bigint                                                                    AS requested_qty,
            -- received_qty first (shop's reported count), then dispatched, then requested.
            -- 03-Jul-2026: keeps the shop's declared receipt discrepancy in the ledger.
-           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty))::bigint                      AS dispatched_qty,
+           SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit))::bigint                      AS dispatched_qty,
            SUM(it.requested_qty * it.unit_price)                                                            AS requested_amount,
-           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price)              AS dispatched_amount,
+           SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price)              AS dispatched_amount,
            -- Cost side of dispatched goods at the line's frozen
            -- purchase_price_snapshot (12-Jul-2026 — replaces the live
            -- products.purchase_price so a later price edit can't shift
            -- historical figures). COALESCE handles lines whose product had
            -- no purchase price at insert (treat as 0 cost).
-           SUM(COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)) AS dispatched_cost
+           SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0)) AS dispatched_cost
     FROM order_rows o
     JOIN stock_request_items it ON it.request_id = o.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -462,11 +462,11 @@ LANGUAGE sql STABLE AS $$
   -- dispatched_qty is reused as accepted-qty on Returns (Phase 2 convention).
   return_sums AS (
     SELECT rr.shop_id,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty))::bigint                         AS returned_qty,
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price)                 AS returns_amount,
+           SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit))::bigint                         AS returned_qty,
+           SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price)                 AS returns_amount,
            -- Cost recovered when stock comes back via a Return — subtracted
            -- from dispatched_cost in the final SELECT to get net cost.
-           SUM(COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)) AS returns_cost
+           SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0)) AS returns_cost
     FROM return_rows rr
     JOIN stock_request_items it ON it.request_id = rr.id
     LEFT JOIN products p        ON p.id  = it.product_id
@@ -637,26 +637,26 @@ LANGUAGE sql STABLE AS $$
       -- count) so a declared receipt discrepancy flows through category
       -- rollups. Return path unchanged — Returns have no received_qty.
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
+           THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
+           ELSE -fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
       END                                                                                     AS signed_qty,
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price
+           ELSE -fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price
       END                                                                                     AS signed_amount,
       -- Cost priced at the line's frozen purchase_price_snapshot
       -- (12-Jul-2026 — replaces the live products.purchase_price).
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * COALESCE(it.purchase_price_snapshot, 0)
+           THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0)
+           ELSE -fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * COALESCE(it.purchase_price_snapshot, 0)
       END                                                                                     AS signed_cost,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
       CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
-      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
+      CASE WHEN r.request_type = 'Order'  THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Return' THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) ELSE 0 END AS ret_qty,
       CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
-      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
+      CASE WHEN r.request_type = 'Order'  THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Return' THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id
@@ -766,20 +766,20 @@ LANGUAGE sql STABLE AS $$
       -- 03-Jul-2026: Order-side uses received_qty first when the shop has
       -- reported a receipt discrepancy. Return path unchanged.
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty)
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty)
+           THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
+           ELSE -fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
       END AS signed_qty,
       CASE WHEN r.request_type = 'Order'
-           THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price
-           ELSE -COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price
+           THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price
+           ELSE -fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price
       END AS signed_amount,
       -- Per-dimension positive aggregates (added 19-Jun-2026, client #13).
       CASE WHEN r.request_type = 'Order'  THEN it.requested_qty ELSE 0 END                    AS req_qty,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) ELSE 0 END AS disp_qty,
-      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) ELSE 0 END AS ret_qty,
+      CASE WHEN r.request_type = 'Order'  THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) ELSE 0 END AS disp_qty,
+      CASE WHEN r.request_type = 'Return' THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) ELSE 0 END AS ret_qty,
       CASE WHEN r.request_type = 'Order'  THEN it.requested_qty * it.unit_price ELSE 0 END    AS req_amt,
-      CASE WHEN r.request_type = 'Order'  THEN COALESCE(it.received_qty, it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS disp_amt,
-      CASE WHEN r.request_type = 'Return' THEN COALESCE(it.dispatched_qty, it.requested_qty) * it.unit_price ELSE 0 END AS ret_amt
+      CASE WHEN r.request_type = 'Order'  THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price ELSE 0 END AS disp_amt,
+      CASE WHEN r.request_type = 'Return' THEN fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price ELSE 0 END AS ret_amt
     FROM stock_requests r
     JOIN stock_request_items it ON it.request_id = r.id
     JOIN products            p  ON p.id          = it.product_id

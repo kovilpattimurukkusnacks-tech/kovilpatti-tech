@@ -13,6 +13,7 @@ import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime, formatIstTime } from '../../utils/formatDate'
+import { isWeightUnit, packSizeInGrams } from '../../utils/formatDispatched'
 import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
@@ -54,6 +55,13 @@ export default function InventoryRequestDetail() {
   // Per-item "to dispatch" quantities. Starts at requested_qty; inventory can
   // ship less if they're out of stock (clamped to ≤ requested_qty).
   const [dispatchQtys, setDispatchQtys] = useState<Map<string, number>>(new Map())
+  // 25-Jul-2026: partial-weight dispatch companion. When a line's id is
+  // in this map, the godown is shipping a partial pack (grams) instead of
+  // integer packets — the packet input is hidden and dispatchQtys entry
+  // (if any) is cleared. Value stored as the RAW typed string so mid-
+  // typing "3." doesn't lose its trailing dot on re-render; payload
+  // construction parses to number. Empty map = every line packet-mode.
+  const [dispatchWeightsG, setDispatchWeightsG] = useState<Map<string, string>>(new Map())
   const [draftSavedAt, setDraftSavedAt] = useState<Date | null>(null)
   // Confirm-dialog gate for Discard Draft (29-Jun-2026 client follow-up).
   // Same risk as the Shop side — dispatch row sits the discard button
@@ -118,20 +126,31 @@ export default function InventoryRequestDetail() {
     const isDispatchable = status === 'Pending' || status === 'Approved'
     if (!isDispatchable) {
       setDispatchQtys(new Map())
+      setDispatchWeightsG(new Map())
       setIsDraftDirty(false)
       return
     }
-    const map = new Map<string, number>()
+    // 25-Jul-2026: seed BOTH packet-count and partial-weight maps from the
+    // saved draft (or the persisted finalised value). Only one column will
+    // be populated per line — the XOR CHECK on the DB guarantees that —
+    // so the two maps never overlap.
+    const qtyMap    = new Map<string, number>()
+    const weightMap = new Map<string, string>()
     for (const item of request.items ?? []) {
-      if (item.draftDispatchedQty != null) {
-        map.set(item.id, item.draftDispatchedQty)
+      if (item.draftDispatchedWeightG != null) {
+        weightMap.set(item.id, String(item.draftDispatchedWeightG))
+      } else if (item.dispatchedWeightG != null) {
+        weightMap.set(item.id, String(item.dispatchedWeightG))
+      } else if (item.draftDispatchedQty != null) {
+        qtyMap.set(item.id, item.draftDispatchedQty)
       } else if (item.dispatchedQty != null) {
-        map.set(item.id, item.dispatchedQty)
+        qtyMap.set(item.id, item.dispatchedQty)
       }
       // No default seed for Approved — inputs stay empty until the godown
       // types a qty, matching the Pending flow.
     }
-    setDispatchQtys(map)
+    setDispatchQtys(qtyMap)
+    setDispatchWeightsG(weightMap)
     setIsDraftDirty(false)
     // 02-Jul-2026: dependencies MUST be [id, status] only — NOT the whole
     // request object. Auto-save mutations refetch the request and hand us a
@@ -188,7 +207,11 @@ export default function InventoryRequestDetail() {
   // Inventory user must enter a number on every line before dispatching (0
   // is fine — that's an out-of-stock declaration). An empty input removes
   // the entry from dispatchQtys, so a missing key = not filled in.
-  const allLinesFilled = items.length > 0 && items.every(it => dispatchQtys.has(it.id))
+  // 25-Jul-2026: partial-weight rows count as filled when dispatchWeightsG
+  // has the id — either input path satisfies the "declared" requirement.
+  const allLinesFilled = items.length > 0 && items.every(it =>
+    dispatchQtys.has(it.id) || dispatchWeightsG.has(it.id)
+  )
 
   // Card-per-category grouping. Computed unconditionally so hooks order
   // stays stable across loading / error renders.
@@ -277,16 +300,28 @@ export default function InventoryRequestDetail() {
       // but had a persisted draft) → send null so the SP clears the DB
       // draft. Without this, the persisted draft stays in the DB and
       // silently re-fills the wiped cell on the next refetch.
-      const itemsPayload = items.map(it => ({
-        id: it.id,
-        dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
-      }))
+      // 25-Jul-2026: dispatch payload sends EITHER dispatchedQty (packet
+      // mode) OR dispatchedWeightG (partial-weight mode) per line, never
+      // both. Erased-and-untouched lines send both null so the SP clears
+      // any persisted draft (draft_dispatched_qty AND
+      // draft_dispatched_weight_g) on the same call.
+      const itemsPayload = items.map(it => {
+        const grams = partialGramsFor(it.id)
+        return {
+          id: it.id,
+          dispatchedQty:     grams != null ? null : (dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null),
+          dispatchedWeightG: grams,
+        }
+      })
       // If NOTHING is set AND nothing to clear → skip the network round-trip
       // AND clear the dirty flag. Local state matches the server (both empty),
       // so leaving isDraftDirty=true would falsely trigger the unsaved-changes
       // guard on navigate. 07-Jul-2026.
-      const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null)
-      const hasDraftToClear = items.some(it => it.draftDispatchedQty != null && !dispatchQtys.has(it.id))
+      const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
+      const hasDraftToClear = items.some(it =>
+        (it.draftDispatchedQty      != null && !dispatchQtys.has(it.id))
+     || (it.draftDispatchedWeightG != null && !dispatchWeightsG.has(it.id))
+      )
       if (!hasAnyValue && !hasDraftToClear) {
         if (changeCountRef.current === startCount) setIsDraftDirty(false)
         return
@@ -343,11 +378,71 @@ export default function InventoryRequestDetail() {
     setDispatchQtys(prev => { const m = new Map(prev); m.set(itemId, n); return m })
   }
 
+  // 25-Jul-2026: partial-weight handlers.
+  //
+  // Setting a grams value implicitly clears the packet-count value for
+  // that same line (XOR — the DB CHECK enforces this too). Clearing the
+  // grams value drops the line back to packet-count mode.
+  const setItemWeightG = (itemId: string, raw: string) => {
+    setIsDraftDirty(true)
+    changeCountRef.current += 1
+    // Empty string stays IN the map — that's the "partial mode with blank
+    // input" state (user erased mid-edit but hasn't switched back to Full).
+    // Toggle back to Full via the mode chip if they want to leave partial.
+    setDispatchWeightsG(prev => { const m = new Map(prev); m.set(itemId, raw); return m })
+    // Clear the packet-count entry so the two maps never both hold a value
+    // for the same line — matches the XOR shape on the wire + DB.
+    setDispatchQtys(prev => { const n = new Map(prev); n.delete(itemId); return n })
+  }
+
+  // Toggle a line between Full-pack and Partial-weight modes. Called from
+  // the small mode-toggle above each g/kg product's qty input.
+  const toggleItemMode = (itemId: string, mode: 'packets' | 'grams', packG: number) => {
+    setIsDraftDirty(true)
+    changeCountRef.current += 1
+    if (mode === 'packets') {
+      // Switching FROM partial → drop the line out of the grams map
+      // entirely (that's how we distinguish packet-mode vs
+      // partial-with-blank-input). No auto-conversion to avoid a
+      // surprising "3500g became 3 packets, but I wanted 4" round-off.
+      setDispatchWeightsG(prev => { const n = new Map(prev); n.delete(itemId); return n })
+    } else {
+      // Switching TO partial → seed grams with the current packet-count-
+      // equivalent so the field is never blank on toggle. User can then
+      // adjust down to the actual partial. Falls back to packG (one pack)
+      // when the packet input hasn't been typed yet.
+      const currentPackets = dispatchQtys.get(itemId)
+      const seedGrams = currentPackets != null ? currentPackets * packG : packG
+      setDispatchWeightsG(prev => { const m = new Map(prev); m.set(itemId, String(seedGrams)); return m })
+      setDispatchQtys(prev => { const n = new Map(prev); n.delete(itemId); return n })
+    }
+  }
+
+  // Helper: partial-weight numeric value for a line (0 when the map entry
+  // is blank or unparseable). Used across every payload builder so the
+  // parse rule stays consistent.
+  const partialGramsFor = (itemId: string): number | null => {
+    if (!dispatchWeightsG.has(itemId)) return null
+    const raw = dispatchWeightsG.get(itemId) ?? ''
+    const n = parseFloat(raw)
+    return Number.isFinite(n) && n > 0 ? n : null
+  }
+
   const handleDispatch = async () => {
-    const itemsPayload = items.map(it => ({
-      id: it.id,
-      dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
-    }))
+    // 25-Jul-2026: XOR payload — partial-weight rows send dispatchedWeightG
+    // only, packet rows send dispatchedQty only. Lines the user never
+    // touched fall back to requestedQty in packet mode (existing default).
+    const itemsPayload = items.map(it => {
+      const grams = partialGramsFor(it.id)
+      if (grams != null) {
+        return { id: it.id, dispatchedQty: null, dispatchedWeightG: grams }
+      }
+      return {
+        id: it.id,
+        dispatchedQty: dispatchQtys.get(it.id) ?? it.requestedQty,
+        dispatchedWeightG: null,
+      }
+    })
     try {
       await dispatchMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
       // 30-Jun-2026: redirect back to Needs Action after a successful
@@ -386,14 +481,21 @@ export default function InventoryRequestDetail() {
   const handleSaveDraft = async () => {
     const startCount = changeCountRef.current
     // Same "full manifest" strategy as the auto-save effect: send every
-    // item; erased ones go with dispatchedQty=null so the SP clears their
-    // persisted draft. See the auto-save comment for the rationale.
-    const itemsPayload = items.map(it => ({
-      id: it.id,
-      dispatchedQty: dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null,
-    }))
-    const hasAnyValue     = itemsPayload.some(p => p.dispatchedQty != null)
-    const hasDraftToClear = items.some(it => it.draftDispatchedQty != null && !dispatchQtys.has(it.id))
+    // item; erased ones go with both fields null so the SP clears their
+    // persisted draft. 25-Jul-2026: XOR payload mirrors handleDispatch.
+    const itemsPayload = items.map(it => {
+      const grams = partialGramsFor(it.id)
+      return {
+        id: it.id,
+        dispatchedQty:     grams != null ? null : (dispatchQtys.has(it.id) ? dispatchQtys.get(it.id)! : null),
+        dispatchedWeightG: grams,
+      }
+    })
+    const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
+    const hasDraftToClear = items.some(it =>
+      (it.draftDispatchedQty      != null && !dispatchQtys.has(it.id))
+   || (it.draftDispatchedWeightG != null && !dispatchWeightsG.has(it.id))
+    )
     if (!hasAnyValue && !hasDraftToClear) return
     try {
       await saveDraftMutation.mutateAsync({ id: request.id, req: { items: itemsPayload } })
@@ -640,7 +742,69 @@ export default function InventoryRequestDetail() {
                         <TableCell align="right" sx={{ py: 1, width: 90 }}>{item.requestedQty}</TableCell>
                       )}
                       <TableCell align="center" sx={{ py: 0.5, width: 130 }}>
-                        {canEditQty ? (
+                        {canEditQty ? (() => {
+                          // 25-Jul-2026: partial-weight dispatch mode. Only
+                          // g/kg SKUs get the Full/Partial toggle — non-weight
+                          // products (unit=pack/piece/…) stay packet-only.
+                          const packG = packSizeInGrams(item.weightValue, item.weightUnit)
+                          const supportsPartial = packG != null && isWeightUnit(item.weightUnit)
+                          const isPartial = dispatchWeightsG.has(item.id)
+                          const currentGramsRaw = dispatchWeightsG.get(item.id) ?? ''
+                          return (
+                        <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.5 }}>
+                          {supportsPartial && (
+                            <Box sx={{ display: 'flex', gap: 0.25 }}>
+                              <Button
+                                size="small"
+                                variant={!isPartial ? 'contained' : 'outlined'}
+                                onClick={() => toggleItemMode(item.id, 'packets', packG!)}
+                                sx={{ minWidth: 0, px: 0.75, py: 0.15, fontSize: 10, textTransform: 'none', lineHeight: 1.2 }}
+                              >Full</Button>
+                              <Button
+                                size="small"
+                                variant={isPartial ? 'contained' : 'outlined'}
+                                onClick={() => toggleItemMode(item.id, 'grams', packG!)}
+                                sx={{ minWidth: 0, px: 0.75, py: 0.15, fontSize: 10, textTransform: 'none', lineHeight: 1.2 }}
+                              >Partial</Button>
+                            </Box>
+                          )}
+                          {isPartial ? (
+                            <TextField
+                              type="text"
+                              size="small"
+                              value={currentGramsRaw}
+                              onChange={e => {
+                                const v = e.target.value
+                                // Accept digits + at most one decimal point.
+                                if (v === '' || /^\d+(\.\d*)?$/.test(v)) {
+                                  setItemWeightG(item.id, v)
+                                }
+                              }}
+                              onKeyDown={e => { if (['e', 'E', '+', '-', ','].includes(e.key)) e.preventDefault() }}
+                              onFocus={e => (e.target as HTMLInputElement).select()}
+                              slotProps={{
+                                htmlInput: {
+                                  inputMode: 'decimal',
+                                  className: 'disp-qty-input',
+                                  style: { textAlign: 'center', padding: '4px 8px' },
+                                },
+                                input: {
+                                  endAdornment: (
+                                    <InputAdornment position="end" sx={{ ml: 0.25 }}>
+                                      <Box sx={{ fontSize: 10, fontWeight: 700, color: '#7C4A00' }}>g</Box>
+                                    </InputAdornment>
+                                  ),
+                                },
+                              }}
+                              sx={{
+                                width: 96,
+                                '& .MuiOutlinedInput-root': {
+                                  bgcolor: '#FFF3B8',
+                                  '& fieldset': { borderColor: '#C28A00', borderWidth: 1.5 },
+                                },
+                              }}
+                            />
+                          ) : (
                           <TextField
                             /* type="text" + inputMode="numeric" — no native
                                spinner (that's the white-bg one we couldn't
@@ -729,13 +893,18 @@ export default function InventoryRequestDetail() {
                               },
                             }}
                           />
-                        ) : (
+                          )}
+                        </Box>
+                          )
+                        })() : (
                           <DispatchedCell
                             qty={item.dispatchedQty}
                             // Inv lines: pass dispatched as "requested" so the
                             // cell never paints short/over — no shop ask exists.
                             requested={isInvLine ? (item.dispatchedQty ?? item.requestedQty) : item.requestedQty}
                             received={item.receivedQty}
+                            dispatchedWeightG={item.dispatchedWeightG}
+                            receivedWeightG={item.receivedWeightG}
                           />
                         )}
                       </TableCell>

@@ -22,6 +22,7 @@ public class StockRequestService(
     IValidator<UpdateStockRequestRequest> updateValidator,
     IValidator<RejectRequest> rejectValidator,
     IValidator<DispatchRequest> dispatchValidator,
+    IValidator<ReceiveRequest> receiveValidator,
     IValidator<CreateReturnRequest> createReturnValidator,
     IValidator<AcceptReturnRequest> acceptReturnValidator,
     IValidator<EditDispatchedQtyRequest> editDispatchedQtyValidator
@@ -333,12 +334,14 @@ public class StockRequestService(
 
         // DispatchedQty is nullable at the DTO level (save-draft path can
         // send null to clear a persisted draft). The final /dispatch
-        // endpoint rejects null — every line needs an explicit qty (0 is
-        // a valid "out of stock" declaration).
-        if (request.Items.Any(i => i.DispatchedQty == null))
+        // endpoint rejects rows with NEITHER a qty NOR a weight — every
+        // line needs an explicit declaration (0 packets is valid "out of
+        // stock"; a positive weight_g is valid partial-pack dispatch).
+        // 25-Jul-2026: DispatchedWeightG opens the second acceptable path.
+        if (request.Items.Any(i => i.DispatchedQty == null && i.DispatchedWeightG == null))
             throw new ValidationException(new[] {
                 new ValidationFailure("Items",
-                    "Every item needs a dispatched qty. Use 0 for out-of-stock lines.")
+                    "Every item needs a dispatched qty or a partial weight. Use 0 packets for out-of-stock lines.")
             });
 
         var userId = currentUser.UserId
@@ -350,10 +353,14 @@ public class StockRequestService(
         // Inventory user can only dispatch their own godown's requests.
         EnsureInventoryScope(existing);
 
+        // 25-Jul-2026: dispatched_weight_g rides alongside dispatched_qty for
+        // partial-pack dispatches (validator enforces XOR — never both). The
+        // SP writes both columns; the DB CHECK is defence-in-depth.
         var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
         {
-            id              = i.Id,
-            dispatched_qty  = i.DispatchedQty,
+            id                   = i.Id,
+            dispatched_qty       = i.DispatchedQty,
+            dispatched_weight_g  = i.DispatchedWeightG,
         }), JsonOpts);
 
         var ok = await requests.DispatchAsync(id, userId, itemsJson, ct);
@@ -365,6 +372,15 @@ public class StockRequestService(
 
     public async Task<StockRequestDto> ReceiveAsync(Guid id, ReceiveRequest? request = null, CancellationToken ct = default)
     {
+        // 25-Jul-2026: validator only runs when the shop sent an items
+        // payload — the null/empty fast path ("receive all as-dispatched")
+        // has nothing to validate and stays legal.
+        if (request is not null)
+        {
+            var validation = await receiveValidator.ValidateAsync(request, ct);
+            if (!validation.IsValid) throw new ValidationException(validation.Errors);
+        }
+
         var userId = currentUser.UserId
             ?? throw new UnauthorizedException("Authenticated user required.");
 
@@ -378,17 +394,19 @@ public class StockRequestService(
         // by listing per-item received qtys. Only rows different from the
         // dispatched qty need to be in the payload. Absent list = one-click
         // "as-dispatched" confirm (matches pre-02-Jul-2026 behaviour).
+        // 25-Jul-2026: received_weight_g companion for partial dispatches.
+        // Validator enforces XOR + non-negative bounds — service just
+        // passes the values through.
         string? itemsJson = null;
         if (request?.Items is { Count: > 0 })
         {
-            if (request.Items.Any(i => i.ReceivedQty < 0))
-                throw new ValidationException(new[] {
-                    new ValidationFailure(nameof(request.Items),
-                        "Received qty must be zero or positive on every line.")
-                });
-
             itemsJson = JsonSerializer.Serialize(
-                request.Items.Select(i => new { id = i.Id, received_qty = i.ReceivedQty }),
+                request.Items.Select(i => new
+                {
+                    id                = i.Id,
+                    received_qty      = i.ReceivedQty,
+                    received_weight_g = i.ReceivedWeightG,
+                }),
                 JsonOpts);
         }
 
@@ -600,12 +618,14 @@ public class StockRequestService(
         // for their own godown's requests; admin may save for any.
         EnsureInventoryScope(existing);
 
-        // Same payload shape as DispatchAsync; SP writes to draft_dispatched_qty
-        // instead of dispatched_qty and leaves status unchanged.
+        // Same payload shape as DispatchAsync; SP writes to
+        // draft_dispatched_qty / draft_dispatched_weight_g instead of the
+        // finalised columns and leaves status unchanged.
         var itemsJson = JsonSerializer.Serialize(request.Items.Select(i => new
         {
-            id              = i.Id,
-            dispatched_qty  = i.DispatchedQty,
+            id                   = i.Id,
+            dispatched_qty       = i.DispatchedQty,
+            dispatched_weight_g  = i.DispatchedWeightG,
         }), JsonOpts);
 
         var ok = await requests.SaveDispatchDraftAsync(id, userId, itemsJson, ct);
@@ -1098,7 +1118,10 @@ public class StockRequestService(
         return raws.Select(i => new StockRequestItemDto(
             i.id, i.product_id, i.product_code, i.product_name, i.category_name,
             i.weight_value, i.weight_unit,
-            i.requested_qty, i.dispatched_qty, i.received_qty, i.return_weight_g, i.draft_dispatched_qty,
+            i.requested_qty, i.dispatched_qty, i.received_qty, i.return_weight_g,
+            // 25-Jul-2026: partial-weight dispatch companions.
+            i.dispatched_weight_g, i.received_weight_g,
+            i.draft_dispatched_qty, i.draft_dispatched_weight_g,
             i.unit_price, i.subtotal,
             i.added_by ?? "Shop")).ToList();
     }
@@ -1110,7 +1133,9 @@ public class StockRequestService(
         decimal? weight_value, string? weight_unit,
         int requested_qty, int? dispatched_qty, int? received_qty,
         decimal? return_weight_g,
-        int? draft_dispatched_qty,
+        // 25-Jul-2026: partial-weight dispatch companions.
+        decimal? dispatched_weight_g, decimal? received_weight_g,
+        int? draft_dispatched_qty, decimal? draft_dispatched_weight_g,
         decimal unit_price, decimal subtotal,
         string? added_by);
 }
