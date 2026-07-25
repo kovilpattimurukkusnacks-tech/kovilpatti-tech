@@ -1988,20 +1988,29 @@ export default function ShopRequestNew() {
                       <TextField
                         type="text"
                         size="small"
-                        value={line.returnWeightG ?? ''}
+                        value={line.returnWeightG || ''}
                         onChange={e => {
                           const v = e.target.value
-                          if (v === '') return
-                          if (!/^\d+$/.test(v)) return
-                          const parsed = parseInt(v, 10)
+                          if (v !== '' && !/^\d+$/.test(v)) return
+                          const parsed = v === '' ? 0 : parseInt(v, 10)
                           if (!Number.isFinite(parsed)) return
-                          const clamped = Math.max(1, Math.min(parsed, maxG))
+                          const clamped = Math.min(parsed, maxG)
                           setCart(prev => {
                             const n = new Map(prev)
                             const l = n.get(p.id)!
                             n.set(p.id, { ...l, returnWeightG: clamped })
                             return n
                           })
+                        }}
+                        onBlur={() => {
+                          if ((line.returnWeightG ?? 0) < 1) {
+                            setCart(prev => {
+                              const n = new Map(prev)
+                              const l = n.get(p.id)!
+                              n.set(p.id, { ...l, returnWeightG: 1 })
+                              return n
+                            })
+                          }
                         }}
                         onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
                         onFocus={e => (e.target as HTMLInputElement).select()}
