@@ -1731,8 +1731,12 @@ export default function InventoryRequestDetail() {
                 setDispatchQtys(prev => {
                   const m = new Map(prev)
                   for (const it of updated.items ?? []) {
+                    // 25-Jul-2026: dispatchQtys stores raw text (see the
+                    // main seed effect above). Coerce the SP-seeded numeric
+                    // draft qty to string so the input renders correctly
+                    // without re-triggering the render-loop assertion.
                     if (addedProductIds.has(it.productId) && it.draftDispatchedQty != null && !m.has(it.id)) {
-                      m.set(it.id, it.draftDispatchedQty)
+                      m.set(it.id, String(it.draftDispatchedQty))
                     }
                   }
                   return m
