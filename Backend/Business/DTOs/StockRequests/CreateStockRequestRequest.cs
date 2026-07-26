@@ -52,9 +52,15 @@ public record DispatchRequest(IReadOnlyList<DispatchItem> Items);
 /// godown erased the qty mid-edit). The final /dispatch endpoint still
 /// rejects null via DispatchValidator so the terminal state can't be
 /// reached with an unset qty.
+///
+/// 25-Jul-2026: DispatchedWeightG is the partial-weight companion — non-
+/// null when the godown shipped a partial pack (grams). Mutually exclusive
+/// with DispatchedQty per line (validator enforces + DB CHECK). Only
+/// meaningful for products with weight_unit IN ('g','kg').
 public record DispatchItem(
     Guid Id,           // stock_request_items.id
-    int? DispatchedQty
+    int? DispatchedQty,
+    decimal? DispatchedWeightG = null
 );
 
 /// Inventory user renames a saved dispatch draft. Empty / whitespace-only

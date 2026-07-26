@@ -39,10 +39,21 @@ export type StockRequestItemDto = {
    *  Returns. Non-null = shop asked for credit on a fraction of a pack
    *  (damage claim, no physical goods movement). Only set on g/kg SKUs. */
   returnWeightG: number | null
+  /** 25-Jul-2026: Order-side partial-weight dispatch (grams). Non-null
+   *  when the godown shipped a partial pack instead of full packets —
+   *  e.g. 3 full 1 kg + one 500 g open packet = 3500 g total. Mutually
+   *  exclusive with dispatchedQty per line (never both set). Only for
+   *  weight_unit ∈ ('g','kg'). */
+  dispatchedWeightG: number | null
+  /** 25-Jul-2026: shop's receive-time correction of a partial dispatch.
+   *  Mutually exclusive with receivedQty. */
+  receivedWeightG: number | null
   // Inventory user's saved-but-not-finalised dispatch qty. Used to pre-fill
   // the dispatch screen's qty inputs from a saved draft. Null when no draft
   // exists (or after the dispatch has been finalised).
   draftDispatchedQty: number | null
+  /** 25-Jul-2026: partial-weight companion to draftDispatchedQty. */
+  draftDispatchedWeightG: number | null
   unitPrice: number
   subtotal: number
   /** 'Shop' (default) or 'Inventory'. Inv-tagged rows were appended by
@@ -167,13 +178,28 @@ export type RejectRequest = { reason: string }
 // tells the SP to clear this item's persisted draft (used when the
 // godown erases a qty mid-edit). On the FINAL dispatch endpoint the BE
 // still validates non-null; the shared type keeps both paths honest.
-export type DispatchItem = { id: string; dispatchedQty: number | null }
+export type DispatchItem = {
+  id: string
+  dispatchedQty: number | null
+  /** 25-Jul-2026: partial-weight dispatch (grams). Mutually exclusive with
+   *  dispatchedQty per line (BE validator + DB CHECK enforce). Only for
+   *  weight_unit ∈ ('g','kg'). Omit or null for packet-count mode. */
+  dispatchedWeightG?: number | null
+}
 
 /** Shop's confirm-receipt payload. Items list is OPTIONAL — omit / empty
  *  for the one-click "as-dispatched" confirm. Populate to record a
  *  discrepancy (short or over-count). Only lines that differ from the
  *  dispatched qty need to be in the list. */
-export type ReceiveItem = { id: string; receivedQty: number }
+export type ReceiveItem = {
+  id: string
+  receivedQty: number | null
+  /** 25-Jul-2026: partial-weight receive correction (grams). Mutually
+   *  exclusive with receivedQty per line. Only set when the dispatch
+   *  was partial (dispatchedWeightG set) and the shop is reporting a
+   *  transit-loss delta on it. */
+  receivedWeightG?: number | null
+}
 export type ReceiveRequest = { items?: ReceiveItem[] }
 export type DispatchRequest = { items: DispatchItem[] }
 

@@ -79,6 +79,10 @@ export default function ShopRequestDetail() {
   // qty the shop actually counted. Absence = "use dispatched as-is".
   // Presence with a diff = discrepancy (short if < dispatched, over if >).
   const [receivedQtys, setReceivedQtys] = useState<Map<string, number>>(new Map())
+  // 25-Jul-2026: partial-weight receive companion. Only relevant for lines
+  // where the godown dispatched via dispatchedWeightG (partial). Raw string
+  // so mid-typing "3." doesn't lose the trailing dot; payload parses.
+  const [receivedWeightsG, setReceivedWeightsG] = useState<Map<string, string>>(new Map())
 
   // Split into out-of-stock (dispatched_qty === 0) vs the rest. Godown
   // marks a line 0 when they were out of stock at dispatch time — those
@@ -212,12 +216,30 @@ export default function ShopRequestDetail() {
     // are sent. Everything else stays as "no discrepancy noted" on the
     // DB side (received_qty column stays NULL). Empty diff-list = the
     // one-click "as-dispatched" fast path.
-    const diffItems = (request.items ?? [])
+    //
+    // 25-Jul-2026: partial-weight receive rows are captured separately.
+    // A line reports EITHER a received_qty (packet-mode dispatch) OR a
+    // received_weight_g (partial dispatch) — never both, matching the
+    // dispatch side + DB CHECK.
+    const packetDiffs = (request.items ?? [])
+      .filter(it => it.dispatchedWeightG == null)
       .filter(it => {
         const typed = receivedQtys.get(it.id)
         return typed != null && typed !== (it.dispatchedQty ?? 0)
       })
-      .map(it => ({ id: it.id, receivedQty: receivedQtys.get(it.id)! }))
+      .map(it => ({ id: it.id, receivedQty: receivedQtys.get(it.id)!, receivedWeightG: null as number | null }))
+    const weightDiffs = (request.items ?? [])
+      .filter(it => it.dispatchedWeightG != null)
+      .map(it => {
+        const raw = receivedWeightsG.get(it.id) ?? ''
+        const parsed = raw.trim() === '' ? null : parseFloat(raw)
+        return { it, parsed }
+      })
+      .filter(({ it, parsed }) =>
+        parsed != null && Number.isFinite(parsed) && parsed > 0 && parsed !== (it.dispatchedWeightG ?? 0)
+      )
+      .map(({ it, parsed }) => ({ id: it.id, receivedQty: null as number | null, receivedWeightG: parsed! }))
+    const diffItems = [...packetDiffs, ...weightDiffs]
     const payload = diffItems.length > 0 ? { items: diffItems } : undefined
     try {
       await receiveMutation.mutateAsync({ id: request.id, req: payload })
@@ -228,6 +250,7 @@ export default function ShopRequestDetail() {
       // catches up — Pending sidesteps that entirely.
       setReceiveOpen(false)
       setReceivedQtys(new Map())
+      setReceivedWeightsG(new Map())
       navigate('/shop/requests?preset=pending')
     } catch {
       setReceiveOpen(false)
@@ -345,7 +368,13 @@ export default function ShopRequestDetail() {
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
+                        <DispatchedCell
+                          qty={item.dispatchedQty}
+                          requested={item.requestedQty}
+                          received={item.receivedQty}
+                          dispatchedWeightG={item.dispatchedWeightG}
+                          receivedWeightG={item.receivedWeightG}
+                        />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>
@@ -943,10 +972,14 @@ export default function ShopRequestDetail() {
               <>
                 <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
                   {orderedItems.map(it => {
+                    // 25-Jul-2026: partial-weight branch — dispatched via
+                    // dispatchedWeightG instead of dispatched_qty. Render a
+                    // grams input; short/over comparison happens in grams.
+                    const isPartial = it.dispatchedWeightG != null && it.dispatchedWeightG > 0
                     const disp    = it.dispatchedQty ?? 0
                     const typed   = receivedQtys.get(it.id) ?? disp
-                    const short   = typed < disp
-                    const over    = typed > disp
+                    const short   = !isPartial && typed < disp
+                    const over    = !isPartial && typed > disp
                     const rowBg   = short ? '#FFEBEE' : over ? '#FFE0B2' : 'transparent'
                     return (
                       <Box
@@ -967,10 +1000,20 @@ export default function ShopRequestDetail() {
                             {it.productName}
                           </Box>
                           <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                            {it.productCode} · dispatched {disp}
+                            {it.productCode}
+                            {isPartial
+                              ? ` · dispatched ${it.dispatchedWeightG} g (partial)`
+                              : ` · dispatched ${disp}`}
                             {it.weightValue != null ? ` · ${it.weightValue} ${it.weightUnit ?? ''}` : ''}
                           </Box>
                         </Box>
+                        {isPartial && (
+                          <Chip
+                            label="Partial"
+                            size="small"
+                            sx={{ height: 20, fontSize: 10, fontWeight: 700, bgcolor: '#FFE0B2', color: '#7C4A00', border: '1px solid #E8A758' }}
+                          />
+                        )}
                         {short && (
                           <Chip
                             label={`short ${disp - typed}`}
@@ -985,6 +1028,40 @@ export default function ShopRequestDetail() {
                             sx={{ height: 20, fontSize: 10, fontWeight: 700, bgcolor: '#E65100', color: '#FFF' }}
                           />
                         )}
+                        {isPartial ? (
+                          <TextField
+                            type="text"
+                            size="small"
+                            placeholder={String(it.dispatchedWeightG ?? '')}
+                            value={receivedWeightsG.get(it.id) ?? ''}
+                            onChange={e => {
+                              const v = e.target.value
+                              if (v === '' || /^\d+(\.\d*)?$/.test(v)) {
+                                setReceivedWeightsG(prev => { const n = new Map(prev); n.set(it.id, v); return n })
+                              }
+                            }}
+                            onKeyDown={e => { if (['e', 'E', '+', '-', ','].includes(e.key)) e.preventDefault() }}
+                            onFocus={e => (e.target as HTMLInputElement).select()}
+                            slotProps={{
+                              htmlInput: {
+                                inputMode: 'decimal',
+                                style: { textAlign: 'center', padding: '4px 8px' },
+                              },
+                              input: {
+                                endAdornment: (
+                                  <Box component="span" sx={{ ml: 0.5, fontSize: 10, fontWeight: 700, color: '#7C4A00' }}>g</Box>
+                                ),
+                              },
+                            }}
+                            sx={{
+                              width: 100,
+                              '& .MuiOutlinedInput-root': {
+                                bgcolor: '#FFF3B8',
+                                '& fieldset': { borderColor: '#C28A00', borderWidth: 1.5 },
+                              },
+                            }}
+                          />
+                        ) : (
                         <TextField
                           type="text"
                           size="small"
@@ -1050,6 +1127,7 @@ export default function ShopRequestDetail() {
                             },
                           }}
                         />
+                        )}
                       </Box>
                     )
                   })}

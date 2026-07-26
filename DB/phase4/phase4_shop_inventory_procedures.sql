@@ -228,16 +228,25 @@ DECLARE
   v_row             record;
   v_purchase_price  numeric(10,2);
 BEGIN
+  -- 25-Jul-2026: sums effective received pack qty (packet-count OR
+  -- partial-weight fractional) so opening balances include partial
+  -- dispatches too. Fractional numeric flows fine into shop_inventory.on_hand.
   FOR v_row IN
     SELECT
       sr.shop_id     AS s_id,
       sri.product_id AS p_id,
-      SUM(COALESCE(sri.received_qty, 0))::numeric AS total_received
+      SUM(COALESCE(
+        fn_effective_pack_qty(sri.received_qty, sri.received_weight_g, sri.weight_value, sri.weight_unit),
+        0
+      ))::numeric AS total_received
     FROM stock_request_items sri
     INNER JOIN stock_requests sr ON sr.id = sri.request_id
     WHERE sr.status IN ('Received', 'Dispatched')
       AND (p_shop_id IS NULL OR sr.shop_id = p_shop_id)
-      AND COALESCE(sri.received_qty, 0) > 0
+      AND COALESCE(
+            fn_effective_pack_qty(sri.received_qty, sri.received_weight_g, sri.weight_value, sri.weight_unit),
+            0
+          ) > 0
     GROUP BY sr.shop_id, sri.product_id
   LOOP
     IF EXISTS (

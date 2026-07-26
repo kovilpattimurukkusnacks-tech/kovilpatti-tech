@@ -66,6 +66,85 @@ $$;
 
 
 -- ============================================================
+-- 1a. LINE-LEVEL EFFECTIVE PACK-QTY HELPER
+-- ============================================================
+--   Converts a (qty, weight_g) pair into an "effective packet-equivalent
+--   count" — used across every rollup so partial-weight dispatch rows
+--   contribute proportionally to sums, avg costs, and value math.
+--
+--   Priority per leg:
+--     • weight_g populated (partial mode) → weight_g / pack_g
+--     • qty populated (packet mode)       → qty::numeric
+--     • neither                           → NULL (caller COALESCEs to
+--                                           the next leg down)
+--
+--   pack_g = weight_value × (1000 if unit='kg' else 1). Non-weight products
+--   (unit not g/kg) can only reach the qty branch — partial mode is UI-
+--   gated to weight_unit IN ('g','kg') on the FE, and the XOR CHECK on
+--   stock_request_items guarantees at most one field is set per line.
+--
+--   Used by every dispatch/receive/get/accounts SP below.
+-- ============================================================
+CREATE OR REPLACE FUNCTION fn_effective_pack_qty(
+  p_qty          int,
+  p_weight_g     numeric,
+  p_weight_value numeric,
+  p_weight_unit  varchar
+)
+RETURNS numeric
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT CASE
+    WHEN p_weight_g IS NOT NULL AND p_weight_value IS NOT NULL AND p_weight_value > 0 THEN
+      p_weight_g / (p_weight_value * CASE p_weight_unit WHEN 'kg' THEN 1000 ELSE 1 END)
+    WHEN p_qty IS NOT NULL THEN
+      p_qty::numeric
+    ELSE
+      NULL
+  END;
+$$;
+
+-- Effective Order-side qty for one line — received leg wins over
+-- dispatched leg, falls back to requested. Used everywhere an Order-line
+-- rollup needs the "what actually landed with the shop" number.
+CREATE OR REPLACE FUNCTION fn_order_effective_qty(
+  p_received_qty        int,
+  p_received_weight_g   numeric,
+  p_dispatched_qty      int,
+  p_dispatched_weight_g numeric,
+  p_requested_qty       int,
+  p_weight_value        numeric,
+  p_weight_unit         varchar
+)
+RETURNS numeric
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT COALESCE(
+    fn_effective_pack_qty(p_received_qty,   p_received_weight_g,   p_weight_value, p_weight_unit),
+    fn_effective_pack_qty(p_dispatched_qty, p_dispatched_weight_g, p_weight_value, p_weight_unit),
+    p_requested_qty::numeric
+  );
+$$;
+
+-- Effective Return-side qty for one line — return_weight_g partial (if
+-- present) beats dispatched_qty (which stores the accepted packet count
+-- on Returns), falls back to requested. Fixes an existing gap: partial-
+-- weight Returns (02-Jul-2026 feature) were never rolled into Accounts.
+CREATE OR REPLACE FUNCTION fn_return_effective_qty(
+  p_dispatched_qty  int,
+  p_return_weight_g numeric,
+  p_requested_qty   int,
+  p_weight_value    numeric,
+  p_weight_unit     varchar
+)
+RETURNS numeric
+LANGUAGE sql IMMUTABLE AS $$
+  SELECT COALESCE(
+    fn_effective_pack_qty(p_dispatched_qty, p_return_weight_g, p_weight_value, p_weight_unit),
+    p_requested_qty::numeric
+  );
+$$;
+
+
+-- ============================================================
 -- 2. SETTINGS
 -- ============================================================
 
@@ -250,18 +329,38 @@ LANGUAGE sql STABLE AS $$
          -- NULL until any item on this request has been dispatched.
          -- Explicit casts pin the column type so Npgsql doesn't see a NULL
          -- with DataTypeName '-' (causes InvalidCastException on the BE).
-         (SELECT SUM(it.dispatched_qty)::int
+         -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
+         -- contribute their fractional-equivalent, rounded to int for
+         -- BE-side backward compat (audit table + entity still int-typed).
+         (SELECT ROUND(COALESCE(SUM(
+            fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
+          ), 0))::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          -- Signed adjustment total. Σ(received − dispatched) across items
          -- with received_qty set. NULL when no items reported discrepancy;
          -- 0 when reported but net-zero; ±N when short (−) or over (+).
          -- 03-Jul-2026.
-         (SELECT SUM(it.received_qty - COALESCE(it.dispatched_qty, 0))::int
+         -- 25-Jul-2026: adjustment aggregate honours partial-weight rows —
+         -- effective received-pack minus effective dispatched-pack, per row
+         -- where the shop actually reported (qty OR weight). Rounded int
+         -- (audit column stays int-typed).
+         (SELECT ROUND(SUM(
+            COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), 0)
+          - COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
+          ))::int
           FROM stock_request_items it
-          WHERE it.request_id = r.id AND it.received_qty IS NOT NULL) AS total_adjustment_qty,
+          WHERE it.request_id = r.id
+            AND (it.received_qty IS NOT NULL OR it.received_weight_g IS NOT NULL)) AS total_adjustment_qty,
          r.total_amount,
-         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
+         -- 25-Jul-2026: uses effective-pack helper so partial-weight rows
+         -- contribute their fractional value ((weight_g/pack_g) × price).
+         (SELECT SUM(
+            COALESCE(
+              fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit),
+              0
+            ) * it.unit_price
+          )::numeric(12,2)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
@@ -522,11 +621,23 @@ LANGUAGE sql STABLE AS $$
          r.status::varchar       AS status,
          r.request_type::varchar AS request_type,
          r.total_items, r.total_qty,
-         (SELECT SUM(it.dispatched_qty)::int
+         -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
+         -- contribute their fractional-equivalent, rounded to int for
+         -- BE-side backward compat (audit table + entity still int-typed).
+         (SELECT ROUND(COALESCE(SUM(
+            fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
+          ), 0))::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          r.total_amount,
-         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
+         -- 25-Jul-2026: uses effective-pack helper so partial-weight rows
+         -- contribute their fractional value ((weight_g/pack_g) × price).
+         (SELECT SUM(
+            COALESCE(
+              fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit),
+              0
+            ) * it.unit_price
+          )::numeric(12,2)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
@@ -694,16 +805,36 @@ LANGUAGE sql STABLE AS $$
          -- Explicit ::int / ::numeric casts to keep the column types pinned
          -- even when SUM returns NULL (no dispatched items). Without these,
          -- Npgsql throws InvalidCastException reading DataTypeName '-'.
-         (SELECT SUM(it.dispatched_qty)::int
+         -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
+         -- contribute their fractional-equivalent, rounded to int for
+         -- BE-side backward compat (audit table + entity still int-typed).
+         (SELECT ROUND(COALESCE(SUM(
+            fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
+          ), 0))::int
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          -- Signed adjustment aggregate (03-Jul-2026). Matches
          -- fn_request_list_paged so both list + detail expose it.
-         (SELECT SUM(it.received_qty - COALESCE(it.dispatched_qty, 0))::int
+         -- 25-Jul-2026: adjustment aggregate honours partial-weight rows —
+         -- effective received-pack minus effective dispatched-pack, per row
+         -- where the shop actually reported (qty OR weight). Rounded int
+         -- (audit column stays int-typed).
+         (SELECT ROUND(SUM(
+            COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), 0)
+          - COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
+          ))::int
           FROM stock_request_items it
-          WHERE it.request_id = r.id AND it.received_qty IS NOT NULL) AS total_adjustment_qty,
+          WHERE it.request_id = r.id
+            AND (it.received_qty IS NOT NULL OR it.received_weight_g IS NOT NULL)) AS total_adjustment_qty,
          r.total_amount,
-         (SELECT SUM(it.dispatched_qty * it.unit_price)::numeric(12,2)
+         -- 25-Jul-2026: uses effective-pack helper so partial-weight rows
+         -- contribute their fractional value ((weight_g/pack_g) × price).
+         (SELECT SUM(
+            COALESCE(
+              fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit),
+              0
+            ) * it.unit_price
+          )::numeric(12,2)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_amount,
          r.notes, r.rejection_reason, r.editable_until,
@@ -743,10 +874,19 @@ LANGUAGE sql STABLE AS $$
                -- Return-only partial-weight claim in grams (02-Jul-2026).
                -- Null on Orders + full-pack Returns.
                'return_weight_g', it.return_weight_g,
+               -- 25-Jul-2026: partial-weight dispatch companions. Non-NULL
+               -- means the godown shipped a partial pack instead of full
+               -- packets (dispatched_weight_g), and/or the shop's receive-
+               -- time correction of that partial (received_weight_g). XOR
+               -- with the qty fields — never both on the same leg.
+               'dispatched_weight_g', it.dispatched_weight_g,
+               'received_weight_g',   it.received_weight_g,
                -- Inventory user's WIP dispatch qty (NULL when no draft saved).
                -- Used by the dispatch screen to pre-fill the qty inputs so a
                -- saved draft survives navigating away.
                'draft_dispatched_qty', it.draft_dispatched_qty,
+               -- 25-Jul-2026: partial-weight companion to draft_dispatched_qty.
+               'draft_dispatched_weight_g', it.draft_dispatched_weight_g,
                'unit_price',     it.unit_price,
                'subtotal',       it.subtotal,
                -- 'Shop' | 'Inventory' — flags items the godown appended
@@ -1490,18 +1630,24 @@ BEGIN
 
   IF p_dispatched_items IS NOT NULL THEN
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_dispatched_items) LOOP
+      -- 25-Jul-2026: dispatched_qty and dispatched_weight_g are mutually
+      -- exclusive per line. Read whichever is present; the CHECK constraint
+      -- on the table guarantees we can't accidentally set both. Non-partial
+      -- callers omit dispatched_weight_g entirely (defaults to NULL).
       UPDATE stock_request_items
-      SET dispatched_qty = (v_item->>'dispatched_qty')::int
+      SET dispatched_qty      = (v_item->>'dispatched_qty')::int,
+          dispatched_weight_g = (v_item->>'dispatched_weight_g')::numeric
       WHERE id = (v_item->>'id')::uuid
         AND request_id = p_id;   -- safety: only touch items belonging to this request
     END LOOP;
   END IF;
 
-  -- Dispatch-draft qtys are now stale — clear them on the whole request so
-  -- nothing reads a half-saved draft after the dispatch is finalised. Same
-  -- goes for draft_name: it's a label on a live draft only.
+  -- Dispatch-draft qtys/weights are now stale — clear them on the whole
+  -- request so nothing reads a half-saved draft after the dispatch is
+  -- finalised. Same goes for draft_name: it's a label on a live draft only.
   UPDATE stock_request_items
-  SET draft_dispatched_qty = NULL
+  SET draft_dispatched_qty      = NULL,
+      draft_dispatched_weight_g = NULL
   WHERE request_id = p_id;
 
   UPDATE stock_requests
@@ -1538,7 +1684,8 @@ BEGIN
   END IF;
 
   UPDATE stock_request_items
-  SET draft_dispatched_qty = NULL
+  SET draft_dispatched_qty      = NULL,
+      draft_dispatched_weight_g = NULL
   WHERE request_id = p_id;
 
   -- Discarding the draft also drops the godown's free-text label AND the
@@ -1583,8 +1730,12 @@ BEGIN
 
   IF p_items IS NOT NULL THEN
     FOR v_item IN SELECT * FROM jsonb_array_elements(p_items) LOOP
+      -- 25-Jul-2026: draft mirrors the finalised-dispatch XOR shape. The
+      -- FE posts EITHER dispatched_qty (packet mode) OR
+      -- dispatched_weight_g (partial mode) per line; the other stays NULL.
       UPDATE stock_request_items
-      SET draft_dispatched_qty = (v_item->>'dispatched_qty')::int
+      SET draft_dispatched_qty      = (v_item->>'dispatched_qty')::int,
+          draft_dispatched_weight_g = (v_item->>'dispatched_weight_g')::numeric
       WHERE id = (v_item->>'id')::uuid
         AND request_id = p_id;
     END LOOP;
@@ -1700,73 +1851,98 @@ BEGIN
     AND is_deleted = false;
   v_flipped := FOUND;
 
-  -- Per-item received_qty write. Only fires when the shop actually sent
-  -- an items payload (partial receipt with discrepancies). Guarded by
-  -- v_flipped so a no-op receive attempt on a non-Dispatched row can't
-  -- silently mutate items.
+  -- Per-item received_qty / received_weight_g write. Only fires when the
+  -- shop actually sent an items payload (partial receipt with discrepancies).
+  -- Guarded by v_flipped so a no-op receive attempt on a non-Dispatched
+  -- row can't silently mutate items.
+  --
+  -- 25-Jul-2026: received_weight_g companion for partial dispatches. Shop
+  -- got 3.5 kg but counted only 3.4 kg → shop enters received_weight_g=3400.
+  -- Exactly one of {received_qty, received_weight_g} is expected per item
+  -- (XOR CHECK on the table enforces).
   IF v_flipped AND p_items IS NOT NULL AND jsonb_typeof(p_items) = 'array' THEN
     UPDATE stock_request_items it
-    SET    received_qty = (e.value->>'received_qty')::int
+    SET    received_qty      = (e.value->>'received_qty')::int,
+           received_weight_g = (e.value->>'received_weight_g')::numeric
     FROM   jsonb_array_elements(p_items) AS e(value)
     WHERE  it.id = (e.value->>'id')::uuid
       AND  it.request_id = p_id
-      AND  (e.value->>'received_qty') IS NOT NULL;
+      AND  ((e.value->>'received_qty') IS NOT NULL
+            OR (e.value->>'received_weight_g') IS NOT NULL);
 
-    -- Audit trail (03-Jul-2026): mirror admin's post-completion qty edits
-    -- by writing a row to stock_request_qty_audits whenever a shop-
-    -- reported receipt qty differs from what the godown dispatched. The
-    -- Adjustments Log on the accounts screen then surfaces receipt
-    -- discrepancies alongside admin corrections in one place. old_qty =
-    -- dispatched (what godown sent), new_qty = received (what shop
-    -- counted). reason distinguishes shop vs admin edits.
+    -- Audit trail (03-Jul-2026, expanded 25-Jul-2026 for partial-weight):
+    -- one row per shop-reported mismatch. old_qty = effective dispatched
+    -- pack qty (rounded int — audit table schema pre-dates partial mode),
+    -- new_qty = effective received pack qty. Accounts SPs use the numeric
+    -- formula directly for MRP math; this table is display-only.
     INSERT INTO stock_request_qty_audits (
       request_item_id, request_id, old_qty, new_qty, reason, edited_by
     )
     SELECT it.id,
            p_id,
-           it.dispatched_qty,
-           it.received_qty,
+           ROUND(COALESCE(
+             fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit),
+             0
+           ))::int,
+           ROUND(COALESCE(
+             fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit),
+             0
+           ))::int,
            CASE
-             WHEN it.received_qty < COALESCE(it.dispatched_qty, 0) THEN
-               'Shop confirm-receipt short: dispatched '
-               || COALESCE(it.dispatched_qty, 0) || ', received ' || it.received_qty
-             WHEN it.received_qty > COALESCE(it.dispatched_qty, 0) THEN
-               'Shop confirm-receipt over: dispatched '
-               || COALESCE(it.dispatched_qty, 0) || ', received ' || it.received_qty
-             ELSE
-               'Shop confirm-receipt'
+             WHEN COALESCE(fn_effective_pack_qty(it.received_qty, it.received_weight_g, it.weight_value, it.weight_unit), 0)
+                < COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
+             THEN 'Shop confirm-receipt short'
+             WHEN COALESCE(fn_effective_pack_qty(it.received_qty, it.received_weight_g, it.weight_value, it.weight_unit), 0)
+                > COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
+             THEN 'Shop confirm-receipt over'
+             ELSE 'Shop confirm-receipt'
            END,
            p_user_id
     FROM   stock_request_items it
     JOIN   jsonb_array_elements(p_items) AS e(value)
            ON it.id = (e.value->>'id')::uuid
     WHERE  it.request_id = p_id
-      AND  (e.value->>'received_qty') IS NOT NULL
-      AND  it.received_qty IS DISTINCT FROM it.dispatched_qty;
+      AND  ((e.value->>'received_qty') IS NOT NULL
+            OR (e.value->>'received_weight_g') IS NOT NULL)
+      -- Only audit when the received leg actually differs from dispatched
+      -- (effective-pack terms). Prevents a "no change" confirm from
+      -- spamming the audit log.
+      AND  COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), -1)
+        IS DISTINCT FROM
+           COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), -1);
   END IF;
 
   -- Phase 4 wiring (10-Jul-2026): every confirmed receipt updates the
   -- shop's on-hand ledger. Only fires on a real Dispatched→Received
   -- flip (v_flipped) — a duplicate call after the flip finds status
   -- != 'Dispatched' → v_flipped=false → skips this block, so we can't
-  -- double-post inventory movements. Qty falls back to dispatched_qty
-  -- when the shop didn't send an items payload (silent full-receipt).
-  -- Rows where the shop reported 0 received are skipped — would fail
+  -- double-post inventory movements. Qty comes from the effective-pack
+  -- helper so partial-weight dispatch/receive contributes its fractional
+  -- packet-equivalent to shop_inventory (numeric qty_delta accepts it).
+  -- Rows where effective qty is 0 or NULL are skipped — would fail
   -- shop_inventory_movements' qty_delta <> 0 constraint.
   -- See fn_shop_inventory_apply_movement (phase4) for row-locking,
   -- avg_cost recompute, and negative-guard details.
   IF v_flipped THEN
     FOR v_receipt IN
       SELECT sri.product_id,
-             COALESCE(sri.received_qty, sri.dispatched_qty, 0)::numeric AS qty,
-             COALESCE(p.purchase_price, 0)::numeric                     AS unit_cost,
+             COALESCE(
+               fn_effective_pack_qty(sri.received_qty,   sri.received_weight_g,   sri.weight_value, sri.weight_unit),
+               fn_effective_pack_qty(sri.dispatched_qty, sri.dispatched_weight_g, sri.weight_value, sri.weight_unit),
+               0
+             )::numeric AS qty,
+             COALESCE(p.purchase_price, 0)::numeric AS unit_cost,
              sr.shop_id,
              sr.code AS request_code
       FROM stock_request_items sri
       INNER JOIN stock_requests sr ON sr.id = sri.request_id
       INNER JOIN products       p  ON p.id = sri.product_id
       WHERE sri.request_id = p_id
-        AND COALESCE(sri.received_qty, sri.dispatched_qty, 0) > 0
+        AND COALESCE(
+              fn_effective_pack_qty(sri.received_qty,   sri.received_weight_g,   sri.weight_value, sri.weight_unit),
+              fn_effective_pack_qty(sri.dispatched_qty, sri.dispatched_weight_g, sri.weight_value, sri.weight_unit),
+              0
+            ) > 0
     LOOP
       PERFORM fn_shop_inventory_apply_movement(
         v_receipt.shop_id,
@@ -2050,8 +2226,14 @@ BEGIN
     RETURN true;
   END IF;
 
+  -- 25-Jul-2026: admin post-completion edits stay packet-count-only —
+  -- explicitly clear any partial-weight dispatch that was on the row so
+  -- the XOR CHECK (chk_dispatched_qty_xor_weight) doesn't fail. Semantics:
+  -- admin's edit REPLACES whatever the godown originally recorded, in
+  -- packet-count terms.
   UPDATE stock_request_items
-  SET dispatched_qty = p_new_qty
+  SET dispatched_qty      = p_new_qty,
+      dispatched_weight_g = NULL
   WHERE id = p_item_id;
 
   INSERT INTO stock_request_qty_audits

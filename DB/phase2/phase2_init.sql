@@ -294,10 +294,24 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
   -- Only surfaces on Return-type rows for products with weight_unit
   -- IN ('g', 'kg'); other units keep the units-only requested_qty flow.
   return_weight_g numeric(10,3),
+  -- Order-side partial-weight dispatch in grams (25-Jul-2026). Non-NULL
+  -- means the godown shipped a partial pack instead of full packets —
+  -- e.g. 3 full 1 kg packets + one 500 g open packet = 3500 g total.
+  -- Value calc at rollup: (dispatched_weight_g / pack_g) × unit_price.
+  -- Mutually exclusive with dispatched_qty per line (CHECK below).
+  -- Only meaningful when weight_unit IN ('g','kg').
+  dispatched_weight_g numeric(10,3),
+  -- Shop's receive-time correction of the partial dispatch (25-Jul-2026).
+  -- NULL when the partial arrived intact. Mirror of received_qty for the
+  -- packet-count leg — mutually exclusive with received_qty per line.
+  received_weight_g   numeric(10,3),
   -- Inventory user's saved-but-not-finalised dispatch quantity (the WIP
   -- "Save as Draft" on the dispatch screen). NULL when no draft is in
   -- flight. Cleared by fn_request_dispatch when the dispatch is finalised.
   draft_dispatched_qty int,
+  -- Partial-weight companion to draft_dispatched_qty (25-Jul-2026). WIP
+  -- weight_g the godown user typed into the Save-as-Draft dispatch form.
+  draft_dispatched_weight_g numeric(10,3),
   unit_price      numeric(10,2) NOT NULL,                               -- snapshot of products.mrp at submit
   -- Snapshot of products.purchase_price at insert (12-Jul-2026, cost basis).
   -- NULL when the product had no purchase price — accounts math COALESCEs
@@ -336,7 +350,25 @@ CREATE TABLE IF NOT EXISTS stock_request_items (
   CONSTRAINT chk_received_qty_bounds
     CHECK (received_qty IS NULL OR received_qty >= 0),
   CONSTRAINT chk_return_weight_g_bounds
-    CHECK (return_weight_g IS NULL OR return_weight_g > 0)
+    CHECK (return_weight_g IS NULL OR return_weight_g > 0),
+  -- 25-Jul-2026: partial-weight dispatch bounds. Positive-only when set
+  -- (zero-weight dispatch is meaningless — dispatched_qty=0 is the
+  -- explicit "not dispatched" signal instead, per client decision).
+  CONSTRAINT chk_dispatched_weight_g_bounds
+    CHECK (dispatched_weight_g IS NULL OR dispatched_weight_g > 0),
+  CONSTRAINT chk_received_weight_g_bounds
+    CHECK (received_weight_g IS NULL OR received_weight_g > 0),
+  CONSTRAINT chk_draft_dispatched_weight_g_bounds
+    CHECK (draft_dispatched_weight_g IS NULL OR draft_dispatched_weight_g > 0),
+  -- 25-Jul-2026: per line, dispatched_qty XOR dispatched_weight_g — the
+  -- godown picks one representation, never both. Same for received and
+  -- draft variants so the whole lifecycle honours the same rule.
+  CONSTRAINT chk_dispatched_qty_xor_weight
+    CHECK (dispatched_qty IS NULL OR dispatched_weight_g IS NULL),
+  CONSTRAINT chk_received_qty_xor_weight
+    CHECK (received_qty IS NULL OR received_weight_g IS NULL),
+  CONSTRAINT chk_draft_dispatched_qty_xor_weight
+    CHECK (draft_dispatched_qty IS NULL OR draft_dispatched_weight_g IS NULL)
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_request_items_request ON stock_request_items(request_id);

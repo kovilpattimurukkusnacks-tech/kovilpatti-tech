@@ -306,7 +306,13 @@ export default function AdminRequestDetail() {
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 90 }}>{item.requestedQty}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 100 }}>
-                        <DispatchedCell qty={item.dispatchedQty} requested={item.requestedQty} received={item.receivedQty} />
+                        <DispatchedCell
+                          qty={item.dispatchedQty}
+                          requested={item.requestedQty}
+                          received={item.receivedQty}
+                          dispatchedWeightG={item.dispatchedWeightG}
+                          receivedWeightG={item.receivedWeightG}
+                        />
                       </TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 110 }}>{formatINR(item.unitPrice)}</TableCell>
                       <TableCell align="right" sx={{ py: 1.25, width: 120, fontWeight: 600, color: totalColor, whiteSpace: 'nowrap' }}>

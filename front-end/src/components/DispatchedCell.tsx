@@ -1,4 +1,5 @@
 import { Box, Chip } from '@mui/material'
+import { formatWeightG } from '../utils/formatDispatched'
 
 /**
  * Renders a dispatched-qty cell consistently across request views.
@@ -11,10 +12,14 @@ import { Box, Chip } from '@mui/material'
  *                                                  29-Jun-2026 client req,
  *                                                  not an error but worth
  *                                                  surfacing)
+ *   • dispatchedWeightG set  → partial-weight dispatch (25-Jul-2026); shows
+ *                              "3.5 kg · Partial" chip instead of the qty
+ *                              comparison logic above. Received leg handled
+ *                              via receivedWeightG when present.
  *
  * Used in detail items tables and list grids' Dispatched columns.
  */
-export function DispatchedCell({ qty, requested, received }: {
+export function DispatchedCell({ qty, requested, received, dispatchedWeightG, receivedWeightG }: {
   qty: number | null
   requested: number
   /** Shop's reported qty at confirm-receipt (02-Jul-2026). When set AND
@@ -22,7 +27,38 @@ export function DispatchedCell({ qty, requested, received }: {
    *  stacked so the shop-reported number is the eye-catch. Null =
    *  no discrepancy → cell falls back to just showing dispatched. */
   received?: number | null
+  /** 25-Jul-2026: Order-side partial-weight dispatch. When set, this cell
+   *  ignores qty/requested comparison and renders the weight instead. */
+  dispatchedWeightG?: number | null
+  /** 25-Jul-2026: shop's receive-time correction of a partial dispatch. */
+  receivedWeightG?: number | null
 }) {
+  // 25-Jul-2026: partial-weight dispatch takes precedence over the
+  // packet-count code path below. The whole comparison logic (short /
+  // over / OOS) doesn't apply — a partial ship isn't "short" of the
+  // shop's requested packets, it's a different fulfilment path.
+  if (dispatchedWeightG != null && dispatchedWeightG > 0) {
+    const short = receivedWeightG != null && receivedWeightG < dispatchedWeightG
+    const over  = receivedWeightG != null && receivedWeightG > dispatchedWeightG
+    const displayG = receivedWeightG ?? dispatchedWeightG
+    const color = short ? '#C62828' : over ? '#E65100' : '#1F1F1F'
+    return (
+      <Box sx={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
+        <Box sx={{ fontSize: 12, color, fontWeight: 700 }}>
+          {formatWeightG(displayG)}
+        </Box>
+        <Box sx={{ fontSize: 9, fontWeight: 700, letterSpacing: 0.4, textTransform: 'uppercase', color: '#7C4A00' }}>
+          Partial
+        </Box>
+        {receivedWeightG != null && receivedWeightG !== dispatchedWeightG && (
+          <Box sx={{ fontSize: 10, color: '#1F1F1F77', fontWeight: 500 }}>
+            dispatched {formatWeightG(dispatchedWeightG)}
+          </Box>
+        )}
+      </Box>
+    )
+  }
+
   if (qty == null) {
     return <span className="text-[#1F1F1F]/40">—</span>
   }
