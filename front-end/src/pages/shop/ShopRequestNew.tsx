@@ -1001,6 +1001,37 @@ export default function ShopRequestNew() {
   // can flip any g/kg cart line to "Partial (weight)" mode and enter
   // grams to claim (damage claim; no physical goods movement).
   const [returnConfigOpen, setReturnConfigOpen] = useState(false)
+  // 25-Jul-2026: unified decimal return-qty input per line (replaces the
+  // earlier Full/Partial toggle). Raw string per product-id so mid-typing
+  // "2." → "2.5" preserves the trailing dot. Integer → full-pack; decimal
+  // on a g/kg SKU → BE stores as return_weight_g = value × pack_g and
+  // credits the fractional pack MRP.
+  const [returnInputs, setReturnInputs] = useState<Map<string, string>>(new Map())
+
+  // Seed raw inputs when the dialog OPENS — not on every cart change.
+  //
+  // 25-Jul-2026: earlier version depended on `cart` too, which re-ran the
+  // effect on every keystroke (since onChange writes back to cart) and
+  // wiped mid-typing values like "2." → "2" (parseFloat drops the dot,
+  // cart falls to integer mode, effect re-seeds returnInputs from cart
+  // as plain "2"). Next digit then landed on "2", producing "25" instead
+  // of "2.5". Depending only on `returnConfigOpen` seeds once per open
+  // and lets the user's typed text remain the source of truth thereafter.
+  useEffect(() => {
+    if (!returnConfigOpen) return
+    const map = new Map<string, string>()
+    for (const line of cart.values()) {
+      const unit  = line.product.weightUnit ?? ''
+      const packG = (unit === 'g' || unit === 'kg') ? Number(line.product.weightValue ?? 0) * (unit === 'kg' ? 1000 : 1) : 0
+      if (line.returnWeightG != null && packG > 0) {
+        map.set(line.product.id, String(line.returnWeightG / packG))
+      } else {
+        map.set(line.product.id, String(line.qty))
+      }
+    }
+    setReturnInputs(map)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [returnConfigOpen])
 
   const handleSubmitAsReturn = async () => {
     setLocalErr(null)
@@ -1909,8 +1940,8 @@ export default function ShopRequestNew() {
         </DialogTitle>
         <DialogContent dividers>
           <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 1.5 }}>
-            Full pack returns credit the whole MRP. For a partial damage claim on a g/kg product,
-            switch to <strong>Partial</strong> and enter the grams. Godown will review before crediting.
+            Enter how many packs to return per line. Whole numbers (e.g. <strong>3</strong>) return full packs.
+            On a g/kg product, a decimal (e.g. <strong>2.5</strong>) claims a partial pack; godown reviews before crediting.
           </Box>
           <Box sx={{ maxHeight: 380, overflowY: 'auto', border: '1px solid rgba(31,31,31,0.15)', borderRadius: 1 }}>
             {Array.from(cart.values()).map(line => {
@@ -1918,11 +1949,11 @@ export default function ShopRequestNew() {
               const unit = p.weightUnit ?? ''
               const isWeightBased = (unit === 'g' || unit === 'kg') && (p.weightValue ?? 0) > 0
               const packG = isWeightBased ? Number(p.weightValue) * (unit === 'kg' ? 1000 : 1) : 0
-              const maxG  = packG * line.qty
-              const isPartial = line.returnWeightG != null
-              const credit = isPartial && packG > 0
-                ? (line.returnWeightG! / packG) * Number(p.mrp)
-                : line.qty * Number(p.mrp)
+              const raw = returnInputs.get(p.id) ?? String(line.qty)
+              const parsed = raw === '' || raw === '.' ? NaN : parseFloat(raw)
+              const effective = Number.isFinite(parsed) && parsed > 0 ? parsed : line.qty
+              const isPartial = Number.isFinite(parsed) && !Number.isInteger(parsed) && isWeightBased
+              const credit = effective * Number(p.mrp)
               return (
                 <Box
                   key={p.id}
@@ -1938,88 +1969,74 @@ export default function ShopRequestNew() {
                     <Box sx={{ flex: 1, minWidth: 0 }}>
                       <Box sx={{ fontSize: 13, fontWeight: 700 }}>{p.name}</Box>
                       <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                        {p.code} · {line.qty} × {formatINR(Number(p.mrp))}
-                        {isWeightBased && ` · pack ${p.weightValue}${unit}`}
+                        {p.code} · {formatINR(Number(p.mrp))} / pack
+                        {isWeightBased && ` · ${p.weightValue}${unit} pack`}
                       </Box>
                     </Box>
-                    {isWeightBased ? (
-                      <Box sx={{ display: 'flex', gap: 0.5, alignItems: 'center' }}>
-                        <Button
-                          size="small"
-                          variant={!isPartial ? 'contained' : 'outlined'}
-                          onClick={() => {
-                            setCart(prev => {
-                              const n = new Map(prev)
-                              const l = n.get(p.id)!
-                              n.set(p.id, { ...l, returnWeightG: undefined })
-                              return n
-                            })
-                          }}
-                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
-                        >
-                          Full
-                        </Button>
-                        <Button
-                          size="small"
-                          variant={isPartial ? 'contained' : 'outlined'}
-                          onClick={() => {
-                            setCart(prev => {
-                              const n = new Map(prev)
-                              const l = n.get(p.id)!
-                              // Default to half-pack when toggling on — safe non-zero start.
-                              n.set(p.id, { ...l, returnWeightG: Math.round(packG / 2) })
-                              return n
-                            })
-                          }}
-                          sx={{ textTransform: 'none', fontSize: 11, minHeight: 0, py: 0.4 }}
-                        >
-                          Partial
-                        </Button>
-                      </Box>
-                    ) : (
-                      <Box sx={{ fontSize: 10.5, color: '#1F1F1F55', fontStyle: 'italic' }}>
-                        full-pack only
-                      </Box>
-                    )}
-                  </Box>
-                  {isPartial && (
-                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mt: 0.5 }}>
-                      <Box sx={{ fontSize: 11, fontWeight: 600, color: '#7C4A00' }}>Weight (g):</Box>
-                      <TextField
-                        type="text"
-                        size="small"
-                        value={line.returnWeightG || ''}
-                        onChange={e => {
-                          const v = e.target.value
-                          if (v !== '' && !/^\d+$/.test(v)) return
-                          const parsed = v === '' ? 0 : parseInt(v, 10)
-                          if (!Number.isFinite(parsed)) return
-                          const clamped = Math.min(parsed, maxG)
-                          setCart(prev => {
-                            const n = new Map(prev)
-                            const l = n.get(p.id)!
-                            n.set(p.id, { ...l, returnWeightG: clamped })
-                            return n
-                          })
-                        }}
-                        onBlur={() => {
-                          if ((line.returnWeightG ?? 0) < 1) {
-                            setCart(prev => {
-                              const n = new Map(prev)
-                              const l = n.get(p.id)!
-                              n.set(p.id, { ...l, returnWeightG: 1 })
-                              return n
-                            })
+                    <TextField
+                      type="text"
+                      size="small"
+                      value={raw}
+                      onChange={e => {
+                        const v = e.target.value
+                        // Regex `\d*(\.\d*)?` allows a bare `.` mid-typing so
+                        // ".5" is enterable from an empty field. Non-weight
+                        // SKUs stay integer-only.
+                        const pattern = isWeightBased ? /^\d*(\.\d*)?$/ : /^\d+$/
+                        if (v !== '' && !pattern.test(v)) return
+                        setReturnInputs(prev => { const m = new Map(prev); m.set(p.id, v); return m })
+                        // Cart update — integer → full-pack (return_weight_g
+                        // cleared); decimal → partial (grams derived from
+                        // value × pack_g; qty ceil'd so the SP has a valid
+                        // packet slot ≥ 1 for its NOT NULL requested_qty
+                        // column).
+                        if (v === '' || v === '.') return
+                        const n = parseFloat(v)
+                        if (!Number.isFinite(n) || n <= 0) return
+                        setCart(prev => {
+                          const next = new Map(prev)
+                          const l = next.get(p.id)!
+                          if (Number.isInteger(n)) {
+                            next.set(p.id, { ...l, qty: n, returnWeightG: undefined })
+                          } else if (isWeightBased) {
+                            const grams = Math.round(n * packG * 1000) / 1000
+                            next.set(p.id, { ...l, qty: Math.max(1, Math.ceil(n)), returnWeightG: grams })
                           }
-                        }}
-                        onKeyDown={e => { if (['e', 'E', '+', '-', '.', ','].includes(e.key)) e.preventDefault() }}
-                        onFocus={e => (e.target as HTMLInputElement).select()}
-                        slotProps={{ htmlInput: { inputMode: 'numeric', style: { textAlign: 'center', padding: '4px 8px', width: 72 } } }}
-                        sx={{ width: 92 }}
-                      />
-                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                        of {maxG}g · credit {formatINR(credit)}
-                      </Box>
+                          return next
+                        })
+                      }}
+                      onKeyDown={e => {
+                        // 25-Jul-2026: `.` NEVER blocked at keydown — the
+                        // onChange regex enforces per-SKU rules. Blocking
+                        // silently swallowed dots when weightUnit was
+                        // unexpectedly cased or null.
+                        if (['e', 'E', '+', '-', ','].includes(e.key)) e.preventDefault()
+                      }}
+                      onFocus={e => (e.target as HTMLInputElement).select()}
+                      slotProps={{
+                        htmlInput: {
+                          inputMode: isWeightBased ? 'decimal' : 'numeric',
+                          style: { textAlign: 'center', padding: '4px 8px', width: 72 },
+                        },
+                      }}
+                      sx={{
+                        width: 92,
+                        '& .MuiOutlinedInput-root': {
+                          bgcolor: isPartial ? '#FFF3B8' : '#FFF8DC',
+                          '& fieldset': {
+                            borderColor: isPartial ? '#C28A00' : '#1F1F1F',
+                            borderWidth: isPartial ? 1.5 : 1,
+                          },
+                        },
+                      }}
+                    />
+                  </Box>
+                  {/* Interpretation hint — appears when the user typed a
+                      decimal (partial claim on a weight-based SKU). Shows
+                      the physical weight + credit at the current input. */}
+                  {isPartial && (
+                    <Box sx={{ fontSize: 11, color: '#7C4A00', fontWeight: 600, mt: 0.25 }}>
+                      = {(effective * Number(p.weightValue)).toFixed(2)} {unit} partial · credit {formatINR(credit)}
                     </Box>
                   )}
                 </Box>
