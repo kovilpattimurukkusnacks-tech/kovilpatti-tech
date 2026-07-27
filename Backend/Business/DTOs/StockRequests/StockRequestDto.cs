@@ -103,11 +103,24 @@ public record StockRequestItemDto(
     /// requested credit for a fraction of a pack. Value calc:
     /// (ReturnWeightG / pack weight in grams) × UnitPrice.
     decimal? ReturnWeightG,
+    /// 25-Jul-2026: Order-side partial-weight dispatch (grams). Non-null
+    /// when the godown shipped a partial pack instead of full packets —
+    /// e.g. 3 full 1 kg + one 500 g open packet = 3500 g total. Mutually
+    /// exclusive with DispatchedQty per line (DB CHECK). Value calc:
+    /// (DispatchedWeightG / pack weight in grams) × UnitPrice.
+    decimal? DispatchedWeightG,
+    /// 25-Jul-2026: shop's receive-time correction of a partial dispatch.
+    /// Mirror of ReceivedQty for the packet-count leg. Mutually exclusive
+    /// with ReceivedQty per line.
+    decimal? ReceivedWeightG,
     /// Inventory user's saved-but-not-finalised dispatch quantity. Used by
     /// the dispatch screen to pre-fill qty inputs from a saved draft.
     /// NULL when no draft has been saved (or after the request is dispatched
     /// — fn_request_dispatch clears these on finalisation).
     int?    DraftDispatchedQty,
+    /// 25-Jul-2026: partial-weight companion to DraftDispatchedQty. WIP
+    /// weight_g the godown typed into the Save-as-Draft dispatch form.
+    decimal? DraftDispatchedWeightG,
     decimal UnitPrice,
     decimal Subtotal,
     /// "Shop" (default) or "Inventory" — inv-tagged rows were appended by
