@@ -64,6 +64,9 @@ public static class DependencyInjection
         // Phase 4 — POS billing
         services.AddScoped<IBillRepository, BillRepository>();
 
+        // Phase 4b — customers + credit
+        services.AddScoped<ICustomerRepository, CustomerRepository>();
+
         return services;
     }
 }

@@ -6,6 +6,7 @@ public record BillingProductDto(
     string Code,
     string? Barcode,
     string Name,
+    string? CategoryName,
     decimal? WeightValue,
     string? WeightUnit,
     decimal Mrp,
@@ -13,10 +14,17 @@ public record BillingProductDto(
 
 public record BillLineRequest(Guid ProductId, int Qty);
 
+/// One tender line (feature #5). Multiple allowed — must sum to the total.
+public record BillPaymentRequest(string Mode, decimal Amount);   // Mode: 'Cash' | 'UPI'
+
 public record CreateBillRequest(
-    string PaymentMode,          // 'Cash' | 'UPI'
+    List<BillPaymentRequest> Payments,
     List<BillLineRequest> Items,
+    Guid? CustomerId,           // required only when a payment is 'Credit'
     string? Notes);
+
+/// A recorded tender on a bill.
+public record BillPaymentDto(Guid Id, string Mode, decimal Amount);
 
 /// Returned by POST /api/bills — identity + totals of the issued bill.
 public record BillCreatedDto(
@@ -26,7 +34,9 @@ public record BillCreatedDto(
     int TotalQty,
     decimal TotalAmount);
 
-public record CancelBillRequest(string Reason);
+public record CancelBillRequest(
+    string ReasonType,          // 'Mistake' | 'Duplicate' | 'CustomerRefused' | 'Other'
+    string? ReasonNote);
 
 public record BillListItemDto(
     Guid Id,
@@ -39,6 +49,7 @@ public record BillListItemDto(
     DateTime CreatedAt,
     string? CreatedByName,
     DateTime? CancelledAt,
+    string? CancelReasonType,
     string? CancelReason);
 
 public record BillItemDto(
@@ -65,5 +76,10 @@ public record BillDetailDto(
     string? CreatedByName,
     DateTime? CancelledAt,
     string? CancelledByName,
+    string? CancelReasonType,
     string? CancelReason,
-    IReadOnlyList<BillItemDto> Items);
+    Guid? CustomerId,
+    string? CustomerName,
+    string? CustomerPhone,
+    IReadOnlyList<BillItemDto> Items,
+    IReadOnlyList<BillPaymentDto> Payments);
