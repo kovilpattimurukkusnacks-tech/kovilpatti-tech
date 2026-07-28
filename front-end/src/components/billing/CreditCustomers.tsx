@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import {
   Alert, Box, Button, CircularProgress, Dialog, DialogActions, DialogContent, DialogTitle,
-  InputAdornment, MenuItem, Paper, Table, TableBody, TableCell, TableContainer, TableHead,
+  InputAdornment, Paper, Table, TableBody, TableCell, TableContainer, TableHead,
   TablePagination, TableRow, TextField,
 } from '@mui/material'
 import { Banknote, HandCoins, Receipt, Smartphone } from 'lucide-react'
@@ -156,7 +156,7 @@ function SettleDialog({ customer, onClose }: { customer: CustomerDto | null; onC
           ))}
         </Box>
         <TextField fullWidth multiline minRows={2} label="Note (optional)" value={note}
-          onChange={e => setNote(e.target.value)} inputProps={{ maxLength: 500 }} />
+          onChange={e => setNote(e.target.value)} slotProps={{ htmlInput: { maxLength: 500 } }} />
       </DialogContent>
       <DialogActions sx={{ px: 3, pb: 2 }}>
         <Button onClick={close} sx={{ textTransform: 'none', fontWeight: 700 }}>Cancel</Button>

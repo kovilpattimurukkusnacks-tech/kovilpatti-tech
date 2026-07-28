@@ -89,7 +89,7 @@ export default function CustomerBar({
           onChange={e => { setPhone(e.target.value.replace(/\D/g, '').slice(0, 10)); setShowAdd(false) }}
           onKeyDown={e => { if (e.key === 'Enter') handleFind() }}
           placeholder="Customer mobile (10 digits)"
-          inputProps={{ inputMode: 'numeric', maxLength: 10 }}
+          slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 10 } }}
           sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFFFF' } }}
         />
         <Button
