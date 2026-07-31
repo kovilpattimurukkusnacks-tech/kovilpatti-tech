@@ -30,6 +30,7 @@ import AdminDashboard from './pages/admin/AdminDashboard'
 import ShopUtilities from './pages/shop/ShopUtilities'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
+import PrintBillThermal from './pages/print/PrintBillThermal'
 import PrintCumulative from './pages/print/PrintCumulative'
 
 // Role gate — bounces unauthenticated users to login, and any authenticated
@@ -113,6 +114,8 @@ const router = createBrowserRouter(
       <Route path="/print/request/:id"         element={<PrintGate><PrintRequestPicklist /></PrintGate>} />
       {/* Shop-user thermal (80mm) variant — same data, receipt layout. */}
       <Route path="/print/request/:id/thermal" element={<PrintGate><PrintRequestThermal  /></PrintGate>} />
+      {/* POS bill receipt (80mm). */}
+      <Route path="/print/bill/:id/thermal" element={<PrintGate><PrintBillThermal /></PrintGate>} />
       <Route path="/print/cumulative"  element={<PrintGate><PrintCumulative /></PrintGate>} />
     </>
   )

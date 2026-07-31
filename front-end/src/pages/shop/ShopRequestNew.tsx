@@ -9,6 +9,7 @@ import {
 import PageHeader from '../../components/PageHeader'
 import { useApp } from '../../context/AppContext'
 import { useProducts } from '../../hooks/useProducts'
+import { useShopInventoryTree } from '../../hooks/useShopInventory'
 import { useCategories } from '../../hooks/useCategories'
 import { useShops } from '../../hooks/useShops'
 import {
@@ -276,6 +277,17 @@ export default function ShopRequestNew() {
   const draftLocalKey = draftScopeShopId && currentUser?.userId
     ? `shop-request-new-cart:${currentUser.userId}:${draftScopeShopId}`
     : null
+
+  // Available (on-hand) qty per product for the shop being requested for —
+  // same numbers as the shop dashboard's "Inventory by category". Shown as an
+  // "Avail" column so the user sees current stock while choosing how much to
+  // request. (client 25-Jul-2026)
+  const inventoryTreeQuery = useShopInventoryTree(draftScopeShopId ?? undefined)
+  const availByProduct = useMemo(() => {
+    const m = new Map<string, number>()
+    for (const row of inventoryTreeQuery.data ?? []) m.set(row.productId, row.onHand)
+    return m
+  }, [inventoryTreeQuery.data])
 
   // Cart state — Map keyed by productId so add/update/remove is O(1).
   // Persists across category / type / search / page changes (intentionally).
@@ -1363,9 +1375,9 @@ export default function ShopRequestNew() {
             alignItems: 'flex-start',
           }}
         >
-          <ProductsTable catGroups={leftCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
+          <ProductsTable catGroups={leftCatGroups} cart={cart} availability={availByProduct} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           {rightCatGroups.length > 0 && (
-            <ProductsTable catGroups={rightCatGroups} cart={cart} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
+            <ProductsTable catGroups={rightCatGroups} cart={cart} availability={availByProduct} onSetQty={setQty} onEnterAtEnd={gotoNextCat} />
           )}
         </Box>
       )}
@@ -2223,11 +2235,13 @@ function groupProductsByCategoryThenWeight(
 function ProductsTable({
   catGroups,
   cart,
+  availability,
   onSetQty,
   onEnterAtEnd,
 }: {
   catGroups: CategoryGroup[]
   cart: Map<string, CartLine>
+  availability: Map<string, number>
   onSetQty: (product: ProductDto, qty: number) => void
   onEnterAtEnd?: () => void
 }) {
@@ -2244,6 +2258,7 @@ function ProductsTable({
             <TableRow sx={{ bgcolor: '#FCD835' }}>
               <TableCell sx={HEAD_SX}>Product</TableCell>
               <TableCell sx={{ ...HEAD_SX, width: 90 }} align="right">MRP</TableCell>
+              <TableCell sx={{ ...HEAD_SX, width: 70 }} align="center">Avail</TableCell>
               <TableCell sx={{ ...HEAD_SX, width: 100 }} align="center">Qty</TableCell>
             </TableRow>
           </TableHead>
@@ -2255,7 +2270,7 @@ function ProductsTable({
                   {showCatHeadings && (
                     <TableRow>
                       <TableCell
-                        colSpan={3}
+                        colSpan={4}
                         sx={{
                           // Metallic gold gradient (#C28A00 → #FFD700 → #FFF1A6)
                           // with dark text. Luxury brand-feel sweep; reads as
@@ -2282,7 +2297,7 @@ function ProductsTable({
                     <Fragment key={`${cg.catId}__${group.label}`}>
                       <TableRow>
                         <TableCell
-                          colSpan={3}
+                          colSpan={4}
                           align="center"
                           sx={{
                             bgcolor: '#FFF8DC',
@@ -2306,6 +2321,7 @@ function ProductsTable({
                           key={p.id}
                           product={p}
                           qty={cart.get(p.id)?.qty ?? 0}
+                          available={availability.get(p.id) ?? 0}
                           onSetQty={onSetQty}
                           onEnterAtEnd={onEnterAtEnd}
                         />
@@ -2332,11 +2348,13 @@ function ProductsTable({
 const ProductRow = memo(function ProductRow({
   product,
   qty,
+  available,
   onSetQty,
   onEnterAtEnd,
 }: {
   product: ProductDto
   qty: number
+  available: number
   onSetQty: (product: ProductDto, qty: number) => void
   /** Optional: fires when Enter is pressed on the LAST .qty-input in
    *  document order (nothing to advance to). Parent uses this to jump
@@ -2349,6 +2367,10 @@ const ProductRow = memo(function ProductRow({
       <TableCell sx={{ fontWeight: 600 }}>{product.name}</TableCell>
       <TableCell align="right" sx={{ whiteSpace: 'nowrap' }}>
         {formatINR(Number(product.mrp))}
+      </TableCell>
+      {/* Available (on-hand) at this shop — same source as the dashboard. */}
+      <TableCell align="center" sx={{ fontWeight: 700, color: available > 0 ? '#2E7D32' : '#C62828' }}>
+        {available}
       </TableCell>
       <TableCell align="center" sx={{ py: 0.5 }}>
         <input
