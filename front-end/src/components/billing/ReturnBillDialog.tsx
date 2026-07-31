@@ -197,7 +197,7 @@ export default function ReturnBillDialog({
               value={reasonNote}
               onChange={e => setReasonNote(e.target.value)}
               sx={{ mt: 2 }}
-              inputProps={{ maxLength: 500 }}
+              slotProps={{ htmlInput: { maxLength: 500 } }}
             />
           </>
         )}

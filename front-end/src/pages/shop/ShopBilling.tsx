@@ -706,7 +706,7 @@ function RecentBills() {
             label="Note (optional)"
             value={cancelNote}
             onChange={e => setCancelNote(e.target.value)}
-            inputProps={{ maxLength: 500 }}
+            slotProps={{ htmlInput: { maxLength: 500 } }}
           />
         </DialogContent>
         <DialogActions sx={{ px: 3, pb: 2 }}>
