@@ -71,6 +71,10 @@ public static class DependencyInjection
         // Phase 4b — customers + credit
         services.AddScoped<ICustomerService, CustomerService>();
 
+        // Phase 5a — vendor master + vendor purchases (no e-way wiring yet)
+        services.AddScoped<IVendorService, VendorService>();
+        services.AddScoped<IVendorPurchaseService, VendorPurchaseService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");

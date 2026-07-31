@@ -27,6 +27,11 @@ import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminAccounts from './pages/admin/AdminAccounts'
 import AdminDashboard from './pages/admin/AdminDashboard'
+// Phase 5a — vendor master + vendor purchases (no e-way wiring yet).
+// See DB/planned/phase5_vendor_purchases.md.
+import AdminVendors from './pages/admin/AdminVendors'
+import AdminPurchases from './pages/admin/AdminPurchases'
+import AdminPurchaseNew from './pages/admin/AdminPurchaseNew'
 import ShopUtilities from './pages/shop/ShopUtilities'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
@@ -81,6 +86,11 @@ const router = createBrowserRouter(
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
         <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="accounts" element={<AdminAccounts />} />
+        {/* Phase 5a — vendor purchases (no e-way wiring yet). */}
+        <Route path="vendors" element={<AdminVendors />} />
+        <Route path="purchases" element={<AdminPurchases />} />
+        <Route path="purchases/new" element={<AdminPurchaseNew />} />
+        <Route path="purchases/:id" element={<AdminPurchaseNew />} />
         <Route path="settings" element={<AdminSettings />} />
       </Route>
 
