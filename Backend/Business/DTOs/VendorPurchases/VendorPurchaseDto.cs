@@ -24,6 +24,10 @@ public record VendorPurchaseDto(
     DateTimeOffset? ReceivedAt,
     string? ReceivedByName,
     DateTimeOffset CreatedAt,
+    /// Phase 5b — e-way compliance summary from the list SP. One of
+    /// "NotRequired" | "Attached" | "Missing". Null on GET /{id} because
+    /// the detail page renders the full e-way section instead.
+    string? EwayStatus,
     /// Only populated by GET /{id}. Null on list endpoints.
     IReadOnlyList<VendorPurchaseItemDto>? Items
 );

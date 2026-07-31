@@ -117,12 +117,12 @@ public class VendorPurchaseRepository(IDbConnectionFactory factory) : IVendorPur
         }, cancellationToken: ct));
     }
 
-    public async Task<bool> ReceiveAsync(Guid id, Guid userId, CancellationToken ct = default)
+    public async Task<string> ReceiveAsync(Guid id, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql = "SELECT fn_vendor_purchase_receive(@p_id, @p_user_id)";
-        return await conn.ExecuteScalarAsync<bool>(
-            new CommandDefinition(sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct));
+        return await conn.ExecuteScalarAsync<string>(
+            new CommandDefinition(sql, new { p_id = id, p_user_id = userId }, cancellationToken: ct)) ?? "not_found";
     }
 
     public async Task<bool> CancelAsync(Guid id, Guid userId, CancellationToken ct = default)

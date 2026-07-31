@@ -26,6 +26,11 @@ public interface IVendorPurchaseRepository
         string? notes, string itemsJson, Guid userId,
         CancellationToken ct = default);
 
-    Task<bool> ReceiveAsync(Guid id, Guid userId, CancellationToken ct = default);
+    /// <summary>
+    /// Phase 5b: SP returns a status code — 'ok' | 'not_found' | 'eway_required'.
+    /// Caller distinguishes "wrong state" from "missing e-way" for the
+    /// error message shown to the user.
+    /// </summary>
+    Task<string> ReceiveAsync(Guid id, Guid userId, CancellationToken ct = default);
     Task<bool> CancelAsync(Guid id, Guid userId, CancellationToken ct = default);
 }

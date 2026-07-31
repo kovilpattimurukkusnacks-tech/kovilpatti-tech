@@ -55,6 +55,20 @@ export default function AdminPurchases() {
         : <span className="text-[#1F1F1F]/40">—</span>,
     },
     {
+      // Phase 5b — at-a-glance compliance chip: gate matches + attached = green,
+      // gate matches + missing = amber (blocks Receive), not required = muted dash.
+      field: 'ewayStatus', headerName: 'E-way', width: 120, sortable: false, filterable: false,
+      renderCell: ({ value }) => {
+        if (value === 'Attached') {
+          return <Chip label="Attached" size="small" sx={{ fontWeight: 700, bgcolor: '#EAF7EE', color: '#2E7D32', border: '1px solid #2E7D32' }} />
+        }
+        if (value === 'Missing') {
+          return <Chip label="Missing" size="small" sx={{ fontWeight: 700, bgcolor: '#FFF3CD', color: '#8A6200', border: '1px solid #E0A800' }} />
+        }
+        return <span className="text-[#1F1F1F]/40">—</span>
+      },
+    },
+    {
       field: 'actions', headerName: '', width: 110, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => (
@@ -88,10 +102,6 @@ export default function AdminPurchases() {
       />
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
-
-      <Alert severity="info" sx={{ mb: 2 }}>
-        Phase 5a — vendor master + purchase records only. E-way bill capture/gating (Phase 5b) isn't wired up yet.
-      </Alert>
 
       <Paper sx={{ p: 2, mb: 2, borderRadius: 2.5, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }} elevation={0}>
         <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>

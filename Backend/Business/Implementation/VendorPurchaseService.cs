@@ -11,11 +11,11 @@ using ValidationException = KovilpattiSnacks.Business.Exceptions.ValidationExcep
 
 namespace KovilpattiSnacks.Business.Implementation;
 
-// Phase 5a — vendor master + purchase records CRUD, no e-way bill wiring.
-// eway_bills doesn't exist in this codebase yet and the threshold value is
-// unconfirmed (see DB/planned/phase5_reconciliation_notes.md Decision 5) —
-// Phase 5b adds the "block Mark Received without an e-way bill" gate once
-// both land. Today ReceiveAsync is a plain Ordered→Received transition.
+// Phase 5b — vendor master + purchase records CRUD + inbound e-way gate on
+// Receive. The gate lives in fn_vendor_purchase_receive: interstate purchase
+// with invoice_amount ≥ eway_bill_threshold_inbound requires an attached
+// Generated inbound e-way bill row before Ordered→Received. Threshold seeded
+// at '0' (gate disabled) — client sets the real number via Settings.
 public class VendorPurchaseService(
     IVendorPurchaseRepository purchases,
     IVendorRepository vendors,
@@ -117,12 +117,27 @@ public class VendorPurchaseService(
         var existing = await purchases.GetAsync(id, ct)
             ?? throw new NotFoundException($"Vendor purchase '{id}' not found.");
 
-        var ok = await purchases.ReceiveAsync(id, userId, ct);
-        if (!ok) throw new ValidationException(new[] {
-            new ValidationFailure("status", $"Cannot mark received — purchase is in '{existing.Status}' state.")
-        });
+        // SP returns 'ok' | 'not_found' | 'eway_required' (Phase 5b). Each maps
+        // to a different user-facing message; 'not_found' at this stage means
+        // the row exists but isn't in the Ordered state anymore.
+        var result = await purchases.ReceiveAsync(id, userId, ct);
+        switch (result)
+        {
+            case "ok":
+                return await GetAsync(id, ct);
 
-        return await GetAsync(id, ct);
+            case "eway_required":
+                throw new ValidationException(new[] {
+                    new ValidationFailure("eway",
+                        "Cannot mark received — an inbound e-way bill is required for this interstate purchase before it can be received. Add an e-way bill first.")
+                });
+
+            case "not_found":
+            default:
+                throw new ValidationException(new[] {
+                    new ValidationFailure("status", $"Cannot mark received — purchase is in '{existing.Status}' state.")
+                });
+        }
     }
 
     public async Task CancelAsync(Guid id, CancellationToken ct = default)
@@ -202,6 +217,7 @@ public class VendorPurchaseService(
         ReceivedAt:     p.Received_At,
         ReceivedByName: p.Received_By_Name,
         CreatedAt:      p.Created_At,
+        EwayStatus:     p.Eway_Status,
         Items:          null
     );
 

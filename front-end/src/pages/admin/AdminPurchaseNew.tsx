@@ -14,6 +14,8 @@ import {
   useVendorPurchase, useCreateVendorPurchase, useUpdateVendorPurchase,
   useReceiveVendorPurchase, useCancelVendorPurchase,
 } from '../../hooks/useVendorPurchases'
+import { useEwayBillsForPurchase, useEwayInboundThreshold } from '../../hooks/useEwayBills'
+import EwayBillSection from '../../components/eway/EwayBillSection'
 import type { CreateVendorPurchaseItem } from '../../api/vendor-purchases/types'
 import { ValidationError } from '../../api/errors'
 import type { ProductDto } from '../../api/products/types'
@@ -43,6 +45,15 @@ export default function AdminPurchaseNew() {
   const update = useUpdateVendorPurchase()
   const receive = useReceiveVendorPurchase()
   const cancel = useCancelVendorPurchase()
+
+  // Phase 5b: inbound e-way gate context. Threshold is app-wide (5-min cache
+  // in the hook), the list is per-purchase. Both queries lazy — the list is
+  // gated on `id` inside the hook.
+  const thresholdQuery = useEwayInboundThreshold()
+  const ewayListQuery  = useEwayBillsForPurchase(id)
+  const inboundThreshold = thresholdQuery.data?.threshold ?? 0
+  const ewayList = ewayListQuery.data ?? []
+  const hasGeneratedEway = ewayList.some(r => r.status === 'Generated')
 
   const vendors  = vendorsQuery.data ?? []
   const godowns  = godownsQuery.data ?? []
@@ -299,10 +310,19 @@ export default function AdminPurchaseNew() {
         )}
       </Paper>
 
-      {isInterstate && !isEdit && (
-        <Alert severity="info" sx={{ mb: 3 }}>
-          This is an interstate purchase. E-way bill capture isn't wired up yet (Phase 5b) — you can still record and receive this purchase.
-        </Alert>
+      {/* Phase 5b — E-way bill section. Only when editing (needs an id) AND
+          the purchase is interstate. Non-interstate purchases don't need
+          e-way at all; the section hides entirely rather than showing a
+          "not required" note (which clutters the page). */}
+      {isEdit && id && isInterstate && existing && (
+        <EwayBillSection
+          purchaseId={id}
+          locked={isReceived}
+          invoiceNumber={existing.invoiceNumber}
+          invoiceDate={existing.invoiceDate}
+          invoiceAmount={existing.invoiceAmount}
+          gateActive={inboundThreshold > 0 && existing.invoiceAmount >= inboundThreshold}
+        />
       )}
 
       {err && <Alert severity="error" sx={{ mb: 2 }}>{err}</Alert>}
@@ -318,15 +338,28 @@ export default function AdminPurchaseNew() {
           <Button variant="outlined" onClick={handleSubmit} disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
             {submitting ? 'Saving…' : (isEdit ? 'Save Changes' : 'Create Purchase')}
           </Button>
-          {isEdit && existing?.status === 'Ordered' && (
-            <Tooltip title="">
-              <span>
-                <Button variant="contained" onClick={handleReceive} disabled={submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
-                  Mark Received
-                </Button>
-              </span>
-            </Tooltip>
-          )}
+          {isEdit && existing?.status === 'Ordered' && (() => {
+            // Phase 5b gate: block "Mark Received" when interstate + at/above
+            // threshold but no Generated e-way row attached. The BE enforces
+            // the same rule (fn_vendor_purchase_receive returns 'eway_required'),
+            // but disabling the button + tooltip makes the reason immediate.
+            const gateActive = isInterstate && inboundThreshold > 0 && existing.invoiceAmount >= inboundThreshold
+            const blocked = gateActive && !hasGeneratedEway
+            return (
+              <Tooltip title={blocked ? 'Add a Generated inbound e-way bill first — required for this interstate purchase.' : ''}>
+                <span>
+                  <Button
+                    variant="contained"
+                    onClick={handleReceive}
+                    disabled={submitting || blocked}
+                    sx={{ textTransform: 'none', fontWeight: 600 }}
+                  >
+                    Mark Received
+                  </Button>
+                </span>
+              </Tooltip>
+            )
+          })()}
         </Box>
       )}
     </div>

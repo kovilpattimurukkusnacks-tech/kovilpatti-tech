@@ -1,9 +1,11 @@
 # Reconciliation: `phase6_vendor_purchases.md` vs. `phase4_pos_billing.md` Domain 6.7
 
-> Draft — decisions below need sign-off before `phase6_vendor_purchases.md`
-> is rewritten/renamed and `phase4_pos_billing.md` is patched. Nothing here
-> is built yet (Domain 6.7 is still design-only per the 17-Jul build-status
-> check), so this is a paperwork fix, not a migration.
+> **Status update — 2026-07-31.** Decisions 1-4 shipped as part of Phase 5a
+> and Phase 5b. Decision 5 is still open per the Threshold section below —
+> both settings keys exist but both seed to `'0'` (gate disabled) until the
+> client picks real numbers. This note stays in place because
+> `phase4_pos_billing.md` Domain 6.7 hasn't been patched yet (§Next steps
+> item 3).
 
 ## Why this doc exists
 
@@ -95,11 +97,18 @@ do differ, and thresholds get revised by the GST Council), but the two docs
 don't acknowledge each other's number, and both write to what should be a
 single `app_settings` entry.
 
-**Resolution (needs your confirmation, not a code judgment call):**
-confirm with the client/current GST rules whether inbound-interstate and
-outbound-B2B should share one `eway_bill_threshold` value or need two
-separate settings keys (e.g. `eway_bill_threshold_inbound` /
-`_outbound`). Don't seed either number until this is confirmed.
+**Resolution (partial — 2026-07-31):** shipped as **two separate settings
+keys** so inbound and outbound thresholds move independently:
+
+- `eway_bill_threshold_inbound`  — read by Phase 5b's receive gate
+- `eway_bill_threshold_outbound` — reserved for Phase 4's outbound wiring
+
+Both seeded `'0'` (gate disabled) in `phase5_init.sql` §6. The client sets
+the real numbers via app_settings once the current GST-Council figures are
+re-confirmed. No FE Settings screen yet — the client edits via direct SQL
+until we build one. Not blocking Phase 5b, since a `'0'` threshold cleanly
+means "no e-way required at any amount" and the code paths are exercised
+either way.
 
 ## Decision 6 — Duplicate file copies
 
@@ -121,14 +130,28 @@ Phase 5 adds `vendor_purchases`/`vendor_purchase_items` and starts writing
 
 ## Next steps
 
-1. Get sign-off on Decision 5 (threshold value/keys) — the only item that
-   isn't a mechanical schema fix.
-2. Rewrite `phase6_vendor_purchases.md` → `phase5_vendor_purchases.md` with
-   Decisions 1-4 applied (renumbered, `vendors` reused not recreated,
-   `vendor_shipments` dropped, e-way fields moved to `eway_bills` +
-   `vendor_purchase_id` FK).
-3. Patch `phase4_pos_billing.md` Domain 6.7 section: remove `vendor_shipments`
-   (T22), renumber `eway_bills`/`eway_api_logs`, swap the `vendor_shipment_id`
-   FK/index/constraint for `vendor_purchase_id`, and add a forward pointer to
+1. ~~Get sign-off on Decision 5 (threshold value/keys)~~ — **partial:**
+   shipped as two separate keys, both seeded `'0'`. Real numbers still
+   need client sign-off before the gate does anything.
+2. ~~Rewrite `phase6_vendor_purchases.md` → `phase5_vendor_purchases.md`~~ —
+   **done:** file renamed, Decisions 1-4 applied.
+3. **Still pending** — patch `phase4_pos_billing.md` Domain 6.7 section:
+   remove `vendor_shipments` (T22), renumber `eway_bills`/`eway_api_logs`,
+   swap the `vendor_shipment_id` FK/index/constraint for
+   `vendor_purchase_id`, and add a forward pointer to
    `phase5_vendor_purchases.md` for the inbound-anchor rationale.
-4. Delete the stray root-level copy (Decision 6).
+4. Delete the stray root-level copy (Decision 6). Not touched yet.
+
+## Follow-up work not covered by this note
+
+- **Settings UI** — `app_settings` values (`eway_bill_threshold_inbound`,
+  `_outbound`, plus the older `request_lock_cutoff`, `gst_enabled`, etc.)
+  have no admin edit surface yet. Every change today is a direct SQL
+  UPDATE. Worth a small "Admin › Settings" page once the surface count
+  crosses ~5.
+- **Phase 5c (GSP integration)** — deferred until the client has a GSP
+  contract. `eway_api_logs` and `generated_via='API'` are in place; only
+  the outbound-call client + endpoints are missing.
+- **Outbound e-way** (stock_requests / bills ≥ threshold) — Phase 4 owns
+  this. The `eway_bills` table + FK columns already ship inbound-ready;
+  outbound just needs its own `fn_eway_bill_record_outbound` and BE/FE.

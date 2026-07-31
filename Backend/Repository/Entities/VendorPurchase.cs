@@ -35,6 +35,11 @@ public class VendorPurchase
 
     public DateTimeOffset Created_At { get; set; }
 
+    /// Phase 5b — 'NotRequired' | 'Attached' | 'Missing'. Populated only by
+    /// fn_vendor_purchase_list_paged (list rows); the detail SP leaves this
+    /// null since the detail page renders the full e-way section instead.
+    public string? Eway_Status { get; set; }
+
     /// Only populated by fn_vendor_purchase_get. Null for list rows.
     public string? Items { get; set; }
 }

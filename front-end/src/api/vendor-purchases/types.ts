@@ -37,6 +37,9 @@ export type VendorPurchaseDto = {
   receivedAt: string | null
   receivedByName: string | null
   createdAt: string
+  /** Phase 5b — e-way compliance summary from the list SP. Null on GET /{id}
+   *  because the detail page renders the full e-way section instead. */
+  ewayStatus: 'NotRequired' | 'Attached' | 'Missing' | null
   /** Only populated by GET /{id}. Null/undefined on list rows. */
   items: VendorPurchaseItemDto[] | null
 }
