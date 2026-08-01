@@ -1,14 +1,15 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { Plus } from 'lucide-react'
-import { Alert, Box, Button, Chip, MenuItem, Paper, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
+import { Alert, Button, Chip, MenuItem, Paper, TextField, ToggleButton, ToggleButtonGroup } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
+import { FilterBar, FilterPanel, FilterRow, type FilterPill } from '../../components/FilterBar'
 import { useVendorPurchases } from '../../hooks/useVendorPurchases'
 import { useVendors } from '../../hooks/useVendors'
 import type { VendorPurchaseDto, VendorPurchaseStatus } from '../../api/vendor-purchases/types'
 import { formatINR } from '../../utils/format'
-import '../Products.css'
+import '../../styles/global.css'
 
 type StatusFilter = 'All' | VendorPurchaseStatus
 
@@ -18,6 +19,7 @@ export default function AdminPurchases() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>('All')
   const [vendorFilter, setVendorFilter] = useState<string>('All')
   const [interstateOnly, setInterstateOnly] = useState(false)
+  const [filtersOpen, setFiltersOpen] = useState(false)
 
   const vendorsQuery = useVendors()
   const list = useVendorPurchases({
@@ -31,6 +33,17 @@ export default function AdminPurchases() {
   const purchases = list.data?.items ?? []
   const total = list.data?.total ?? 0
   const vendorOptions = vendorsQuery.data ?? []
+  const vendorName = vendorOptions.find(v => v.id === vendorFilter)?.name
+
+  const resetPage = () => setPaginationModel(m => ({ ...m, page: 0 }))
+
+  const activePills = useMemo<FilterPill[]>(() => {
+    const pills: FilterPill[] = []
+    if (statusFilter !== 'All') pills.push({ key: 'status', label: statusFilter, onRemove: () => setStatusFilter('All') })
+    if (vendorFilter !== 'All') pills.push({ key: 'vendor', label: vendorName ?? 'Vendor', onRemove: () => setVendorFilter('All') })
+    if (interstateOnly) pills.push({ key: 'interstate', label: 'Interstate only', onRemove: () => setInterstateOnly(false) })
+    return pills
+  }, [statusFilter, vendorFilter, vendorName, interstateOnly])
 
   const columns: GridColDef<VendorPurchaseDto>[] = [
     { field: 'code',          headerName: 'Code',     width: 110, sortable: false, filterable: false },
@@ -72,7 +85,11 @@ export default function AdminPurchases() {
       field: 'actions', headerName: '', width: 110, sortable: false, filterable: false,
       align: 'right', headerAlign: 'right',
       renderCell: ({ row }) => (
-        <Button size="small" onClick={() => navigate(`/admin/purchases/${row.id}`)} sx={{ textTransform: 'none', fontWeight: 600 }}>
+        <Button
+          size="small"
+          onClick={e => { e.stopPropagation(); navigate(`/admin/purchases/${row.id}`) }}
+          sx={{ textTransform: 'none', fontWeight: 600 }}
+        >
           View
         </Button>
       ),
@@ -103,36 +120,38 @@ export default function AdminPurchases() {
 
       {errorMessage && <Alert severity="error" sx={{ mb: 2 }}>{errorMessage}</Alert>}
 
-      <Paper sx={{ p: 2, mb: 2, borderRadius: 2.5, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }} elevation={0}>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 2, alignItems: 'center' }}>
-          <ToggleButtonGroup
-            size="small"
-            value={statusFilter}
-            exclusive
-            onChange={(_e, v) => { if (v) { setStatusFilter(v); setPaginationModel(m => ({ ...m, page: 0 })) } }}
-          >
-            <ToggleButton value="All" sx={{ textTransform: 'none' }}>All</ToggleButton>
-            <ToggleButton value="Ordered" sx={{ textTransform: 'none' }}>Ordered</ToggleButton>
-            <ToggleButton value="Received" sx={{ textTransform: 'none' }}>Received</ToggleButton>
-          </ToggleButtonGroup>
-
-          <TextField
-            select size="small" label="Vendor" value={vendorFilter}
-            onChange={e => { setVendorFilter(e.target.value); setPaginationModel(m => ({ ...m, page: 0 })) }}
-            sx={{ minWidth: 220 }}
-          >
-            <MenuItem value="All">All vendors</MenuItem>
-            {vendorOptions.map(v => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}
-          </TextField>
-
-          <Chip
-            label="Interstate only"
-            onClick={() => { setInterstateOnly(o => !o); setPaginationModel(m => ({ ...m, page: 0 })) }}
-            color={interstateOnly ? 'warning' : 'default'}
-            variant={interstateOnly ? 'filled' : 'outlined'}
-          />
-        </Box>
-      </Paper>
+      <FilterPanel open={filtersOpen} onToggle={() => setFiltersOpen(o => !o)} pills={activePills}>
+        <FilterBar>
+          <FilterRow label="Status">
+            <ToggleButtonGroup
+              size="small"
+              value={statusFilter}
+              exclusive
+              onChange={(_e, v) => { if (v) { setStatusFilter(v); resetPage() } }}
+            >
+              <ToggleButton value="All" sx={{ textTransform: 'none' }}>All</ToggleButton>
+              <ToggleButton value="Ordered" sx={{ textTransform: 'none' }}>Ordered</ToggleButton>
+              <ToggleButton value="Received" sx={{ textTransform: 'none' }}>Received</ToggleButton>
+            </ToggleButtonGroup>
+          </FilterRow>
+          <FilterRow label="Vendor">
+            <TextField
+              select size="small" value={vendorFilter}
+              onChange={e => { setVendorFilter(e.target.value); resetPage() }}
+              sx={{ minWidth: 220, bgcolor: '#FFFFFF' }}
+            >
+              <MenuItem value="All">All vendors</MenuItem>
+              {vendorOptions.map(v => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}
+            </TextField>
+            <Chip
+              label="Interstate only"
+              onClick={() => { setInterstateOnly(o => !o); resetPage() }}
+              color={interstateOnly ? 'warning' : 'default'}
+              variant={interstateOnly ? 'filled' : 'outlined'}
+            />
+          </FilterRow>
+        </FilterBar>
+      </FilterPanel>
 
       <Paper className="data-page-paper" sx={{ borderRadius: 2.5 }} elevation={0}>
         <DataGrid
@@ -144,6 +163,8 @@ export default function AdminPurchases() {
           autoHeight
           disableRowSelectionOnClick
           disableColumnMenu
+          onRowClick={params => navigate(`/admin/purchases/${params.row.id}`)}
+          sx={{ '& .MuiDataGrid-row': { cursor: 'pointer' } }}
           paginationMode="server"
           rowCount={total}
           paginationModel={paginationModel}

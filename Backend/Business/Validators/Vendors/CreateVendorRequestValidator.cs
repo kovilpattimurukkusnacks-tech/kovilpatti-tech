@@ -8,6 +8,11 @@ public class CreateVendorRequestValidator : AbstractValidator<CreateVendorReques
     public CreateVendorRequestValidator()
     {
         RuleFor(x => x.Name).NotEmpty().MaximumLength(120);
+        // GST law (Section 24, CGST Act): any interstate supply requires GST
+        // registration — no turnover-based exemption like intrastate has.
+        RuleFor(x => x.Gstin)
+            .NotEmpty().WithMessage("GSTIN is required for vendors outside Tamil Nadu (interstate supply must be GST-registered).")
+            .When(x => !string.IsNullOrWhiteSpace(x.StateCode) && x.StateCode != "33");
         RuleFor(x => x.Gstin)
             .Length(15).When(x => !string.IsNullOrWhiteSpace(x.Gstin))
             .WithMessage("GSTIN must be exactly 15 characters when provided.");

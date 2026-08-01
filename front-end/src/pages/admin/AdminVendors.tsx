@@ -10,20 +10,8 @@ import ConfirmDialog from '../../components/ConfirmDialog'
 import { useVendorsPaged, useCreateVendor, useUpdateVendor, useDeleteVendor } from '../../hooks/useVendors'
 import type { VendorDto, CreateVendorRequest, UpdateVendorRequest } from '../../api/vendors/types'
 import { ValidationError } from '../../api/errors'
+import { INDIA_STATES, TN_STATE_CODE, stateName } from '../../utils/indiaStates'
 import '../Products.css'
-
-const TN_STATE_CODE = '33'
-
-const STATES = [
-  { code: '33', name: 'Tamil Nadu' },
-  { code: '29', name: 'Karnataka' },
-  { code: '27', name: 'Maharashtra' },
-  { code: '24', name: 'Gujarat' },
-  { code: '07', name: 'Delhi' },
-  { code: '09', name: 'Uttar Pradesh' },
-]
-
-const stateName = (code: string | null) => STATES.find(s => s.code === code)?.name ?? code ?? '—'
 
 type FormMode =
   | { kind: 'closed' }
@@ -223,9 +211,14 @@ function VendorFormDialog({ open, vendor, submitting, submitError, onClose, onSa
     return () => clearTimeout(t)
   }, [open, vendor])
 
+  const isInterstate = stateCode !== TN_STATE_CODE
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!name.trim()) { setErr('Enter a vendor name'); return }
+    // GST law (Section 24, CGST Act): any interstate supply requires GST
+    // registration — no turnover-based exemption like intrastate has.
+    if (isInterstate && !gstin.trim()) { setErr('GSTIN is required for vendors outside Tamil Nadu (interstate supply must be GST-registered)'); return }
     if (gstin.trim() && gstin.trim().length !== 15) { setErr('GSTIN must be exactly 15 characters when provided'); return }
     setErr(null)
 
@@ -266,9 +259,14 @@ function VendorFormDialog({ open, vendor, submitting, submitError, onClose, onSa
           )}
           <TextField label="Vendor Name" value={name} onChange={e => setName(e.target.value)} required size="small" disabled={submitting} inputRef={nameRef} />
           <Box sx={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 2 }}>
-            <TextField label="GSTIN" value={gstin} onChange={e => setGstin(e.target.value.toUpperCase())} size="small" placeholder="(15 chars, optional)" slotProps={{ htmlInput: { maxLength: 15 } }} disabled={submitting} />
+            <TextField
+              label="GSTIN" value={gstin} onChange={e => setGstin(e.target.value.toUpperCase())}
+              size="small" required={isInterstate}
+              placeholder={isInterstate ? '15 chars, required (interstate)' : '15 chars, optional'}
+              slotProps={{ htmlInput: { maxLength: 15 } }} disabled={submitting}
+            />
             <TextField select label="State" value={stateCode} onChange={e => setStateCode(e.target.value)} required size="small" disabled={submitting}>
-              {STATES.map(s => <MenuItem key={s.code} value={s.code}>{s.name}</MenuItem>)}
+              {INDIA_STATES.map(s => <MenuItem key={s.code} value={s.code}>{s.name}</MenuItem>)}
             </TextField>
           </Box>
           <TextField
@@ -284,9 +282,9 @@ function VendorFormDialog({ open, vendor, submitting, submitError, onClose, onSa
             <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
             <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
           </Box>
-          {stateCode !== TN_STATE_CODE && (
+          {isInterstate && (
             <Alert severity="warning" sx={{ fontSize: 13 }}>
-              Interstate vendor — purchases from this vendor will need an e-way bill above the configured threshold (Phase 5b, not wired yet).
+              Interstate vendor — GSTIN is required, and purchases from this vendor may need an e-way bill above the configured inbound threshold.
             </Alert>
           )}
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}

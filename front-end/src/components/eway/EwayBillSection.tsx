@@ -31,8 +31,10 @@ const STATUS_TONE: Record<EwayBillStatus, { fg: string; bg: string; border: stri
   Expired:   { fg: '#7A2A2A', bg: '#FFEBEE', border: '#B22222' },
 }
 
-// Kovilpatti FE rule: no #FFFFFF backgrounds — cream palette only.
-const PANEL_BG = '#FFFBE6'
+// White, matching every other section card on this page and the
+// .data-page-paper / ShopUtilities.tsx convention used across the app's
+// list and form screens (Shops, Products, Staff, Inventories).
+const PANEL_BG = '#FFFFFF'
 
 export default function EwayBillSection({
   purchaseId, locked, invoiceNumber, invoiceDate, invoiceAmount, gateActive,

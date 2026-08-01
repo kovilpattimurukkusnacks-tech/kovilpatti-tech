@@ -1,11 +1,12 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useNavigate, useParams } from 'react-router-dom'
-import { Trash2, ArrowLeft } from 'lucide-react'
+import { Trash2, Edit2, X, ArrowLeft } from 'lucide-react'
 import {
   Alert, Autocomplete, Box, Button, IconButton, MenuItem, Paper, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, Tooltip,
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
+import { useToast } from '../../context/ToastContext'
 import { formatINR } from '../../utils/format'
 import { useVendors } from '../../hooks/useVendors'
 import { useInventories } from '../../hooks/useInventories'
@@ -33,6 +34,7 @@ function mutationErrorMessage(err: unknown): string | null {
 
 export default function AdminPurchaseNew() {
   const navigate = useNavigate()
+  const toast = useToast()
   const { id } = useParams<{ id?: string }>()
   const isEdit = !!id
 
@@ -70,6 +72,9 @@ export default function AdminPurchaseNew() {
   const [pickerProduct, setPickerProduct] = useState<ProductDto | null>(null)
   const [pickerQty, setPickerQty] = useState('')
   const [pickerCost, setPickerCost] = useState('')
+  // Non-null while editing an already-added line — locks the product
+  // picker (only qty/cost are editable) and swaps "Add Item" for "Update".
+  const [editingProductId, setEditingProductId] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
 
   const existing = purchaseQuery.data
@@ -110,23 +115,47 @@ export default function AdminPurchaseNew() {
 
   const itemsTotal = useMemo(() => items.reduce((sum, i) => sum + i.qty * i.unitCost, 0), [items])
 
+  const resetPicker = () => {
+    setPickerProduct(null)
+    setPickerQty('')
+    setPickerCost('')
+    setEditingProductId(null)
+  }
+
   const addItem = () => {
     if (!pickerProduct) return
     const qty = parseFloat(pickerQty) || 0
     const cost = parseFloat(pickerCost) || 0
     if (qty <= 0) return
+
+    if (editingProductId) {
+      setItems(prev => prev.map(i => i.productId === editingProductId ? { ...i, qty, unitCost: cost } : i))
+      setErr(null)
+      resetPicker()
+      return
+    }
+
     if (items.some(i => i.productId === pickerProduct.id)) {
-      setErr('That product is already on this purchase — remove the existing line first.')
+      setErr('That product is already on this purchase — edit the existing line instead.')
       return
     }
     setErr(null)
     setItems(prev => [...prev, { productId: pickerProduct.id, product: pickerProduct, qty, unitCost: cost }])
-    setPickerProduct(null)
-    setPickerQty('')
-    setPickerCost('')
+    resetPicker()
   }
 
-  const removeItem = (productId: string) => setItems(prev => prev.filter(i => i.productId !== productId))
+  const startEditItem = (item: LineItem) => {
+    setEditingProductId(item.productId)
+    setPickerProduct(item.product)
+    setPickerQty(String(item.qty))
+    setPickerCost(String(item.unitCost))
+    setErr(null)
+  }
+
+  const removeItem = (productId: string) => {
+    setItems(prev => prev.filter(i => i.productId !== productId))
+    if (editingProductId === productId) resetPicker()
+  }
 
   const buildItemsPayload = (): CreateVendorPurchaseItem[] =>
     items.map(i => ({ productId: i.productId, qty: i.qty, unitCost: i.unitCost }))
@@ -163,7 +192,11 @@ export default function AdminPurchaseNew() {
           notes: notes.trim() || undefined,
           items: buildItemsPayload(),
         })
-        navigate(`/admin/purchases/${created.id}`)
+        toast.success({
+          title: 'Purchase created',
+          description: `${created.code} — ${created.vendorName}`,
+        })
+        navigate('/admin/purchases')
       }
     } catch {
       // Surfaces via submitError below
@@ -215,7 +248,7 @@ export default function AdminPurchaseNew() {
         </Alert>
       )}
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2.5, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
           <TextField
             select label="Vendor" value={vendorId}
@@ -250,7 +283,7 @@ export default function AdminPurchaseNew() {
         </Box>
       </Paper>
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2.5, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
         <Box sx={{ fontWeight: 700, mb: 2, textTransform: 'uppercase', fontSize: 14, letterSpacing: '0.03em' }}>Line Items</Box>
 
         {!readOnly && (
@@ -262,12 +295,19 @@ export default function AdminPurchaseNew() {
               onChange={(_e, v) => setPickerProduct(v)}
               sx={{ minWidth: 280 }}
               size="small"
-              disabled={submitting}
+              disabled={submitting || !!editingProductId}
               renderInput={params => <TextField {...params} label="Product" />}
             />
             <TextField label="Qty" type="number" size="small" value={pickerQty} onChange={e => setPickerQty(e.target.value)} sx={{ width: 100 }} disabled={submitting} />
             <TextField label="Unit Cost (₹)" type="number" size="small" value={pickerCost} onChange={e => setPickerCost(e.target.value)} sx={{ width: 140 }} disabled={submitting} />
-            <Button variant="outlined" onClick={addItem} disabled={!pickerProduct || submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>Add Item</Button>
+            <Button variant="outlined" onClick={addItem} disabled={!pickerProduct || submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
+              {editingProductId ? 'Update Item' : 'Add Item'}
+            </Button>
+            {editingProductId && (
+              <IconButton size="small" onClick={resetPicker} disabled={submitting} title="Cancel edit">
+                <X className="w-4 h-4" />
+              </IconButton>
+            )}
           </Box>
         )}
 
@@ -293,6 +333,9 @@ export default function AdminPurchaseNew() {
                   <TableCell align="right">{formatINR(item.qty * item.unitCost)}</TableCell>
                   {!readOnly && (
                     <TableCell align="right">
+                      <IconButton size="small" onClick={() => startEditItem(item)} disabled={submitting}>
+                        <Edit2 className="w-4 h-4" />
+                      </IconButton>
                       <IconButton size="small" color="error" onClick={() => removeItem(item.productId)} disabled={submitting}>
                         <Trash2 className="w-4 h-4" />
                       </IconButton>
