@@ -3,7 +3,7 @@ import {
   Alert, Box, Button, Chip, IconButton, Paper, Table, TableBody, TableCell,
   TableHead, TableRow, Tooltip,
 } from '@mui/material'
-import { FileText, Plus, XCircle } from 'lucide-react'
+import { ExternalLink, FileText, Plus, XCircle } from 'lucide-react'
 import { formatINR } from '../../utils/format'
 import { useCancelEwayBill, useEwayBillsForPurchase } from '../../hooks/useEwayBills'
 import type { EwayBillDto, EwayBillStatus } from '../../api/eway-bills/types'
@@ -127,7 +127,7 @@ export default function EwayBillSection({
               <TableCell align="right">Total</TableCell>
               <TableCell>Valid until</TableCell>
               <TableCell>Status</TableCell>
-              {!locked && <TableCell />}
+              <TableCell />
             </TableRow>
           </TableHead>
           <TableBody>
@@ -147,19 +147,33 @@ export default function EwayBillSection({
                       sx={{ fontWeight: 700, bgcolor: tone.bg, color: tone.fg, border: `1px solid ${tone.border}` }}
                     />
                   </TableCell>
-                  {!locked && (
-                    <TableCell align="right">
-                      {r.status === 'Generated' && (
-                        <Tooltip title="Cancel this e-way bill">
-                          <span>
-                            <IconButton size="small" color="error" onClick={() => handleCancel(r.id)}>
-                              <XCircle className="w-4 h-4" />
-                            </IconButton>
-                          </span>
-                        </Tooltip>
-                      )}
-                    </TableCell>
-                  )}
+                  {/* Actions cell always renders — PDF link stays accessible
+                      even on Received (locked) purchases for audit lookup;
+                      Cancel is gated on !locked + Generated status. */}
+                  <TableCell align="right">
+                    {r.attachmentUrl && (
+                      <Tooltip title="Open portal PDF in new tab">
+                        <IconButton
+                          size="small"
+                          component="a"
+                          href={r.attachmentUrl}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                        >
+                          <ExternalLink className="w-4 h-4" />
+                        </IconButton>
+                      </Tooltip>
+                    )}
+                    {!locked && r.status === 'Generated' && (
+                      <Tooltip title="Cancel this e-way bill">
+                        <span>
+                          <IconButton size="small" color="error" onClick={() => handleCancel(r.id)}>
+                            <XCircle className="w-4 h-4" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    )}
+                  </TableCell>
                 </TableRow>
               )
             })}
