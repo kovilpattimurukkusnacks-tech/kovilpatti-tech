@@ -67,6 +67,13 @@ public static class DependencyInjection
         // Phase 4b — customers + credit
         services.AddScoped<ICustomerRepository, CustomerRepository>();
 
+        // Phase 5a — vendor master + vendor purchases (no e-way wiring yet)
+        services.AddScoped<IVendorRepository, VendorRepository>();
+        services.AddScoped<IVendorPurchaseRepository, VendorPurchaseRepository>();
+
+        // Phase 5b — inbound e-way bills (attached to vendor_purchases)
+        services.AddScoped<IEwayBillRepository, EwayBillRepository>();
+
         return services;
     }
 }

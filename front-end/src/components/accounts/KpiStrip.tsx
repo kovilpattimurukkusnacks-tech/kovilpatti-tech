@@ -1,5 +1,5 @@
 import { Box, Card, CardContent, Divider, Skeleton, Typography } from '@mui/material'
-import { ArrowDownLeft, ArrowUpRight, ClipboardList, Receipt, ShoppingCart, TrendingUp, Wallet, Warehouse } from 'lucide-react'
+import { ArrowDownLeft, ArrowUpRight, ClipboardList, PackageCheck, Receipt, ShoppingCart, TrendingUp, Wallet, Warehouse } from 'lucide-react'
 import { GOLD_GRADIENT } from '../../theme'
 import { formatINR } from '../../utils/format'
 import { totalInventoryExpenses, totalUtilities } from '../../hooks/useAccounts'
@@ -106,6 +106,7 @@ function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventor
             "disp"
             "ret"
             "pur"
+            "vpur"
             "uti"
             "god"
             "net"
@@ -114,12 +115,15 @@ function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventor
             "hero hero"
             "req  disp"
             "ret  pur"
-            "uti  god"
-            "net  net"
+            "vpur uti"
+            "god  net"
           `,
+          // 31-Jul-2026 (Phase 5b.0): "vpur" (Vendor Purchases) fills the
+          // previously-empty bottom-right cell, so the bento is now fully
+          // populated on md+.
           md: `
             "hero req  disp ret  pur"
-            "hero uti  god  net  .  "
+            "hero uti  god  net  vpur"
           `,
         },
         gap: 2,
@@ -171,6 +175,19 @@ function BentoLayout({ data, loading, utilityRows, godownExpenseAmount, inventor
           value={data?.purchaseAmount}
           secondary={data ? `${data.dispatchedRequestCount} order request${data.dispatchedRequestCount === 1 ? '' : 's'}` : undefined}
           icon={<ShoppingCart size={18} />}
+          loading={loading}
+        />
+      </Box>
+      {/* 31-Jul-2026 (Phase 5b.0): actual cash paid to vendors for stock
+          received in range. Distinct from Purchased (at Cost) — that one
+          is a COGS proxy at line-level cost snapshots; this one is
+          invoice totals from vendor_purchases. */}
+      <Box sx={{ gridArea: 'vpur' }}>
+        <KpiCard
+          label="Vendor Purchases"
+          value={data?.vendorPurchaseAmount}
+          secondary={data ? `${data.vendorPurchaseCount} invoice${data.vendorPurchaseCount === 1 ? '' : 's'}` : undefined}
+          icon={<PackageCheck size={18} />}
           loading={loading}
         />
       </Box>
@@ -395,6 +412,15 @@ function ClassicGrid({ data, loading, view, utilityRows, godownExpenseAmount, in
       accent: undefined as 'net' | 'returns' | 'loss' | undefined,
     },
     {
+      // 31-Jul-2026 (Phase 5b.0): actual invoice spend to vendors.
+      dim: 'vendorPurchases' as const,
+      label: 'Vendor Purchases',
+      value: data?.vendorPurchaseAmount,
+      secondary: data ? `${data.vendorPurchaseCount} invoice${data.vendorPurchaseCount === 1 ? '' : 's'}` : undefined,
+      icon: <PackageCheck size={18} />,
+      accent: undefined,
+    },
+    {
       dim: 'requested' as const,
       label: 'Requested (at MRP)',
       value: data?.requestedAmount,
@@ -454,11 +480,11 @@ function ClassicGrid({ data, loading, view, utilityRows, godownExpenseAmount, in
   ]
 
   const dimsByView: Record<AccountsView, ReadonlyArray<typeof allCards[number]['dim']>> = {
-    all:        ['purchased', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'godown', 'netProfit'],
+    all:        ['purchased', 'vendorPurchases', 'requested', 'dispatched', 'returns', 'net', 'utilities', 'godown', 'netProfit'],
     requested:  ['requested'],
     dispatched: ['purchased', 'dispatched'],
     returns:    ['returns'],
-    purchased:  ['purchased', 'net', 'utilities', 'godown', 'netProfit'],
+    purchased:  ['purchased', 'vendorPurchases', 'net', 'utilities', 'godown', 'netProfit'],
   }
   const cards = allCards
     .filter(c => dimsByView[view].includes(c.dim))

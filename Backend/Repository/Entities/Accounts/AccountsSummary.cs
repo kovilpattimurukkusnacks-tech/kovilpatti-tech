@@ -17,4 +17,9 @@ public class AccountsSummary
     // 12-Jul-2026: Purchased (at Cost) — net dispatched cost at the line's
     // purchase_price_snapshot.
     public decimal Purchase_Amount          { get; set; }
+    // 31-Jul-2026 (Phase 5b.0): Vendor Purchases — Σ vendor_purchases.invoice_amount
+    // over rows marked Received in range. Additive to Purchase_Amount; the
+    // two are different measures (COGS proxy vs. actual cash to vendors).
+    public decimal Vendor_Purchase_Amount   { get; set; }
+    public long    Vendor_Purchase_Count    { get; set; }
 }

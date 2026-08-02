@@ -70,6 +70,12 @@ export type AccountsSummaryDto = {
   /** 12-Jul-2026: Purchased (at Cost) — net dispatched cost at the line's
    *  frozen purchase_price_snapshot (Orders cost − Returns cost). */
   purchaseAmount:         number
+  /** 31-Jul-2026 (Phase 5b.0): Vendor Purchases — Σ actual invoice totals
+   *  over vendor_purchases received in range. Additive KPI (not a
+   *  replacement for purchaseAmount): purchaseAmount is COGS-via-stock-request
+   *  proxy, this is cash actually paid to vendors. */
+  vendorPurchaseAmount:   number
+  vendorPurchaseCount:    number
 }
 
 export type AccountsTrendBucketDto = {

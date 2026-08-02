@@ -26,7 +26,8 @@ public class AccountsService(
             e.Returns_Amount,    e.Returns_Request_Count,
             e.Net_Amount,        e.Active_Shop_Count,
             e.Adjustments_Amount, e.Adjustments_Count,
-            e.Purchase_Amount);
+            e.Purchase_Amount,
+            e.Vendor_Purchase_Amount, e.Vendor_Purchase_Count);
     }
 
     public async Task<IReadOnlyList<AccountsTrendBucketDto>> GetTrendAsync(AccountsFilters filters, CancellationToken ct = default)
