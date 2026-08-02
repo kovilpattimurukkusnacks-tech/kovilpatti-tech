@@ -119,19 +119,16 @@ export default function PrintRequestThermal() {
     return <div className="thermal-preview"><div className="thermal-page">Could not load request.</div></div>
   }
 
-  // 01-Aug-2026 — grand total = effective dispatch amount (sum of line
-  // amounts), so the receipt total always matches what's printed above.
-  // qtyShown mirrors the same rule via deliveredQty computed off the
-  // effective packs; otherwise pre-dispatch printouts would show a total
-  // qty (from request.totalQty) that disagrees with the individual line
-  // Disp column.
-  const hasDispatch = request.status === 'Dispatched' || request.status === 'Received' || request.status === 'Accepted'
-  const grandTotal  = deliveredAmount
+  // 01-Aug-2026 — grand total + qty both reflect effective dispatch, so
+  // the receipt total always matches the per-line totals printed above.
+  // Untouched lines fall back to requestedQty (the kitchen's default plan),
+  // explicit 0 stays 0.
+  const grandTotal   = deliveredAmount
   const deliveredQty = (request.items ?? []).reduce(
     (sum, it) => sum + (effectiveDispatchPacks(it) ?? it.requestedQty),
     0,
   )
-  const qtyShown    = Math.round(deliveredQty)
+  const qtyShown     = Math.round(deliveredQty)
 
   return (
     <div className="thermal-preview">
