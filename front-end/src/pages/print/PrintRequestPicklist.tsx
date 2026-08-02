@@ -1,14 +1,46 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
-import { DispatchedCell } from '../../components/DispatchedCell'
 import { formatINR } from '../../utils/format'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { paginateOrderedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
+import { packSizeInGrams } from '../../utils/formatDispatched'
 import './print.css'
+
+// Effective dispatch packs for a line — prefers finalised dispatch, then
+// the in-progress draft, and returns null when nothing is set (the line was
+// never touched). Handles both packet-count and partial-weight modes:
+//   • dispatched_qty         → integer packet count
+//   • dispatched_weight_g    → grams; converted to fractional packs
+// The draft columns follow the same shape.
+//
+// Callers use this for BOTH the Disp column display AND the amount calc.
+// When it returns null, the amount side falls back to requestedQty (the
+// kitchen's default plan for an untouched line matches the shop's ask).
+type PickLine = {
+  dispatchedQty: number | null
+  dispatchedWeightG: number | null
+  draftDispatchedQty: number | null
+  draftDispatchedWeightG: number | null
+  weightValue: number | null
+  weightUnit: string | null
+}
+function effectiveDispatchPacks(it: PickLine): number | null {
+  if (it.dispatchedQty != null) return it.dispatchedQty
+  if (it.dispatchedWeightG != null) {
+    const pack = packSizeInGrams(it.weightValue, it.weightUnit)
+    if (pack) return it.dispatchedWeightG / pack
+  }
+  if (it.draftDispatchedQty != null) return it.draftDispatchedQty
+  if (it.draftDispatchedWeightG != null) {
+    const pack = packSizeInGrams(it.weightValue, it.weightUnit)
+    if (pack) return it.draftDispatchedWeightG / pack
+  }
+  return null
+}
 
 // Max columns per page. Mirrors the cumulative batch plan's column-balance
 // fix (07-Jul-2026) — see flatCards below for why the per-root structural
@@ -99,10 +131,20 @@ export default function PrintRequestPicklist() {
 
   // Compute the delivered amount client-side so it always matches the items
   // table (totalDispatchedAmount on the DTO is null until dispatch happens).
+  //
+  // 01-Aug-2026 — effective dispatch qty per line:
+  //   finalised dispatch → in-progress draft → requestedQty (kitchen default)
+  // An explicit 0 (whether dispatched or drafted) stays 0. Partial-weight
+  // rows contribute their fractional packet count (weight_g / pack_g).
+  // This matches how the shop's dispatch UI shows Net Amt on screen so the
+  // printout can't disagree with what the godown user just saved.
   const deliveredAmount = useMemo(() => {
     if (!request) return 0
     return (request.items ?? []).reduce(
-      (sum, it) => sum + (it.dispatchedQty ?? it.requestedQty) * it.unitPrice,
+      (sum, it) => {
+        const packs = effectiveDispatchPacks(it) ?? it.requestedQty
+        return sum + packs * it.unitPrice
+      },
       0,
     )
   }, [request])
@@ -198,7 +240,9 @@ export default function PrintRequestPicklist() {
     )
   }
 
-  const hasDispatch = request.totalDispatchedQty != null
+  // 01-Aug-2026 — status-based check. See deliveredAmount comment above
+  // for why `totalDispatchedQty != null` is unreliable (SP COALESCEs to 0).
+  const hasDispatch = request.status === 'Dispatched' || request.status === 'Received' || request.status === 'Accepted'
   const isShort = hasDispatch && deliveredAmount < request.totalAmount
 
   // 07-Jul-2026 (mirrors the cumulative batch-plan fix, client req) —
@@ -321,12 +365,19 @@ export default function PrintRequestPicklist() {
             <col />
             <col style={{ width: 34 }} />
             <col style={{ width: 28 }} />
-            {hasDispatch && <col style={{ width: 34 }} />}
+            {/* Disp column always renders (01-Aug-2026, client req: show
+                req + disp together on every printout so the drop from
+                shop's ask to godown's dispatch is visible per line). */}
+            <col style={{ width: 34 }} />
             <col style={{ width: 46 }} />
           </colgroup>
           <tbody>
             {section.weightGroups.flatMap(wg => wg.items.map(it => ({ ...it, weightLabel: wg.label }))).map((it, idx) => {
-              const effQty = it.dispatchedQty ?? it.requestedQty
+              // Effective dispatch packs → falls back to requestedQty for
+              // truly-untouched lines. Explicit 0 (dispatched OR drafted)
+              // stays 0 → amount 0 (client req).
+              const dispPacks = effectiveDispatchPacks(it)
+              const effQty = dispPacks ?? it.requestedQty
               const lineAmt = effQty * it.unitPrice
               // Drop decimals — Math.round because .5 halves round to nearest
               // whole rupee, which matches how the kitchen counts on paper.
@@ -340,11 +391,18 @@ export default function PrintRequestPicklist() {
                   </td>
                   <td className="muted print-dense-weight-col">{it.weightLabel}</td>
                   <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
-                  {hasDispatch && (
-                    <td style={{ textAlign: 'right' }}>
-                      <DispatchedCell qty={it.dispatchedQty} requested={it.requestedQty} />
-                    </td>
-                  )}
+                  {/* Disp col — null (untouched) → "—", integer → number,
+                      fractional (partial-weight) → up to 2 decimals so
+                      "10.75" doesn't overflow the 34px column. */}
+                  <td style={{ textAlign: 'right' }}>
+                    {dispPacks == null ? (
+                      <span className="muted">—</span>
+                    ) : Number.isInteger(dispPacks) ? (
+                      dispPacks
+                    ) : (
+                      dispPacks.toFixed(2)
+                    )}
+                  </td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} className="strong">
                     {lineAmtWhole}
                   </td>
@@ -360,17 +418,27 @@ export default function PrintRequestPicklist() {
   // Totals strip + notes box — appended inside a column on the LAST page
   // instead of as a trailing full-width block, so they fill existing
   // leftover space rather than spilling onto an otherwise-empty new page.
+  //
+  // 01-Aug-2026 — units + amount both reflect effective dispatch (draft or
+  // actual, requested-fallback for untouched). Requested totals are shown
+  // in parens only when they differ, so a clean pre-dispatch printout with
+  // no drafts still reads as a single number.
+  const deliveredQty = (request.items ?? []).reduce(
+    (s, it) => s + (effectiveDispatchPacks(it) ?? it.requestedQty), 0)
+  const showReqParens =
+    Math.round(deliveredQty) !== request.totalQty ||
+    Math.abs(deliveredAmount - request.totalAmount) >= 0.5
   const summary = (
     <div key="summary" className="print-column-summary">
       <div>
         {hasDispatch ? 'Dispatched' : 'Requested'}
         <span className="muted"> · </span>
-        <strong>{hasDispatch ? request.totalDispatchedQty : request.totalQty}</strong> units
+        <strong>{Math.round(deliveredQty)}</strong> units
         <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
       </div>
       <div className={isShort ? 'danger' : ''}>
-        <strong>{formatINR(hasDispatch ? deliveredAmount : request.totalAmount)}</strong>
-        {hasDispatch && request.totalDispatchedQty !== request.totalQty && (
+        <strong>{formatINR(deliveredAmount)}</strong>
+        {showReqParens && (
           <span className="muted"> (req. {request.totalQty} · {formatINR(request.totalAmount)})</span>
         )}
       </div>
