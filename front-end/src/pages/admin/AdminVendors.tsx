@@ -1,8 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, Edit2, Trash2, X, Truck } from 'lucide-react'
 import {
-  Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
-  IconButton, MenuItem, Paper, TextField,
+  Alert, Autocomplete, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent, DialogTitle,
+  IconButton, Paper, TextField,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import PageHeader from '../../components/PageHeader'
@@ -25,6 +25,23 @@ type FormValues = {
   contactPhone: string
   active: boolean
 }
+
+// State-code sets used by the Add/Edit Vendor dialog's Autocomplete —
+// grouped into "South India" (Tamil Nadu + its neighbours, where the vast
+// majority of Kovilpatti's vendors sit) and "Other States & UTs" (everything
+// else, alphabetical). TN is force-first within South India so the default
+// choice is right at the top; the rest of that group is alphabetical.
+const SOUTH_STATE_CODES = new Set(['33', '32', '29', '37', '36', '34'])
+// TN, KL, KA, AP, TG, PY
+
+const STATE_OPTIONS = INDIA_STATES.slice().sort((a, b) => {
+  const aSouth = SOUTH_STATE_CODES.has(a.code)
+  const bSouth = SOUTH_STATE_CODES.has(b.code)
+  if (aSouth !== bSouth) return aSouth ? -1 : 1
+  if (a.code === TN_STATE_CODE) return -1
+  if (b.code === TN_STATE_CODE) return 1
+  return a.name.localeCompare(b.name)
+})
 
 function mutationErrorMessage(err: unknown): string | null {
   if (!err) return null
@@ -265,9 +282,47 @@ function VendorFormDialog({ open, vendor, submitting, submitError, onClose, onSa
               placeholder={isInterstate ? '15 chars, required (interstate)' : '15 chars, optional'}
               slotProps={{ htmlInput: { maxLength: 15 } }} disabled={submitting}
             />
-            <TextField select label="State" value={stateCode} onChange={e => setStateCode(e.target.value)} required size="small" disabled={submitting}>
-              {INDIA_STATES.map(s => <MenuItem key={s.code} value={s.code}>{s.name}</MenuItem>)}
-            </TextField>
+            {/* Typeahead + grouped list. Type-to-search collapses the 35-item
+                dropdown to just what matches (e.g. "tam" → Tamil Nadu); the
+                popup height is capped so it never floods the viewport.
+                South India group renders first with TN pinned at the top so
+                the default choice is one glance away. */}
+            <Autocomplete
+              size="small"
+              disableClearable
+              options={STATE_OPTIONS}
+              groupBy={(s) => SOUTH_STATE_CODES.has(s.code) ? 'South India' : 'Other States & UTs'}
+              getOptionLabel={(s) => s.name}
+              isOptionEqualToValue={(a, b) => a.code === b.code}
+              value={STATE_OPTIONS.find(s => s.code === stateCode) ?? STATE_OPTIONS[0]}
+              onChange={(_e, v) => setStateCode(v?.code ?? TN_STATE_CODE)}
+              disabled={submitting}
+              renderInput={(params) => (
+                <TextField {...params} label="State" required size="small" />
+              )}
+              slotProps={{
+                listbox: {
+                  sx: {
+                    maxHeight: 280,
+                    // Group heading ("South India" / "Other States & UTs") —
+                    // cream tint from the app palette so it stands out from
+                    // the white option rows. Uppercase + tabular tracking
+                    // matches the KPI eyebrow style used elsewhere.
+                    '& .MuiListSubheader-root': {
+                      bgcolor: '#FFF3CD',
+                      color: '#8A6200',
+                      fontWeight: 800,
+                      fontSize: 11,
+                      letterSpacing: '0.08em',
+                      textTransform: 'uppercase',
+                      lineHeight: '32px',
+                      borderTop: '1px solid #E0A800',
+                      borderBottom: '1px solid #E0A800',
+                    },
+                  },
+                },
+              }}
+            />
           </Box>
           <TextField
             label="Contact Phone"

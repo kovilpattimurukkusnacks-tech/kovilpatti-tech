@@ -50,7 +50,12 @@ export const theme = createTheme({
     MuiDialog: {
       styleOverrides: {
         paper: {
-          backgroundColor: '#FFFFFF',
+          // Cornsilk pale-yellow — pinned globally so every modal in the
+          // app (masters, staff, billing, e-way, confirms, unsaved-changes
+          // prompt, everything) inherits the same warm surface instead of
+          // pure white. Any dialog that needs a different tone can still
+          // override via slotProps.paper.sx.bgcolor.
+          backgroundColor: '#FFF8DC',
           border: '2px solid #1F1F1F',
           boxShadow: '8px 8px 0 0 #FCD835',
         },

@@ -18,8 +18,6 @@ type Props = {
   }
 }
 
-// Cream palette background — no white per Kovilpatti FE rule.
-const DIALOG_BG = '#FFFBE6'
 const TRANSPORT_MODES: EwayTransportMode[] = ['Road', 'Rail', 'Air', 'Ship']
 
 function toNum(s: string): number | null {
@@ -144,7 +142,6 @@ export default function EwayBillDialog({ open, onClose, purchaseId, prefill }: P
       }}
       fullWidth
       maxWidth="md"
-      slotProps={{ paper: { sx: { bgcolor: DIALOG_BG } } }}
     >
       <DialogTitle sx={{ fontWeight: 700 }}>Add E-way Bill</DialogTitle>
       <DialogContent dividers>
