@@ -241,7 +241,10 @@ function VendorFormDialog({ open, vendor, submitting, submitError, onClose, onSa
       onClose={(_e, reason) => { if (reason === 'backdropClick' || submitting) return; onClose() }}
       maxWidth="sm"
       fullWidth
-      slotProps={{ paper: { sx: { borderRadius: 3 } } }}
+      // Theme's MuiDialog override forces white app-wide; cream here to
+      // match the rest of this feature's cards/filter bars/dropdowns
+      // without touching the shared theme (other screens' dialogs stay white).
+      slotProps={{ paper: { sx: { borderRadius: 3, bgcolor: '#FFFBE6' } } }}
     >
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontWeight: 600 }}>
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>

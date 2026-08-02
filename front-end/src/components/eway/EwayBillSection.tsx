@@ -31,10 +31,9 @@ const STATUS_TONE: Record<EwayBillStatus, { fg: string; bg: string; border: stri
   Expired:   { fg: '#7A2A2A', bg: '#FFEBEE', border: '#B22222' },
 }
 
-// White, matching every other section card on this page and the
-// .data-page-paper / ShopUtilities.tsx convention used across the app's
-// list and form screens (Shops, Products, Staff, Inventories).
-const PANEL_BG = '#FFFFFF'
+// Cream — matches the other section cards on this page and the
+// FilterBar/dropdown cream palette used across the app.
+const PANEL_BG = '#FFFBE6'
 
 export default function EwayBillSection({
   purchaseId, locked, invoiceNumber, invoiceDate, invoiceAmount, gateActive,

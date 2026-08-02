@@ -248,7 +248,7 @@ export default function AdminPurchaseNew() {
         </Alert>
       )}
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFBE6' }} elevation={0}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
           <TextField
             select label="Vendor" value={vendorId}
@@ -283,7 +283,7 @@ export default function AdminPurchaseNew() {
         </Box>
       </Paper>
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFBE6' }} elevation={0}>
         <Box sx={{ fontWeight: 700, mb: 2, textTransform: 'uppercase', fontSize: 14, letterSpacing: '0.03em' }}>Line Items</Box>
 
         {!readOnly && (
@@ -297,6 +297,10 @@ export default function AdminPurchaseNew() {
               size="small"
               disabled={submitting || !!editingProductId}
               renderInput={params => <TextField {...params} label="Product" />}
+              // Pin the dropdown to always open downward — otherwise it
+              // auto-flips upward when the field sits near the bottom of
+              // the viewport, overlapping the card above it.
+              slotProps={{ popper: { placement: 'bottom-start', modifiers: [{ name: 'flip', enabled: false }] } }}
             />
             <TextField label="Qty" type="number" size="small" value={pickerQty} onChange={e => setPickerQty(e.target.value)} sx={{ width: 100 }} disabled={submitting} />
             <TextField label="Unit Cost (₹)" type="number" size="small" value={pickerCost} onChange={e => setPickerCost(e.target.value)} sx={{ width: 140 }} disabled={submitting} />
