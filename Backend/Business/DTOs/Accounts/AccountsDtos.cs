@@ -18,7 +18,13 @@ public record AccountsSummaryDto(
     long    AdjustmentsCount,
     /// 12-Jul-2026: Purchased (at Cost) — net dispatched cost at the line's
     /// frozen purchase_price_snapshot (Orders cost − Returns cost).
-    decimal PurchaseAmount
+    decimal PurchaseAmount,
+    /// 31-Jul-2026 (Phase 5b.0): Vendor Purchases — Σ actual vendor invoice
+    /// totals for purchases received in the range. Additive KPI, not a
+    /// replacement for PurchaseAmount. Godown filter honoured; shop /
+    /// category filters do not apply.
+    decimal VendorPurchaseAmount,
+    long    VendorPurchaseCount
 );
 
 public record AccountsTrendBucketDto(

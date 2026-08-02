@@ -63,7 +63,19 @@ RETURNS TABLE (
   adjustments_count        bigint,
   -- 12-Jul-2026: Purchased (at Cost) KPI — net dispatched cost at the
   -- line's purchase_price_snapshot (Orders Σ cost − Returns Σ cost).
-  purchase_amount          numeric
+  purchase_amount          numeric,
+  -- 31-Jul-2026 (Phase 5b.0): Vendor Purchases KPI — Σ invoice_amount over
+  -- vendor_purchases marked Received (received_at in range). Additive to
+  -- purchase_amount, not a replacement: the two answer different questions.
+  --   purchase_amount        = COGS proxy via stock_request cost snapshots
+  --                            (money committed against dispatched goods).
+  --   vendor_purchase_amount = actual cash paid to vendors for stock
+  --                            (money out the door in the period).
+  -- Filters: honours p_inv_ids only (godown_id maps to inventories). Shop
+  -- and category filters do NOT apply — a vendor purchase isn't scoped to
+  -- either dimension.
+  vendor_purchase_amount   numeric,
+  vendor_purchase_count    bigint
 )
 LANGUAGE sql STABLE AS $$
   WITH
@@ -186,7 +198,25 @@ LANGUAGE sql STABLE AS $$
     (SELECT COALESCE(SUM(delta_amount), 0)::numeric(14,2) FROM adjustments)                                  AS adjustments_amount,
     (SELECT COALESCE(COUNT(*), 0)::bigint                FROM adjustments)                                   AS adjustments_count,
     -- Purchased (at Cost) = net dispatched cost.
-    (SELECT s.dispatched_cost - s.returns_cost FROM item_sums s)::numeric(14,2)                              AS purchase_amount
+    (SELECT s.dispatched_cost - s.returns_cost FROM item_sums s)::numeric(14,2)                              AS purchase_amount,
+    -- Vendor Purchases = Σ actual vendor invoice totals received in range.
+    -- Anchor is received_at (matches Orders side); godown filter honoured
+    -- via p_inv_ids. p_shop_ids / p_cat_ids intentionally ignored — see
+    -- RETURNS TABLE comment. Row-limited to non-deleted, Received purchases.
+    (SELECT COALESCE(SUM(vp.invoice_amount), 0)::numeric(14,2)
+       FROM vendor_purchases vp, range g
+      WHERE vp.is_deleted = false
+        AND vp.status     = 'Received'
+        AND vp.received_at IS NOT NULL
+        AND vp.received_at >= g.lo AND vp.received_at < g.hi
+        AND (p_inv_ids IS NULL OR cardinality(p_inv_ids) = 0 OR vp.godown_id = ANY(p_inv_ids)))                AS vendor_purchase_amount,
+    (SELECT COALESCE(COUNT(*), 0)::bigint
+       FROM vendor_purchases vp, range g
+      WHERE vp.is_deleted = false
+        AND vp.status     = 'Received'
+        AND vp.received_at IS NOT NULL
+        AND vp.received_at >= g.lo AND vp.received_at < g.hi
+        AND (p_inv_ids IS NULL OR cardinality(p_inv_ids) = 0 OR vp.godown_id = ANY(p_inv_ids)))                AS vendor_purchase_count
   FROM finalised f;
 $$;
 

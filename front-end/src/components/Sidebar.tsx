@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt } from 'lucide-react'
+import { LayoutDashboard, Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt, Truck, ListOrdered } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import './Sidebar.css'
 
@@ -24,6 +24,13 @@ const createAccountItems = [
 
 const CREATE_ACCOUNT_PATH_PREFIX = '/admin/create-account'
 
+// Phase 5a — vendor master + purchases nav. See DB/planned/phase5_vendor_purchases.md.
+const purchasesItems = [
+  { to: '/admin/vendors',       label: 'Vendors',      icon: Truck },
+  { to: '/admin/purchases',     label: 'Purchases',    icon: ListOrdered },
+]
+const PURCHASES_PATH_PREFIXES = ['/admin/vendors', '/admin/purchases']
+
 type Props = { onNavigate?: () => void }
 
 export default function Sidebar({ onNavigate }: Props) {
@@ -34,11 +41,18 @@ export default function Sidebar({ onNavigate }: Props) {
   const isCreateAccountActive = location.pathname.startsWith(CREATE_ACCOUNT_PATH_PREFIX)
   const [createAccountOpen, setCreateAccountOpen] = useState(isCreateAccountActive)
 
+  const isPurchasesActive = PURCHASES_PATH_PREFIXES.some(p => location.pathname.startsWith(p))
+  const [purchasesOpen, setPurchasesOpen] = useState(isPurchasesActive)
+
   // Auto-expand whenever the user lands on a Create Account sub-route
   // (e.g., back/forward navigation, deep link).
   useEffect(() => {
     if (isCreateAccountActive) setCreateAccountOpen(true)
   }, [isCreateAccountActive])
+
+  useEffect(() => {
+    if (isPurchasesActive) setPurchasesOpen(true)
+  }, [isPurchasesActive])
 
   const handleLogout = () => {
     logout()
@@ -92,6 +106,46 @@ export default function Sidebar({ onNavigate }: Props) {
         {createAccountOpen && (
           <div className="ml-3 mt-1 space-y-1 border-l-2 border-[#1F1F1F]/15 pl-3">
             {createAccountItems.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => onNavigate?.()}
+                className={({ isActive }) =>
+                  `flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-medium transition-all ${
+                    isActive
+                      ? 'gold-gradient'
+                      : 'text-[#1F1F1F]/85 hover:bg-[#1F1F1F]/10'
+                  }`
+                }
+              >
+                <Icon className="w-3.5 h-3.5" />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
+        )}
+
+        {/* Phase 5a — vendor purchases. */}
+        <button
+          type="button"
+          aria-expanded={purchasesOpen}
+          onClick={() => setPurchasesOpen(open => !open)}
+          className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+            isPurchasesActive
+              ? 'gold-gradient shadow-lg shadow-black/30'
+              : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
+          }`}
+        >
+          <Truck className="w-4 h-4" />
+          <span className="flex-1 text-left">Purchases</span>
+          {purchasesOpen
+            ? <ChevronDown className="w-4 h-4" />
+            : <ChevronRight className="w-4 h-4" />}
+        </button>
+
+        {purchasesOpen && (
+          <div className="ml-3 mt-1 space-y-1 border-l-2 border-[#1F1F1F]/15 pl-3">
+            {purchasesItems.map(({ to, label, icon: Icon }) => (
               <NavLink
                 key={to}
                 to={to}

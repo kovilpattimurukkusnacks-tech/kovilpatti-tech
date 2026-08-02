@@ -11,7 +11,7 @@ import type {
   AccountsInventoryExpenseRowDto,
   AccountsProductRowDto,
   AccountsShopRowDto,
-  AccountsSummaryDto,
+  AccountsSummaryDto, 
   AccountsTrendBucketDto,
   AccountsUtilityRowDto,
 } from './types'

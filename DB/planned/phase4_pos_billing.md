@@ -16,7 +16,7 @@
 | 3 | Cancel/refund bill freely? | **Yes** — anytime, with audit trail | `bills.cancelled_*` cols + reversal movements |
 | 4 | Real B2B customers + scanner? | **Yes** — B2B invoicing (IGST), barcode scan → line | `customer_gstin`, `customer_state_code`, IGST cols; `product_barcodes` table |
 | 5 | Utilities / shop expenses screen? | **Yes** — rent, electricity, water, phone, purchases, repairs (client ask 09-Jul) | `expense_categories` + `shop_expenses`; auto-writes to `cash_movements` when Cash from till |
-| 6 | E-way bill transaction? | **Yes — BOTH directions + GSP API integration** (client refined 09-Jul) | See revised Domain 6.7 — 4 tables: `vendors`, `vendor_shipments`, `eway_bills`, `eway_api_logs` |
+| 6 | E-way bill transaction? | **Yes — BOTH directions + GSP API integration** (client refined 09-Jul) | See revised Domain 6.7 — 3 tables here: `vendors`, `eway_bills`, `eway_api_logs`. Inbound anchor is `vendor_purchases`, added in Phase 5 — see [reconciliation note](phase5_reconciliation_notes.md) |
 | 7 | Cash register / shift sessions in v1? | **Yes** — till reconciliation is what makes a POS a POS (locked 09-Jul) | `cash_registers` + `cash_sessions` + `cash_movements` + `cash_denominations` all IN v1 |
 | 8 | `tax_rates` master vs inline `products.gst`? | **Inline** — skip the master table (locked 09-Jul) | No `tax_rates` table; `products.gst` is the single source of GST rate per product |
 
@@ -184,11 +184,19 @@ Rationale: client pays rent, electricity, water, phone, repairs, and buys shop-s
 
 Deferred to v2: `expense_recurring_schedules` (rent-remind-me-monthly), `expense_attachments` polymorphic table if one expense needs multiple photos.
 
-### Domain 6.7 — E-way bills + vendors + GSP API integration (4 tables) — refined 09-Jul-2026
+### Domain 6.7 — E-way bills + vendors + GSP API integration (3 tables) — refined 09-Jul-2026, reconciled 24-Jul-2026
+
+> **24-Jul-2026 update:** the inbound anchor originally planned here as
+> `vendor_shipments` (header-only stand-in) has been folded into Phase 5's
+> `vendor_purchases` instead, since `vendor_shipments` was never built and
+> `vendor_purchases` covers the same job with line items. `eway_bills`
+> below now points at `vendor_purchase_id` rather than
+> `vendor_shipment_id`. See `phase5_reconciliation_notes.md` for the full
+> reasoning.
 
 **Refined scope (client, 09-Jul-2026):**
 - E-way bills flow **BOTH directions**:
-  - **Inbound**: vendors from all over India ship raw materials / goods → they generate e-way on GST portal → we record the EWB against the vendor shipment
+  - **Inbound**: vendors from all over India ship raw materials / goods → they generate e-way on GST portal → we record the EWB against the vendor purchase (Phase 5)
   - **Outbound**: our godown → shops (interstate branches) OR our shop → B2B customer (>₹50k) → we generate the e-way
 - **API integration required** — app talks to a GSP (GST Suvidha Provider) to auto-generate outbound EWBs and auto-fetch inbound EWB details by number.
 
@@ -224,33 +232,7 @@ CREATE INDEX idx_vendors_active ON vendors(active) WHERE is_deleted = false
 CREATE INDEX idx_vendors_gstin  ON vendors(gstin)  WHERE gstin IS NOT NULL
 ```
 
-**22. `vendor_shipments`** — inbound header (anchor for inbound e-way records)
-```
-id                uuid PK
-code              varchar(20) UNIQUE         -- SHIP0001 via vendor_shipment_code_seq
-vendor_id         uuid NOT NULL FK vendors
-shipment_date     date NOT NULL
-description       text                        -- freeform "20 bags maida, 5 tins oil"
-taxable_amount    numeric(12,2) NOT NULL DEFAULT 0
-total_amount      numeric(12,2) NOT NULL DEFAULT 0
-delivery_location varchar(120)                -- "Kovilpatti godown"
-status            varchar(20) NOT NULL DEFAULT 'Expected'
-received_at       timestamptz NULL
-notes             text
-is_deleted        boolean NOT NULL DEFAULT false
-audit cols
-
-CONSTRAINT chk_vendor_shipments_status
-  CHECK (status IN ('Expected','Received','Cancelled'))
-CONSTRAINT chk_vendor_shipments_received_pair
-  CHECK ((status = 'Received') = (received_at IS NOT NULL))
-
-CREATE INDEX idx_vendor_shipments_vendor_date ON vendor_shipments(vendor_id, shipment_date DESC)
-CREATE INDEX idx_vendor_shipments_status      ON vendor_shipments(status) WHERE is_deleted = false
-```
-Header only for v1 — no line items. Full procurement / GRN with line-level received qty stays Phase 5. Phase 4 inbound e-way tracking anchors here as a compliance record without needing inventory impact.
-
-**23. `eway_bills`** — restructured to support both directions + GSP metadata
+**22. `eway_bills`** — restructured to support both directions + GSP metadata
 ```
 id                    uuid PK
 eway_number           varchar(20) NOT NULL         -- 12-digit portal number
@@ -261,7 +243,10 @@ direction             varchar(10) NOT NULL         -- 'Inbound' | 'Outbound'
 -- Parent link (exactly ONE populated based on direction)
 stock_request_id      uuid NULL FK stock_requests    -- outbound → shop
 bill_id               uuid NULL FK bills             -- outbound → B2B customer (>=₹50k)
-vendor_shipment_id    uuid NULL FK vendor_shipments  -- inbound ← vendor
+vendor_purchase_id    uuid NULL                      -- inbound ← vendor. FK to `vendor_purchases`
+                                                      -- added in Phase 5 (table doesn't exist yet in
+                                                      -- Phase 4) — column ships now, FK constraint
+                                                      -- attached by Phase 5's migration.
 
 -- Supply classification (portal fields)
 supply_type           varchar(20)   -- 'Outward' | 'Inward'
@@ -328,28 +313,33 @@ CONSTRAINT chk_eway_bills_generated_via
 -- Direction ↔ parent-FK integrity: exactly one parent per direction
 CONSTRAINT chk_eway_bills_direction_ref CHECK (
   (direction = 'Outbound'
-   AND vendor_shipment_id IS NULL
+   AND vendor_purchase_id IS NULL
    AND ((stock_request_id IS NOT NULL) <> (bill_id IS NOT NULL))    -- xor
   )
   OR
   (direction = 'Inbound'
    AND stock_request_id IS NULL
    AND bill_id IS NULL
-   AND vendor_shipment_id IS NOT NULL
+   AND vendor_purchase_id IS NOT NULL
   )
 )
 
 CREATE UNIQUE INDEX uq_eway_bills_number_active
   ON eway_bills(eway_number) WHERE status <> 'Cancelled'
-CREATE INDEX idx_eway_bills_direction_date ON eway_bills(direction, generation_date DESC)
-CREATE INDEX idx_eway_bills_stock_request  ON eway_bills(stock_request_id)  WHERE stock_request_id  IS NOT NULL
-CREATE INDEX idx_eway_bills_bill           ON eway_bills(bill_id)           WHERE bill_id           IS NOT NULL
-CREATE INDEX idx_eway_bills_vendor_shipmt  ON eway_bills(vendor_shipment_id) WHERE vendor_shipment_id IS NOT NULL
+CREATE INDEX idx_eway_bills_direction_date  ON eway_bills(direction, generation_date DESC)
+CREATE INDEX idx_eway_bills_stock_request   ON eway_bills(stock_request_id)  WHERE stock_request_id  IS NOT NULL
+CREATE INDEX idx_eway_bills_bill            ON eway_bills(bill_id)           WHERE bill_id           IS NOT NULL
+CREATE INDEX idx_eway_bills_vendor_purchase ON eway_bills(vendor_purchase_id) WHERE vendor_purchase_id IS NOT NULL
 ```
 
-**Relationship semantics** — one parent record (stock_request / bill / vendor_shipment) can have **multiple** e-way bills (split-vehicle dispatch, staged shipments), so the FK is on this side. Typically 1:1.
+> Until Phase 5 ships, `direction = 'Inbound'` rows simply don't occur —
+> nothing in Phase 4 writes them. The column and constraint exist from day
+> one so Phase 5 doesn't need an ALTER on a table that already has live
+> Outbound rows in it.
 
-**24. `eway_api_logs`** — audit trail of every GSP API call (Phase 4b, but table exists from day 1)
+**Relationship semantics** — one parent record (stock_request / bill / vendor_purchase) can have **multiple** e-way bills (split-vehicle dispatch, staged shipments), so the FK is on this side. Typically 1:1.
+
+**23. `eway_api_logs`** — audit trail of every GSP API call (Phase 4b, but table exists from day 1)
 ```
 id                uuid PK
 eway_bill_id      uuid FK eway_bills NULL      -- NULL if call failed before local record was written
@@ -401,7 +391,7 @@ Non-negotiable for compliance disputes — "GSP claims success, portal doesn't s
 | Transporter master | `transporters` | v1 keeps transporter name freeform on `eway_bills`; promote to a picker when the client has 3+ recurring transporters |
 | Multi-attachment | `attachments` (polymorphic) | v1 stores one `attachment_url` per expense / e-way; promote if a single record needs multiple photos |
 | Godown/inventory expenses | `inventory_expenses` (or entity_type on expenses) | v1 tracks shop expenses only per client scope. Add a second table (or entity_type col) when godown OPEX is needed for consolidated P&L |
-| Full procurement (POs, GRNs, supplier bills, supplier payments) | `purchase_orders`, `purchase_order_items`, `goods_receipt_notes`, `supplier_bills`, `supplier_payments` | Phase 5. v1 has only `vendors` + `vendor_shipments` (header) as an FK anchor for inbound e-way — line-level GRN + AP ledger stays Phase 5 |
+| Full AP ledger (POs, GRNs, supplier bills, supplier payments) | `purchase_orders`, `purchase_order_items`, `goods_receipt_notes`, `supplier_bills`, `supplier_payments` | Not scheduled. Phase 5 (`phase5_vendor_purchases.md`) delivers `vendors` + `vendor_purchases`/`vendor_purchase_items` (header + line items, e-way anchor) — a real purchase record, but not a full PO→GRN→supplier-bill→payment ledger. Revisit only if the client asks for AP aging / vendor statements |
 
 ---
 
@@ -413,9 +403,8 @@ CREATE SEQUENCE return_code_seq           START 1;   -- RET0001
 CREATE SEQUENCE stock_take_code_seq       START 1;   -- STK0001
 CREATE SEQUENCE expense_code_seq          START 1;   -- EXP0001
 CREATE SEQUENCE vendor_code_seq           START 1;   -- VEN0001
-CREATE SEQUENCE vendor_shipment_code_seq  START 1;   -- SHIP0001
 ```
-Bill / return / stock-take / expense / vendor / shipment codes generated via DEFAULT on the code column. `number_series` table (T17) is admin-facing metadata — the sequences are the actual counter engine. E-way bill numbers are NOT sequenced locally — they come from the GST portal (Phase 4a: keyed in manually; Phase 4b: returned from GSP API) and are stored as-is on `eway_bills.eway_number`.
+Bill / return / stock-take / expense / vendor codes generated via DEFAULT on the code column (`vendor_purchase_code_seq` for `PUR0001` is defined in Phase 5, not here). `number_series` table (T17) is admin-facing metadata — the sequences are the actual counter engine. E-way bill numbers are NOT sequenced locally — they come from the GST portal (Phase 4a: keyed in manually; Phase 4b: returned from GSP API) and are stored as-is on `eway_bills.eway_number`.
 
 ---
 
@@ -436,13 +425,12 @@ Bill / return / stock-take / expense / vendor / shipment codes generated via DEF
 13. Create `shop_stock_takes` → `shop_stock_take_items`
 14. Create `expense_categories`, seed default rows (RENT, ELECTRICITY, WATER, PHONE_INTERNET, PURCHASE, REPAIR, SALARY, CLEANING, TRANSPORT, MISC)
 15. Create `shop_expenses`
-16. Create `vendors` (FK-anchor for inbound e-way)
-17. Create `vendor_shipments` (inbound header)
-18. Create `eway_bills` (both-direction, GSP-metadata-aware)
-19. Create `eway_api_logs`
-20. Create `number_series`, seed with initial rows (bill, return, stock_take, expense, vendor, vendor_shipment)
-21. Create `audit_log`
-22. Insert `app_settings` rows for POS + GSP knobs (creds themselves go to env / Key Vault, NOT here)
+16. Create `vendors` (FK-anchor for inbound e-way; `vendor_purchases` itself is created by Phase 5's migration, not here)
+17. Create `eway_bills` (both-direction, GSP-metadata-aware — `vendor_purchase_id` column present but unpopulated until Phase 5)
+18. Create `eway_api_logs`
+19. Create `number_series`, seed with initial rows (bill, return, stock_take, expense, vendor)
+20. Create `audit_log`
+21. Insert `app_settings` rows for POS + GSP knobs (creds themselves go to env / Key Vault, NOT here)
 
 ---
 
@@ -489,20 +477,16 @@ Bill / return / stock-take / expense / vendor / shipment codes generated via DEF
 - `fn_expense_search(shop_id, category_id?, from, to, search?, page, page_size)`
 - `fn_expense_summary(shop_id, from, to)` — category-wise rollup for the period
 
-**Vendors + Vendor shipments (Domain 6.7)**
+**Vendors (Domain 6.7)** — vendor master only; purchase-record SPs (`fn_vendor_purchase_*`) live in Phase 5
 - `fn_vendor_upsert(id?, name, gstin?, state_code?, address, contact_person, contact_phone, email)`
 - `fn_vendor_search(search?, active?, page, page_size)`
-- `fn_vendor_shipment_create(vendor_id, shipment_date, description, taxable_amount, total_amount, delivery_location, notes)`
-- `fn_vendor_shipment_mark_received(id, received_at)` — status Expected → Received
-- `fn_vendor_shipment_cancel(id, reason)`
-- `fn_vendor_shipment_search(vendor_id?, from, to, status?, page, page_size)`
 
 **E-way bills (Domain 6.7) — same SPs serve Phase 4a manual + Phase 4b API**
-- `fn_eway_bill_record(direction, parent_ref_type, parent_ref_id, eway_number, generation_date, ...all portal fields..., generated_via='Manual')` — used by both flows; Phase 4a keys everything, Phase 4b passes API-returned values
+- `fn_eway_bill_record(direction, parent_ref_type, parent_ref_id, eway_number, generation_date, ...all portal fields..., generated_via='Manual')` — used by both flows; Phase 4a keys everything, Phase 4b passes API-returned values. `parent_ref_type='VendorPurchase'` doesn't occur until Phase 5 ships
 - `fn_eway_bill_update(id, transporter_*, vehicle_number, ...)` — vehicle / transporter change mid-transit
 - `fn_eway_bill_cancel(id, reason)` — GST portal allows cancellation within 24h; local record mirrors
 - `fn_eway_bill_get_by_number(eway_number)` — dedupe lookup before insert
-- `fn_eway_bill_list_by_parent(parent_ref_type, parent_ref_id)` — list all e-way bills for a dispatch / bill / vendor_shipment
+- `fn_eway_bill_list_by_parent(parent_ref_type, parent_ref_id)` — list all e-way bills for a dispatch / bill / vendor purchase
 - `fn_eway_bill_search(direction?, shop_id?, from, to, status?, generated_via?, search?, page, page_size)`
 
 **E-way GSP API logs**
@@ -601,7 +585,7 @@ Every operational write ALSO posts to a `ledger_entries` table (balanced debit +
 | Missing | Impact | When |
 |---|---|---|
 | **Bank accounts** | Owner deposits ₹40k to bank at day-end — nowhere to record it, cash-only in Phase 4 | Future "banking" phase — `bank_accounts`, `bank_txns`, statement reconciliation |
-| **Accounts Payable (AP)** | `vendor_shipments` has an amount but no "we owe vendor X ₹40k, 30 days overdue" ledger | Phase 5 procurement — `supplier_bills` + `supplier_payments` |
+| **Accounts Payable (AP)** | Phase 5's `vendor_purchases` records an invoice amount but no "we owe vendor X ₹40k, 30 days overdue" ledger | Not scheduled — needs `supplier_bills` + `supplier_payments` (see the AP row in the deferred-tables list above) |
 | **Accounts Receivable (AR)** | No credit sales in v1, so no AR needed. If added later → new module | Only if fork #1 (credit sales) flips |
 | **Fixed assets + depreciation** | Buying a ₹80k fridge is a one-shot `shop_expenses` row today; proper accounting capitalises it and depreciates over 5 years | Phase 6 — `fixed_assets`, `depreciation_schedules` |
 | **Income tax provision** | GST is covered end-to-end; income tax on net profit isn't | Phase 6 |
