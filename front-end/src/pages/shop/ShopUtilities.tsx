@@ -359,7 +359,7 @@ export default function ShopUtilities() {
         onClose={(_e, reason) => { if (reason !== 'backdropClick') setDialogOpen(false) }}
         maxWidth="xs"
         fullWidth
-        slotProps={{ paper: { sx: { borderRadius: 3, bgcolor: '#FFFBE6' } } }}
+        slotProps={{ paper: { sx: { borderRadius: 3 } } }}
       >
         <DialogTitle sx={{ fontWeight: 600 }}>{editingId ? 'Edit' : 'Add'} Shop Expense</DialogTitle>
         <DialogContent dividers sx={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
