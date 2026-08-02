@@ -6,7 +6,33 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useCategories } from '../../hooks/useCategories'
+import { packSizeInGrams } from '../../utils/formatDispatched'
 import './thermal.css'
+
+// See PrintRequestPicklist for the full comment — same rule here: use the
+// effective dispatch (actual → draft → requested-fallback), and count
+// partial-weight lines by fractional pack count.
+type ThermalLine = {
+  dispatchedQty: number | null
+  dispatchedWeightG: number | null
+  draftDispatchedQty: number | null
+  draftDispatchedWeightG: number | null
+  weightValue: number | null
+  weightUnit: string | null
+}
+function effectiveDispatchPacks(it: ThermalLine): number | null {
+  if (it.dispatchedQty != null) return it.dispatchedQty
+  if (it.dispatchedWeightG != null) {
+    const pack = packSizeInGrams(it.weightValue, it.weightUnit)
+    if (pack) return it.dispatchedWeightG / pack
+  }
+  if (it.draftDispatchedQty != null) return it.draftDispatchedQty
+  if (it.draftDispatchedWeightG != null) {
+    const pack = packSizeInGrams(it.weightValue, it.weightUnit)
+    if (pack) return it.draftDispatchedWeightG / pack
+  }
+  return null
+}
 
 /**
  * Shop-user thermal print — 3" / 80mm receipt layout. Mirrors the
@@ -37,12 +63,16 @@ export default function PrintRequestThermal() {
     return () => clearTimeout(t)
   }, [request])
 
-  // Same effective-qty rule as the A4 picklist: post-dispatch shows what
-  // was actually delivered, pre-dispatch shows what the shop asked for.
+  // Effective dispatch amount = Σ (effective packs × MRP). Effective packs
+  // = finalised dispatch → draft → requested (untouched fallback). Mirrors
+  // the A4 picklist's rule so both printouts land the same total.
   const deliveredAmount = useMemo(() => {
     if (!request) return 0
     return (request.items ?? []).reduce(
-      (sum, it) => sum + (it.dispatchedQty ?? it.requestedQty) * it.unitPrice,
+      (sum, it) => {
+        const packs = effectiveDispatchPacks(it) ?? it.requestedQty
+        return sum + packs * it.unitPrice
+      },
       0,
     )
   }, [request])
@@ -89,9 +119,19 @@ export default function PrintRequestThermal() {
     return <div className="thermal-preview"><div className="thermal-page">Could not load request.</div></div>
   }
 
-  const hasDispatch = request.totalDispatchedQty != null
-  const grandTotal  = hasDispatch ? deliveredAmount : request.totalAmount
-  const qtyShown    = hasDispatch ? request.totalDispatchedQty : request.totalQty
+  // 01-Aug-2026 — grand total = effective dispatch amount (sum of line
+  // amounts), so the receipt total always matches what's printed above.
+  // qtyShown mirrors the same rule via deliveredQty computed off the
+  // effective packs; otherwise pre-dispatch printouts would show a total
+  // qty (from request.totalQty) that disagrees with the individual line
+  // Disp column.
+  const hasDispatch = request.status === 'Dispatched' || request.status === 'Received' || request.status === 'Accepted'
+  const grandTotal  = deliveredAmount
+  const deliveredQty = (request.items ?? []).reduce(
+    (sum, it) => sum + (effectiveDispatchPacks(it) ?? it.requestedQty),
+    0,
+  )
+  const qtyShown    = Math.round(deliveredQty)
 
   return (
     <div className="thermal-preview">
@@ -159,9 +199,13 @@ export default function PrintRequestThermal() {
             {/* Numeric column widths sized for ~6-char values ("12345.67")
                 with the 2mm cell padding-left from thermal.css factored in.
                 Item column flexes to the remainder of the 72mm strip. */}
+            {/* Qty column widened to fit "req/disp" pair (e.g. "11/10").
+                Client req 01-Aug-2026: show both requested + dispatched
+                on every printout regardless of state, so the drop is
+                visible per line. */}
             <tr>
               <th>Item</th>
-              <th className="num" style={{ width: 30 }}>Qty</th>
+              <th className="num" style={{ width: 50 }}>Req/Disp</th>
               <th className="num" style={{ width: 60 }}>Price</th>
               <th className="num" style={{ width: 72 }}>Amt</th>
             </tr>
@@ -201,8 +245,20 @@ export default function PrintRequestThermal() {
                           </td>
                         </tr>
                         {wg.items.map(it => {
-                          const qty = it.dispatchedQty ?? it.requestedQty
-                          const amt = qty * it.unitPrice
+                          // Effective dispatch packs — actual → draft →
+                          // null (untouched). Amount uses effQty (draft
+                          // or actual); untouched line falls back to
+                          // requestedQty for the kitchen's default plan.
+                          const dispPacks = effectiveDispatchPacks(it)
+                          const effQty    = dispPacks ?? it.requestedQty
+                          const amt       = effQty * it.unitPrice
+                          // Display: "req/disp" — if disp is null we show
+                          // "1/—"; if disp is fractional (partial weight)
+                          // trim to 2 decimals so "10.75" fits the 50px
+                          // column without wrap.
+                          const dispStr = dispPacks == null
+                            ? '—'
+                            : Number.isInteger(dispPacks) ? String(dispPacks) : dispPacks.toFixed(2)
                           return (
                             <tr key={it.id}>
                               <td>
@@ -211,7 +267,7 @@ export default function PrintRequestThermal() {
                                   {it.addedBy === 'Inventory' && <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700, letterSpacing: 0.3 }}>(INV)</span>}
                                 </div>
                               </td>
-                              <td className="num">{qty}</td>
+                              <td className="num">{it.requestedQty}/{dispStr}</td>
                               {/* Indian comma grouping (1,200.00 / 1,23,456.00)
                                   via formatINR — prefix:false drops the ₹
                                   since the column header already labels the
@@ -242,7 +298,10 @@ export default function PrintRequestThermal() {
           <span>Total Qty:</span>
           <span className="v">{qtyShown}</span>
 
-          {hasDispatch && qtyShown !== request.totalQty && (
+          {/* Always show requested when it differs from the effective dispatched
+              total (draft OR actual). Client can then see the gap regardless
+              of whether the request has been finalised or not. */}
+          {qtyShown !== request.totalQty && (
             <>
               <span>Requested Qty:</span>
               <span className="v">{request.totalQty}</span>
