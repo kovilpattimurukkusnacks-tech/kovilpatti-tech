@@ -402,7 +402,7 @@ export default function ShopBilling() {
             onChange={e => { setScan(e.target.value); setInlineError(null) }}
             onKeyDown={e => { if (e.key === 'Enter') handleScanEnter() }}
             placeholder="Scan barcode or search product…"
-            sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFFFF', fontWeight: 600 } }}
+            sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFF8DC', fontWeight: 600 } }}
             slotProps={{
               input: {
                 startAdornment: (
@@ -439,7 +439,7 @@ export default function ShopBilling() {
           sx={{
             borderRadius: 2,
             border: '2px solid #1F1F1F',
-            bgcolor: '#FFFFFF',
+            bgcolor: '#FFF8DC',
             overflow: 'hidden',
             position: { md: 'sticky' },
             top: { md: 16 },
