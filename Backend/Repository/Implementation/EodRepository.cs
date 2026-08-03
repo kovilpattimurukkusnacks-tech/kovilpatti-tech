@@ -12,8 +12,18 @@ public class EodRepository(IDbConnectionFactory factory) : IEodRepository
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql = "SELECT * FROM fn_eod_expected(@p_shop_id, @p_from, @p_to)";
+        // Npgsql 6+ rejects non-UTC DateTimeOffset for timestamptz params.
+        // Service-layer defaults IST midnight in +05:30, so we normalise
+        // to UTC at the boundary — same absolute instant, offset 0.
         return await conn.QuerySingleAsync<EodExpected>(new CommandDefinition(
-            sql, new { p_shop_id = shopId, p_from = from, p_to = to }, cancellationToken: ct));
+            sql,
+            new
+            {
+                p_shop_id = shopId,
+                p_from    = from.ToUniversalTime(),
+                p_to      = to.ToUniversalTime(),
+            },
+            cancellationToken: ct));
     }
 
     // Small POCO for the LastCloseAtAsync scalar. Dapper's ValueTuple binding
@@ -46,8 +56,10 @@ public class EodRepository(IDbConnectionFactory factory) : IEodRepository
         {
             p_shop_id       = shopId,
             p_user_id       = userId,
-            p_window_from   = windowFrom,
-            p_window_to     = windowTo,
+            // Same UTC normalisation as ExpectedAsync — Npgsql rejects
+            // non-UTC DateTimeOffset for timestamptz params.
+            p_window_from   = windowFrom.ToUniversalTime(),
+            p_window_to     = windowTo.ToUniversalTime(),
             p_denominations = denominationsJson,
             p_notes         = notes,
         }, cancellationToken: ct));
