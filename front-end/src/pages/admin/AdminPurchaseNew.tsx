@@ -99,6 +99,10 @@ export default function AdminPurchaseNew() {
           barcode: null, categoryId: 0, categoryName: '', type: '',
           weightValue: it.weightValue, weightUnit: it.weightUnit,
           mrp: 0, purchasePrice: null, gst: null, active: true,
+          // Purchase items are inbound-only — the loose-sale flag lives on
+          // the retail (shop-side) product surface, so a synthetic stub
+          // rebuilt from purchase-item snapshots always defaults false.
+          soldLoose: false,
         },
         qty: it.qty,
         unitCost: it.unitCost,

@@ -36,6 +36,11 @@ export default function HeldBills({ onResume }: { onResume: (lines: ResumeLine[]
           id: i.productId, code: i.code, barcode: i.barcode, name: i.name,
           categoryName: null,
           weightValue: i.weightValue, weightUnit: i.weightUnit, mrp: i.mrp, onHand: i.onHand,
+          // Held-bill items don't carry the sold_loose flag (v1 doesn't
+          // preserve loose lines across a hold/resume). Default to false;
+          // the ShopBilling addProduct path would branch to the loose
+          // dialog if we ever lit this true on a held-then-resumed cart.
+          soldLoose: false,
         },
         qty: i.qty,
       }))

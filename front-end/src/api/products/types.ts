@@ -14,6 +14,8 @@ export type ProductDto = {
   purchasePrice: number | null        // null when caller is shop_user (BE filters)
   gst: number | null                  // GST % (0..100). Hidden in the UI for now.
   active: boolean
+  /** 01-Aug-2026 (Phase 4c): opt-in flag — POS lets cashier pick a weight. */
+  soldLoose: boolean
 }
 
 export type CreateProductRequest = {
@@ -28,6 +30,7 @@ export type CreateProductRequest = {
   purchasePrice: number
   gst?: number | null                 // hidden — omit from the form
   active?: boolean
+  soldLoose?: boolean
 }
 
 export type UpdateProductRequest = {
@@ -42,6 +45,7 @@ export type UpdateProductRequest = {
   purchasePrice: number
   gst?: number | null                 // hidden — omit from the form; BE preserves existing value
   active: boolean
+  soldLoose?: boolean
 }
 
 export type ProductListFilters = {

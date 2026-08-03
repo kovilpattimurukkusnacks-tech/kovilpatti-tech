@@ -13,6 +13,7 @@ public interface IProductPayload
     decimal PurchasePrice { get; }
     decimal? Gst { get; }
     bool Active { get; }
+    bool SoldLoose { get; }
 }
 
 public record CreateProductRequest(
@@ -28,5 +29,7 @@ public record CreateProductRequest(
     decimal? Gst = null,
     bool Active = true,
     // Optional scannable code for POS billing (14-Jul-2026). Blank → null.
-    string? Barcode = null
+    string? Barcode = null,
+    // 01-Aug-2026 (Phase 4c): loose-sale opt-in flag.
+    bool SoldLoose = false
 ) : IProductPayload;

@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from 'react'
-import { Banknote, CreditCard, History, LayoutGrid, Minus, PauseCircle, Plus, Printer, ReceiptText, ScanBarcode, Smartphone, Trash2, Undo2, Users, XCircle } from 'lucide-react'
+import { Banknote, CreditCard, History, LayoutGrid, Minus, PauseCircle, Percent, Plus, Printer, ReceiptText, ScanBarcode, Smartphone, Trash2, Undo2, Users, Wallet, XCircle } from 'lucide-react'
 import {
   Alert, Box, Button, Chip, CircularProgress, Dialog, DialogActions, DialogContent,
   DialogTitle, IconButton, InputAdornment, MenuItem, Paper,
@@ -15,6 +15,9 @@ import CustomerBar from '../../components/billing/CustomerBar'
 import CreditCustomers from '../../components/billing/CreditCustomers'
 import HeldBills, { type ResumeLine } from '../../components/billing/HeldBills'
 import ProductBrowser from '../../components/billing/ProductBrowser'
+import DiscountDialog, { type BillDiscount } from '../../components/billing/DiscountDialog'
+import EodCloseDialog from '../../components/billing/EodCloseDialog'
+import LooseWeightDialog from '../../components/billing/LooseWeightDialog'
 import type { BillingProductDto, TenderMode, CancelReasonType } from '../../api/bills/types'
 import type { CustomerDto } from '../../api/customers/types'
 
@@ -35,9 +38,42 @@ const cancelReasonLabel = (t: CancelReasonType | null) =>
 // scan box — exact barcode-or-code matches add straight to the bill.
 // ─────────────────────────────────────────────────────────────────
 
+// 01-Aug-2026 (Phase 4c): loose-sale support layered on top of packet mode.
+// XOR at the line level — a line is EITHER a packet count (qty > 0) OR a
+// loose weight (looseWeightG > 0). Mirrors the BE DTO.
 type BillLine = {
   product: BillingProductDto
-  qty: number
+  qty?: number | null
+  looseWeightG?: number | null
+}
+
+/** Pack size in grams — used by both amount + stock-guard math for loose. */
+function packSizeGrams(p: BillingProductDto): number | null {
+  if (!p.weightValue || p.weightValue <= 0) return null
+  if (p.weightUnit === 'kg') return p.weightValue * 1000
+  if (p.weightUnit === 'g')  return p.weightValue
+  return null
+}
+
+/** Whole packets a line consumes from on_hand. Packet mode = qty; loose mode
+ *  = ceil(weight/pack) so opening a pack to sell 300g deducts 1 packet. */
+function linePacketsConsumed(l: BillLine): number {
+  if (l.qty != null) return l.qty
+  if (l.looseWeightG != null) {
+    const pack = packSizeGrams(l.product)
+    if (pack) return Math.ceil(l.looseWeightG / pack)
+  }
+  return 0
+}
+
+/** Money for a cart line — packet: qty × mrp; loose: (g/packG) × mrp. */
+function lineAmount(l: BillLine): number {
+  if (l.qty != null) return l.qty * l.product.mrp
+  if (l.looseWeightG != null) {
+    const pack = packSizeGrams(l.product)
+    if (pack) return (l.looseWeightG / pack) * l.product.mrp
+  }
+  return 0
 }
 
 export default function ShopBilling() {
@@ -57,6 +93,15 @@ export default function ShopBilling() {
   const [savedBillCode, setSavedBillCode] = useState<string | null>(null)
   const [inlineError, setInlineError] = useState<string | null>(null)
   const [browseOpen, setBrowseOpen] = useState(false)
+  // Phase 4c — bill-level discount. null = no discount. Percent → 0-100,
+  // Amount → flat ₹ off. Cleared on every cart reset (new bill).
+  const [discount, setDiscount] = useState<BillDiscount>(null)
+  const [discountOpen, setDiscountOpen] = useState(false)
+  // Phase 4c — EOD close-out dialog.
+  const [eodOpen, setEodOpen] = useState(false)
+  // Phase 4c — loose-weight dialog. Set to the product being weighed; null
+  // = dialog closed. Cashier commits weight via LooseWeightDialog.onConfirm.
+  const [looseTarget, setLooseTarget] = useState<BillingProductDto | null>(null)
   // Keep focus on the scan box — the scanner is keyboard-wedge hardware.
   const scanRef = useRef<HTMLInputElement>(null)
 
@@ -73,12 +118,21 @@ export default function ShopBilling() {
   const createBill = useCreateBill()
   const createHold = useCreateHold()
 
-  const qtyInCart = (productId: string) =>
-    lines.find(l => l.product.id === productId)?.qty ?? 0
+  const qtyInCart = (productId: string) => {
+    const line = lines.find(l => l.product.id === productId)
+    return line ? linePacketsConsumed(line) : 0
+  }
 
   const addProduct = (p: BillingProductDto) => {
     setSavedBillCode(null)
     setInlineError(null)
+    // Phase 4c — sold-loose products branch to the weight dialog instead
+    // of auto-adding a packet. Once weight is confirmed, addLooseLine
+    // pushes the line with looseWeightG set + qty null.
+    if (p.soldLoose) {
+      setLooseTarget(p)
+      return
+    }
     // Soft client-side stock guard — the server enforces it again inside
     // the transaction, this just avoids an obvious round-trip.
     if (qtyInCart(p.id) + 1 > p.onHand) {
@@ -88,12 +142,35 @@ export default function ShopBilling() {
     setLines(prev => {
       const i = prev.findIndex(l => l.product.id === p.id)
       if (i >= 0) {
+        // Only bump the qty on packet lines. A loose line for the same SKU
+        // stays as-is; opening the dialog for the same product would let
+        // the cashier weigh more if desired.
+        const existing = prev[i]
+        if (existing.qty == null) {
+          setInlineError(`${p.name} is already on the bill as a loose sale — remove it first to switch to packets.`)
+          return prev
+        }
         const next = [...prev]
-        next[i] = { ...next[i], qty: next[i].qty + 1 }
+        next[i] = { ...next[i], qty: (existing.qty ?? 0) + 1 }
         return next
       }
       return [...prev, { product: p, qty: 1 }]
     })
+  }
+
+  /** Called by LooseWeightDialog.onConfirm — the dialog has already run the
+   *  weight > 0 and stock checks, so we just push the line and close. */
+  const addLooseLine = (looseWeightG: number) => {
+    if (!looseTarget) return
+    setLines(prev => {
+      const i = prev.findIndex(l => l.product.id === looseTarget.id)
+      if (i >= 0) {
+        setInlineError(`${looseTarget.name} is already on the bill — remove it first to change weight.`)
+        return prev
+      }
+      return [...prev, { product: looseTarget, qty: null, looseWeightG }]
+    })
+    setLooseTarget(null)
   }
 
   const setQty = (id: string, qty: number) => {
@@ -126,8 +203,17 @@ export default function ShopBilling() {
     scanRef.current?.focus()
   }
 
-  const totalQty = lines.reduce((s, l) => s + l.qty, 0)
-  const total = lines.reduce((s, l) => s + l.qty * l.product.mrp, 0)
+  const totalQty = lines.reduce((s, l) => s + linePacketsConsumed(l), 0)
+  // Phase 4c: subtotal = pre-discount line sum. total = post-discount amount
+  // the customer actually pays (matches SP's total_amount + payment settle).
+  // Loose lines contribute (weight/pack) × mrp via lineAmount().
+  const subtotal = lines.reduce((s, l) => s + lineAmount(l), 0)
+  const discountAmount = discount == null
+    ? 0
+    : discount.kind === 'Percent'
+      ? Math.min(subtotal, Math.round(subtotal * discount.value) / 100)
+      : Math.min(subtotal, discount.value)
+  const total = subtotal - discountAmount
 
   // Payment maths. Single tender ⇒ amount is implicitly the full total.
   const isSplit = payments.length > 1
@@ -174,8 +260,16 @@ export default function ShopBilling() {
     createBill.mutate(
       {
         payments: reqPayments,
-        items: lines.map(l => ({ productId: l.product.id, qty: l.qty })),
+        items: lines.map(l => ({
+          productId: l.product.id,
+          qty: l.qty ?? null,
+          looseWeightG: l.looseWeightG ?? null,
+        })),
         customerId: customer?.id ?? null,
+        // Phase 4c: bill-level discount rides on the payload — server
+        // computes the ₹ actually taken off and stores it on the bill row.
+        discountKind: discount?.kind ?? null,
+        discountValue: discount?.value ?? null,
       },
       {
         onSuccess: created => {
@@ -183,6 +277,7 @@ export default function ShopBilling() {
           setLines([])
           resetPayments()
           setCustomer(null)
+          setDiscount(null)
           scanRef.current?.focus()
           // Save & Print opens the 80mm receipt in a new tab, which
           // auto-fires the browser print dialog.
@@ -202,10 +297,14 @@ export default function ShopBilling() {
     createHold.mutate(
       {
         customerId: customer?.id ?? null,
-        items: lines.map(l => ({ productId: l.product.id, qty: l.qty })),
+        items: lines.map(l => ({
+          productId: l.product.id,
+          qty: l.qty ?? null,
+          looseWeightG: l.looseWeightG ?? null,
+        })),
       },
       {
-        onSuccess: () => { setLines([]); resetPayments(); setCustomer(null); scanRef.current?.focus() },
+        onSuccess: () => { setLines([]); resetPayments(); setCustomer(null); setDiscount(null); scanRef.current?.focus() },
         onError: err => setInlineError(err instanceof Error ? err.message : 'Failed to hold the bill.'),
       },
     )
@@ -231,7 +330,7 @@ export default function ShopBilling() {
           : 'Customers who owe credit — settle repayments and view statements'
         }
         action={
-          <Box sx={{ display: 'flex', gap: 1 }}>
+          <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
             {([
               { key: 'pos' as const, label: 'Billing', icon: <ReceiptText className="w-4 h-4" /> },
               { key: 'history' as const, label: 'Recent Bills', icon: <History className="w-4 h-4" /> },
@@ -247,6 +346,16 @@ export default function ShopBilling() {
                 {t.label}
               </Button>
             ))}
+            {/* Phase 4c — Close Day sits outside the view-tab group since it
+                isn't a view; it opens a modal for the end-of-day count. */}
+            <Button
+              variant="outlined"
+              startIcon={<Wallet className="w-4 h-4" />}
+              onClick={() => setEodOpen(true)}
+              sx={{ textTransform: 'none', fontWeight: 700, borderColor: '#8A6200', color: '#8A6200' }}
+            >
+              Close Day
+            </Button>
           </Box>
         }
       />
@@ -381,44 +490,102 @@ export default function ShopBilling() {
                     </TableCell>
                   </TableRow>
                 )}
-                {lines.map(l => (
-                  <TableRow key={l.product.id} sx={{ bgcolor: '#FFFBE6' }}>
-                    <TableCell>
-                      <Box sx={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}>{l.product.name}</Box>
-                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>{formatINR(l.product.mrp)} each</Box>
-                    </TableCell>
-                    <TableCell align="center">
-                      <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
-                        <IconButton size="small" onClick={() => setQty(l.product.id, l.qty - 1)} aria-label="Decrease">
-                          <Minus className="w-3.5 h-3.5" />
+                {lines.map(l => {
+                  const isLoose = l.qty == null && l.looseWeightG != null
+                  return (
+                    <TableRow key={l.product.id} sx={{ bgcolor: '#FFFBE6' }}>
+                      <TableCell>
+                        <Box sx={{ fontWeight: 600, fontSize: 13, lineHeight: 1.3 }}>
+                          {l.product.name}
+                          {isLoose && (
+                            <Box component="span" sx={{ ml: 0.75, px: 0.75, py: 0.15, fontSize: 9, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: '#7C4A00', border: '1px solid #7C4A00', borderRadius: 0.5 }}>
+                              LOOSE
+                            </Box>
+                          )}
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {isLoose ? `${formatINR(lineAmount(l))} @ ${l.looseWeightG} g` : `${formatINR(l.product.mrp)} each`}
+                        </Box>
+                      </TableCell>
+                      <TableCell align="center">
+                        {isLoose ? (
+                          <Box sx={{ fontWeight: 700, fontFamily: 'monospace' }}>{l.looseWeightG} g</Box>
+                        ) : (
+                          <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 0.5 }}>
+                            <IconButton size="small" onClick={() => setQty(l.product.id, (l.qty ?? 0) - 1)} aria-label="Decrease">
+                              <Minus className="w-3.5 h-3.5" />
+                            </IconButton>
+                            <Box sx={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{l.qty}</Box>
+                            <IconButton size="small" onClick={() => setQty(l.product.id, (l.qty ?? 0) + 1)} aria-label="Increase">
+                              <Plus className="w-3.5 h-3.5" />
+                            </IconButton>
+                          </Box>
+                        )}
+                      </TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
+                        {formatINR(lineAmount(l))}
+                      </TableCell>
+                      <TableCell>
+                        <IconButton
+                          size="small"
+                          onClick={() => setLines(prev => prev.filter(x => x.product.id !== l.product.id))}
+                          aria-label="Remove"
+                        >
+                          <Trash2 className="w-3.5 h-3.5 text-[#C62828]" />
                         </IconButton>
-                        <Box sx={{ fontWeight: 700, minWidth: 24, textAlign: 'center' }}>{l.qty}</Box>
-                        <IconButton size="small" onClick={() => setQty(l.product.id, l.qty + 1)} aria-label="Increase">
-                          <Plus className="w-3.5 h-3.5" />
-                        </IconButton>
-                      </Box>
-                    </TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700, whiteSpace: 'nowrap' }}>
-                      {formatINR(l.qty * l.product.mrp)}
-                    </TableCell>
-                    <TableCell>
-                      <IconButton size="small" onClick={() => setQty(l.product.id, 0)} aria-label="Remove">
-                        <Trash2 className="w-3.5 h-3.5 text-[#C62828]" />
-                      </IconButton>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
           </TableContainer>
 
           <Box sx={{ borderTop: '2px solid rgba(31,31,31,0.15)', px: 2, py: 2 }}>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 2 }}>
+            {/* Phase 4c — subtotal + discount rows only render when a
+                discount is applied. Uncluttered look for the common no-
+                discount path stays intact. */}
+            {discount && (
+              <>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, mb: 0.5, color: '#1F1F1F99' }}>
+                  <span>Subtotal</span>
+                  <span>{formatINR(subtotal)}</span>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, mb: 1, color: '#8A6200' }}>
+                  <span>
+                    Discount{discount.kind === 'Percent' ? ` (${discount.value}%)` : ''}
+                    <Box component="button"
+                      onClick={() => setDiscount(null)}
+                      sx={{ ml: 1, border: 'none', bgcolor: 'transparent', color: '#C62828', fontSize: 12, fontWeight: 700, cursor: 'pointer', textDecoration: 'underline' }}
+                    >clear</Box>
+                  </span>
+                  <span>− {formatINR(discountAmount)}</span>
+                </Box>
+              </>
+            )}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mb: 1 }}>
               <Box sx={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>
                 Grand Total
               </Box>
               <Box sx={{ fontSize: 24, fontWeight: 800 }}>{formatINR(total)}</Box>
             </Box>
+            {/* Add-discount button — only appears when cart has lines AND
+                no discount is set yet. Once applied, the discount row
+                itself carries a "clear" affordance so the button doesn't
+                need to duplicate that path. */}
+            {lines.length > 0 && !discount && (
+              <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
+                <Button
+                  size="small"
+                  startIcon={<Percent className="w-4 h-4" />}
+                  onClick={() => setDiscountOpen(true)}
+                  sx={{ textTransform: 'none', fontWeight: 700, fontSize: 12, color: '#8A6200' }}
+                >
+                  Add discount
+                </Button>
+              </Box>
+            )}
+            {discount && lines.length > 0 && <Box sx={{ mb: 2 }} />}
 
             {/* Payment — one tender by default; "Split" adds a second so a
                 bill can be part Cash + part UPI (feature #5). */}
@@ -532,6 +699,34 @@ export default function ShopBilling() {
         </Box>
       </Box>
       )}
+
+      {/* Phase 4c — Bill-level discount picker, rendered at the ShopBilling
+          root so it can see the discount state. */}
+      <DiscountDialog
+        open={discountOpen}
+        onClose={() => setDiscountOpen(false)}
+        subtotal={subtotal}
+        current={discount}
+        onApply={setDiscount}
+      />
+
+      {/* Phase 4c — EOD close-out dialog. onClosed refires the recent-bills
+          list (via the eod hook's invalidate) but nothing needs to happen at
+          this layer besides shutting the modal. */}
+      <EodCloseDialog
+        open={eodOpen}
+        onClose={() => setEodOpen(false)}
+        onClosed={() => setEodOpen(false)}
+      />
+
+      {/* Phase 4c — Loose-weight picker. Opens when a cashier clicks a
+          sold_loose product; confirmed weight pushes a loose line. */}
+      <LooseWeightDialog
+        open={!!looseTarget}
+        product={looseTarget}
+        onClose={() => setLooseTarget(null)}
+        onConfirm={addLooseLine}
+      />
     </div>
   )
 }
@@ -787,22 +982,46 @@ function BillDetailDialog({ billId, onClose }: { billId: string | null; onClose:
                 </TableRow>
               </TableHead>
               <TableBody>
-                {b.items.map(i => (
-                  <TableRow key={i.id}>
-                    <TableCell>
-                      <Box sx={{ fontWeight: 600, fontSize: 13 }}>{i.productName}</Box>
-                      <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
-                        {i.weightValue != null ? `${i.weightValue} ${i.weightUnit ?? ''} · ` : ''}{i.productCode}
-                      </Box>
-                    </TableCell>
-                    <TableCell align="center">{i.qty}</TableCell>
-                    <TableCell align="right">{formatINR(i.unitPrice)}</TableCell>
-                    <TableCell align="right" sx={{ fontWeight: 700 }}>{formatINR(i.lineTotal)}</TableCell>
-                  </TableRow>
-                ))}
+                {b.items.map(i => {
+                  const isLoose = i.qty == null && i.looseWeightG != null
+                  return (
+                    <TableRow key={i.id}>
+                      <TableCell>
+                        <Box sx={{ fontWeight: 600, fontSize: 13 }}>
+                          {i.productName}
+                          {isLoose && (
+                            <Box component="span" sx={{ ml: 0.75, px: 0.75, py: 0.15, fontSize: 9, fontWeight: 800, letterSpacing: 0.4, textTransform: 'uppercase', color: '#7C4A00', border: '1px solid #7C4A00', borderRadius: 0.5 }}>
+                              LOOSE
+                            </Box>
+                          )}
+                        </Box>
+                        <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
+                          {i.weightValue != null ? `${i.weightValue} ${i.weightUnit ?? ''} · ` : ''}{i.productCode}
+                        </Box>
+                      </TableCell>
+                      <TableCell align="center">{isLoose ? `${i.looseWeightG} g` : i.qty}</TableCell>
+                      <TableCell align="right">{formatINR(i.unitPrice)}</TableCell>
+                      <TableCell align="right" sx={{ fontWeight: 700 }}>{formatINR(i.lineTotal)}</TableCell>
+                    </TableRow>
+                  )
+                })}
               </TableBody>
             </Table>
-            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: 2 }}>
+            {/* Phase 4c — subtotal + discount rows on the review dialog
+                (only when a discount was applied on the original bill). */}
+            {b.discountAmount > 0 && (
+              <Box sx={{ mt: 2 }}>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#1F1F1F99' }}>
+                  <span>Subtotal</span>
+                  <span>{formatINR(b.subtotal)}</span>
+                </Box>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, color: '#8A6200' }}>
+                  <span>Discount{b.discountKind === 'Percent' && b.discountValue != null ? ` (${b.discountValue}%)` : ''}</span>
+                  <span>− {formatINR(b.discountAmount)}</span>
+                </Box>
+              </Box>
+            )}
+            <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', mt: b.discountAmount > 0 ? 0.5 : 2 }}>
               <Box sx={{ fontSize: 12, fontWeight: 700, textTransform: 'uppercase', letterSpacing: 0.5, color: '#1F1F1F99' }}>
                 Grand Total
               </Box>

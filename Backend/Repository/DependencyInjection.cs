@@ -74,6 +74,9 @@ public static class DependencyInjection
         // Phase 5b — inbound e-way bills (attached to vendor_purchases)
         services.AddScoped<IEwayBillRepository, EwayBillRepository>();
 
+        // Phase 4c — EOD close-out (cash_sessions + cash_denominations)
+        services.AddScoped<IEodRepository, EodRepository>();
+
         return services;
     }
 }

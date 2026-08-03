@@ -33,7 +33,8 @@ RETURNS TABLE (
   weight_value  numeric,
   weight_unit   varchar,
   mrp           numeric,
-  on_hand       numeric
+  on_hand       numeric,
+  sold_loose    boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id,
@@ -44,7 +45,8 @@ LANGUAGE sql STABLE AS $$
          p.weight_value,
          p.weight_unit,
          p.mrp,
-         COALESCE(si.on_hand, 0) AS on_hand
+         COALESCE(si.on_hand, 0) AS on_hand,
+         p.sold_loose
   FROM   products p
   LEFT   JOIN categories c ON c.id = p.category_id
   LEFT   JOIN shop_inventory si
@@ -79,37 +81,64 @@ $$;
 -- ------------------------------------------------------------
 -- p_customer_id: optional customer (walk-in = NULL). A 'Credit' tender
 -- requires one and posts to their balance/ledger (feature #4).
+-- 01-Aug-2026 (Phase 4c): fn_bill_create signature grew p_discount_kind +
+-- p_discount_value. DROP the old shape so PostgreSQL can re-create with
+-- the extended RETURNS TABLE (existing callers can't overload just by
+-- adding params at the tail — Dapper resolves by name).
+DROP FUNCTION IF EXISTS fn_bill_create(uuid, uuid, uuid, jsonb, jsonb, varchar);
+
 CREATE OR REPLACE FUNCTION fn_bill_create(
   p_shop_id       uuid,
   p_user_id       uuid,
   p_customer_id   uuid,
   p_payments      jsonb,
   p_items         jsonb,
-  p_notes         varchar DEFAULT NULL
+  p_notes         varchar DEFAULT NULL,
+  -- Bill-level discount. 'Percent' → discount_value is 0-100 (%),
+  -- 'Amount' → discount_value is a flat ₹ off. NULL/NULL = no discount.
+  p_discount_kind  varchar DEFAULT NULL,
+  p_discount_value numeric DEFAULT NULL
 )
 RETURNS TABLE (
-  id           uuid,
-  code         varchar,
-  total_items  int,
-  total_qty    int,
-  total_amount numeric
+  id              uuid,
+  code            varchar,
+  total_items     int,
+  total_qty       int,
+  subtotal        numeric,
+  discount_amount numeric,
+  total_amount    numeric
 )
 LANGUAGE plpgsql AS $$
 DECLARE
-  v_bill_id       uuid;
-  v_code          varchar(20);
-  v_line          record;
-  v_pay           record;
-  v_product       record;
-  v_total_items   int := 0;
-  v_total_qty     int := 0;
-  v_total_amount  numeric(12,2) := 0;
-  v_pay_count     int;
-  v_pay_sum       numeric(12,2) := 0;
-  v_credit_sum    numeric(12,2) := 0;
-  v_summary_mode  varchar(10);
-  v_cust          record;
+  v_bill_id         uuid;
+  v_code            varchar(20);
+  v_line            record;
+  v_pay             record;
+  v_product         record;
+  v_total_items     int := 0;
+  v_total_qty       int := 0;
+  v_subtotal        numeric(12,2) := 0;
+  v_discount_amount numeric(12,2) := 0;
+  v_total_amount    numeric(12,2) := 0;
+  v_pay_count       int;
+  v_pay_sum         numeric(12,2) := 0;
+  v_credit_sum      numeric(12,2) := 0;
+  v_summary_mode    varchar(10);
+  v_cust            record;
 BEGIN
+  -- Discount input validation. Kind + value move together.
+  IF (p_discount_kind IS NULL) <> (p_discount_value IS NULL) THEN
+    RAISE EXCEPTION 'Discount kind and value must both be set or both be NULL.';
+  END IF;
+  IF p_discount_kind IS NOT NULL AND p_discount_kind NOT IN ('Percent','Amount') THEN
+    RAISE EXCEPTION 'Discount kind must be Percent or Amount.';
+  END IF;
+  IF p_discount_kind = 'Percent' AND (p_discount_value < 0 OR p_discount_value > 100) THEN
+    RAISE EXCEPTION 'Percent discount must be between 0 and 100.';
+  END IF;
+  IF p_discount_kind = 'Amount' AND p_discount_value < 0 THEN
+    RAISE EXCEPTION 'Amount discount cannot be negative.';
+  END IF;
   IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'Bill must contain at least one item.';
   END IF;
@@ -165,35 +194,101 @@ BEGIN
   VALUES (p_shop_id, p_customer_id, v_summary_mode, p_notes, p_user_id)
   RETURNING bills.id, bills.code INTO v_bill_id, v_code;
 
-  FOR v_line IN
-    SELECT (x->>'productId')::uuid AS product_id, (x->>'qty')::int AS qty
-    FROM jsonb_array_elements(p_items) x
-  LOOP
-    IF v_line.qty IS NULL OR v_line.qty <= 0 THEN
-      RAISE EXCEPTION 'Quantity must be a positive whole number.';
-    END IF;
+  -- 01-Aug-2026 (Phase 4c): each line is EITHER a packet qty OR a loose
+  -- weight in grams. Loose lines cost `(loose_g / pack_g) × mrp` at the
+  -- product's snapshot MRP, and deduct CEIL(loose_g / pack_g) packets
+  -- from shop stock (opening a pack for the sale forfeits its remainder
+  -- until the shop physically fills the next open-pack container).
+  DECLARE
+    v_line_qty      int;
+    v_line_loose_g  numeric(10,3);
+    v_pack_g        numeric(10,3);
+    v_line_total    numeric(12,2);
+    v_stock_units   int;
+  BEGIN
+    FOR v_line IN
+      SELECT (x->>'productId')::uuid AS product_id,
+             NULLIF(x->>'qty', '')::int          AS qty,
+             NULLIF(x->>'looseWeightG', '')::numeric AS loose_g
+      FROM jsonb_array_elements(p_items) x
+    LOOP
+      v_line_qty     := v_line.qty;
+      v_line_loose_g := v_line.loose_g;
 
-    SELECT p.id, p.name, p.mrp INTO v_product
-    FROM products p
-    WHERE p.id = v_line.product_id AND p.is_deleted = false AND p.active = true;
-    IF NOT FOUND THEN
-      RAISE EXCEPTION 'Product % not found or inactive.', v_line.product_id;
-    END IF;
+      IF (v_line_qty IS NULL) = (v_line_loose_g IS NULL) THEN
+        RAISE EXCEPTION 'Each line must be either a packet qty OR a loose weight (grams).';
+      END IF;
+      IF v_line_qty IS NOT NULL AND v_line_qty <= 0 THEN
+        RAISE EXCEPTION 'Quantity must be a positive whole number.';
+      END IF;
+      IF v_line_loose_g IS NOT NULL AND v_line_loose_g <= 0 THEN
+        RAISE EXCEPTION 'Loose weight must be greater than zero.';
+      END IF;
 
-    INSERT INTO bill_items (bill_id, product_id, qty, unit_price)
-    VALUES (v_bill_id, v_product.id, v_line.qty, v_product.mrp);
+      SELECT p.id, p.name, p.mrp, p.sold_loose, p.weight_value, p.weight_unit
+        INTO v_product
+      FROM products p
+      WHERE p.id = v_line.product_id AND p.is_deleted = false AND p.active = true;
+      IF NOT FOUND THEN
+        RAISE EXCEPTION 'Product % not found or inactive.', v_line.product_id;
+      END IF;
 
-    -- Ledger write — row-locks (shop, product); raises if on_hand would
-    -- go negative, rolling back the whole bill.
-    PERFORM fn_shop_inventory_sale(
-      p_shop_id, v_product.id, v_line.qty, v_bill_id, 'Bill ' || v_code, p_user_id);
+      IF v_line_loose_g IS NOT NULL THEN
+        IF NOT v_product.sold_loose THEN
+          RAISE EXCEPTION 'Product "%" is not marked for loose sale.', v_product.name;
+        END IF;
+        v_pack_g := CASE v_product.weight_unit
+                      WHEN 'kg' THEN v_product.weight_value * 1000
+                      WHEN 'g'  THEN v_product.weight_value
+                      ELSE NULL
+                    END;
+        IF v_pack_g IS NULL OR v_pack_g <= 0 THEN
+          RAISE EXCEPTION 'Loose-sale product "%" needs weight_value + g/kg unit.', v_product.name;
+        END IF;
+        -- Rate/kg × sold weight = (mrp / pack_kg) × (loose_g/1000)
+        --                       = (loose_g / pack_g) × mrp
+        v_line_total  := ROUND((v_line_loose_g / v_pack_g) * v_product.mrp, 2);
+        v_stock_units := CEIL(v_line_loose_g / v_pack_g)::int;
+        INSERT INTO bill_items (
+          bill_id, product_id, qty, loose_weight_g, unit_price,
+          pack_weight_g_snapshot, line_total
+        ) VALUES (
+          v_bill_id, v_product.id, NULL, v_line_loose_g, v_product.mrp,
+          v_pack_g, v_line_total
+        );
+      ELSE
+        v_line_total  := v_line_qty * v_product.mrp;
+        v_stock_units := v_line_qty;
+        INSERT INTO bill_items (
+          bill_id, product_id, qty, unit_price, line_total
+        ) VALUES (
+          v_bill_id, v_product.id, v_line_qty, v_product.mrp, v_line_total
+        );
+      END IF;
 
-    v_total_items  := v_total_items + 1;
-    v_total_qty    := v_total_qty + v_line.qty;
-    v_total_amount := v_total_amount + (v_line.qty * v_product.mrp);
-  END LOOP;
+      -- Ledger write — row-locks (shop, product); raises if on_hand would
+      -- go negative, rolling back the whole bill.
+      PERFORM fn_shop_inventory_sale(
+        p_shop_id, v_product.id, v_stock_units, v_bill_id, 'Bill ' || v_code, p_user_id);
 
-  -- Tenders must settle the bill exactly (UI computes cash change only).
+      v_total_items := v_total_items + 1;
+      v_total_qty   := v_total_qty + v_stock_units;
+      v_subtotal    := v_subtotal + v_line_total;
+    END LOOP;
+  END;
+
+  -- Apply the bill-level discount now that subtotal is known. Amount cap
+  -- prevents an "Amount" discount that exceeds subtotal from producing a
+  -- negative total_amount (would trip chk_bills_totals_nonneg).
+  IF p_discount_kind = 'Percent' THEN
+    v_discount_amount := ROUND(v_subtotal * p_discount_value / 100, 2);
+  ELSIF p_discount_kind = 'Amount' THEN
+    v_discount_amount := LEAST(p_discount_value, v_subtotal);
+  END IF;
+  v_total_amount := v_subtotal - v_discount_amount;
+
+  -- Tenders must settle the DISCOUNTED total exactly (UI computes cash
+  -- change against total_amount, not subtotal).
   IF v_pay_sum <> v_total_amount THEN
     RAISE EXCEPTION 'Payments (%) must equal the bill total (%).', v_pay_sum, v_total_amount;
   END IF;
@@ -217,14 +312,18 @@ BEGIN
   END IF;
 
   UPDATE bills b
-  SET total_items  = v_total_items,
-      total_qty    = v_total_qty,
-      total_amount = v_total_amount,
-      updated_by   = p_user_id
+  SET total_items     = v_total_items,
+      total_qty       = v_total_qty,
+      subtotal        = v_subtotal,
+      discount_kind   = p_discount_kind,
+      discount_value  = p_discount_value,
+      discount_amount = v_discount_amount,
+      total_amount    = v_total_amount,
+      updated_by      = p_user_id
   WHERE b.id = v_bill_id;
 
   RETURN QUERY
-  SELECT b.id, b.code, b.total_items, b.total_qty, b.total_amount
+  SELECT b.id, b.code, b.total_items, b.total_qty, b.subtotal, b.discount_amount, b.total_amount
   FROM bills b WHERE b.id = v_bill_id;
 END;
 $$;
@@ -287,11 +386,16 @@ BEGIN
     RAISE EXCEPTION 'Bill % is already cancelled.', v_bill.code;
   END IF;
 
+  -- 01-Aug-2026: refund packet-equivalent for both modes. Packet lines
+  -- refund their `qty`; loose lines refund CEIL(loose_g / pack_g_snapshot)
+  -- (mirrors the packets consumed at sale time).
   FOR v_line IN
-    SELECT bi.product_id, bi.qty FROM bill_items bi WHERE bi.bill_id = p_bill_id
+    SELECT bi.product_id,
+           COALESCE(bi.qty, CEIL(bi.loose_weight_g / bi.pack_weight_g_snapshot)::int) AS refund_qty
+    FROM bill_items bi WHERE bi.bill_id = p_bill_id
   LOOP
     PERFORM fn_shop_inventory_refund(
-      p_shop_id, v_line.product_id, v_line.qty, p_bill_id,
+      p_shop_id, v_line.product_id, v_line.refund_qty, p_bill_id,
       'Cancel ' || v_bill.code || ': ' || p_reason_type, p_user_id
     );
   END LOOP;
@@ -330,6 +434,8 @@ RETURNS TABLE (
   payment_mode       varchar,
   total_items        int,
   total_qty          int,
+  subtotal           numeric,
+  discount_amount    numeric,
   total_amount       numeric,
   created_at         timestamptz,
   created_by_name    varchar,
@@ -345,6 +451,8 @@ LANGUAGE sql STABLE AS $$
          b.payment_mode,
          b.total_items,
          b.total_qty,
+         b.subtotal,
+         b.discount_amount,
          b.total_amount,
          b.created_at,
          u.full_name AS created_by_name,
@@ -384,6 +492,10 @@ RETURNS TABLE (
   payment_mode       varchar,
   total_items        int,
   total_qty          int,
+  subtotal           numeric,
+  discount_kind      varchar,
+  discount_value     numeric,
+  discount_amount    numeric,
   total_amount       numeric,
   notes              varchar,
   created_at         timestamptz,
@@ -403,6 +515,10 @@ LANGUAGE sql STABLE AS $$
          b.payment_mode,
          b.total_items,
          b.total_qty,
+         b.subtotal,
+         b.discount_kind,
+         b.discount_value,
+         b.discount_amount,
          b.total_amount,
          b.notes,
          b.created_at,
@@ -423,19 +539,24 @@ LANGUAGE sql STABLE AS $$
     AND  b.is_deleted = false;
 $$;
 
+-- 01-Aug-2026: signature widened with loose_weight_g + pack_weight_g_snapshot.
+DROP FUNCTION IF EXISTS fn_bill_get_items(uuid);
+
 CREATE OR REPLACE FUNCTION fn_bill_get_items(
   p_bill_id  uuid
 )
 RETURNS TABLE (
-  id            uuid,
-  product_id    uuid,
-  product_code  text,
-  product_name  varchar,
-  weight_value  numeric,
-  weight_unit   varchar,
-  qty           int,
-  unit_price    numeric,
-  line_total    numeric
+  id                     uuid,
+  product_id             uuid,
+  product_code           text,
+  product_name           varchar,
+  weight_value           numeric,
+  weight_unit            varchar,
+  qty                    int,
+  loose_weight_g         numeric,
+  pack_weight_g_snapshot numeric,
+  unit_price             numeric,
+  line_total             numeric
 )
 LANGUAGE sql STABLE AS $$
   SELECT bi.id,
@@ -445,6 +566,8 @@ LANGUAGE sql STABLE AS $$
          p.weight_value,
          p.weight_unit,
          bi.qty,
+         bi.loose_weight_g,
+         bi.pack_weight_g_snapshot,
          bi.unit_price,
          bi.line_total
   FROM   bill_items bi
@@ -479,6 +602,9 @@ RETURNS TABLE (
   returnable_qty   int
 )
 LANGUAGE sql STABLE AS $$
+  -- 01-Aug-2026: loose-weight lines (qty IS NULL) are excluded — v1 has
+  -- no partial-return path for loose sales. Customer wanting to reverse
+  -- a loose sale cancels the whole bill instead.
   SELECT bi.product_id,
          p.code AS product_code,
          p.name AS product_name,
@@ -502,6 +628,7 @@ LANGUAGE sql STABLE AS $$
   WHERE  b.id = p_bill_id
     AND  b.shop_id = p_shop_id
     AND  b.is_deleted = false
+    AND  bi.qty IS NOT NULL           -- exclude loose lines (v1)
   ORDER  BY p.name;
 $$;
 

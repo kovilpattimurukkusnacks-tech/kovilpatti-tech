@@ -15,5 +15,9 @@ public record ProductDto(
     decimal? PurchasePrice,
     // GST rate (percent). Hidden in the UI for now; surfaced later.
     decimal? Gst,
-    bool Active
+    bool Active,
+    /// 01-Aug-2026 (Phase 4c): admin toggle. When true the POS lets the
+    /// cashier pick a weight for this SKU at bill time. Only meaningful
+    /// when WeightUnit is 'g' or 'kg' AND WeightValue > 0.
+    bool SoldLoose = false
 );

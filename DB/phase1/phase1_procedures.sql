@@ -321,7 +321,9 @@ DROP FUNCTION IF EXISTS fn_product_get(uuid);
 -- 21-Jul-2026: signature gained p_include_inactive. Same rationale as
 -- fn_product_list_paged — hide inactive rows from shop/inventory pickers
 -- by default. Old shape dropped explicitly to avoid overload ambiguity.
+-- 01-Aug-2026: RETURNS TABLE grew sold_loose — drop 3-arg shape too.
 DROP FUNCTION IF EXISTS fn_product_list(varchar, int);
+DROP FUNCTION IF EXISTS fn_product_list(varchar, int, boolean);
 
 CREATE OR REPLACE FUNCTION fn_product_list(
   p_search           varchar DEFAULT NULL,
@@ -341,12 +343,13 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean
+  active             boolean,
+  sold_loose         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.sold_loose
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
@@ -385,12 +388,13 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean
+  active             boolean,
+  sold_loose         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.sold_loose
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.id = p_id AND p.is_deleted = false
@@ -427,7 +431,9 @@ $$;
 
 -- p_barcode added 14-Jul-2026 (POS billing scan). Old 11-arg signature
 -- dropped so positional calls can't hit an ambiguous overload.
+-- 01-Aug-2026 (Phase 4c): signature grew p_sold_loose.
 DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_create(varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid, varchar);
 
 CREATE OR REPLACE FUNCTION fn_product_create(
   p_code               varchar,
@@ -441,7 +447,8 @@ CREATE OR REPLACE FUNCTION fn_product_create(
   p_gst                numeric,
   p_active             boolean,
   p_user_id            uuid,
-  p_barcode            varchar DEFAULT NULL
+  p_barcode            varchar DEFAULT NULL,
+  p_sold_loose         boolean DEFAULT false
 )
 RETURNS uuid
 LANGUAGE plpgsql AS $$
@@ -450,16 +457,17 @@ DECLARE
 BEGIN
   INSERT INTO products (code, barcode, name, category_id, type,
                         weight_value, weight_unit, mrp, purchase_price,
-                        gst, active, created_by, updated_by)
+                        gst, active, sold_loose, created_by, updated_by)
   VALUES (p_code, NULLIF(btrim(p_barcode), ''), p_name, p_category_id, p_type,
           p_weight_value, p_weight_unit, p_mrp, p_purchase_price,
-          p_gst, p_active, p_user_id, p_user_id)
+          p_gst, p_active, COALESCE(p_sold_loose, false), p_user_id, p_user_id)
   RETURNING id INTO v_id;
   RETURN v_id;
 END;
 $$;
 
 DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_product_update(uuid, varchar, varchar, int, varchar, numeric, varchar, numeric, numeric, numeric, boolean, uuid, varchar);
 
 CREATE OR REPLACE FUNCTION fn_product_update(
   p_id                 uuid,
@@ -474,7 +482,8 @@ CREATE OR REPLACE FUNCTION fn_product_update(
   p_gst                numeric,
   p_active             boolean,
   p_user_id            uuid,
-  p_barcode            varchar DEFAULT NULL
+  p_barcode            varchar DEFAULT NULL,
+  p_sold_loose         boolean DEFAULT false
 )
 RETURNS boolean
 LANGUAGE plpgsql AS $$
@@ -497,6 +506,7 @@ BEGIN
       purchase_price     = p_purchase_price,
       gst                = p_gst,
       active             = p_active,
+      sold_loose         = COALESCE(p_sold_loose, false),
       updated_by         = p_user_id,
       updated_at         = now()
   WHERE id = p_id;

@@ -38,6 +38,9 @@ type FormValues = {
   mrp: string
   purchasePrice: string
   active: boolean
+  /** 01-Aug-2026 (Phase 4c): opt-in loose-sale. Only meaningful when
+   *  weightUnit is g/kg AND weightValue > 0 — the POS SP re-checks. */
+  soldLoose: boolean
   /** GST percent (0..100), raw input. Only surfaced when the global
    *  `gst_enabled` app-setting is true (19-Jun-2026, client #15).
    *  Empty string → send null to BE (preserves the existing strategy). */
@@ -150,10 +153,10 @@ export default function Products() {
     }
 
     if (formMode.kind === 'edit') {
-      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active }
+      const req: UpdateProductRequest = { ...code, ...common, ...gstField, active: values.active, soldLoose: values.soldLoose }
       await update.mutateAsync({ id: formMode.product.id, req })
     } else if (formMode.kind === 'create') {
-      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active }
+      const req: CreateProductRequest = { ...code, ...common, ...gstField, active: values.active, soldLoose: values.soldLoose }
       await create.mutateAsync(req)
     }
     closeForm()
@@ -438,6 +441,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
   const [mrp, setMrp] = useState('')
   const [purchasePrice, setPurchasePrice] = useState('')
   const [active, setActive] = useState(true)
+  const [soldLoose, setSoldLoose] = useState(false)
   // GST percent — only rendered + collected when the global gst_enabled
   // app-setting is true (19-Jun-2026, client #15). Stored values are
   // preserved across toggles: when global GST is OFF the input isn't
@@ -478,6 +482,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
     setMrp(product?.mrp?.toString() ?? '')
     setPurchasePrice(product?.purchasePrice?.toString() ?? '')
     setActive(product?.active ?? true)
+    setSoldLoose(product?.soldLoose ?? false)
     // Prefill GST if the product already has one (even if global is now OFF —
     // value persists silently so admin can toggle back without re-entering).
     setGst(product?.gst != null ? String(product.gst) : '')
@@ -547,6 +552,7 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
         mrp: mrpNum.toString(),
         purchasePrice: ppNum.toString(),
         active,
+        soldLoose,
         // Only send GST when the global master is ON. When OFF, the dialog
         // doesn't render the input and we omit the field entirely → BE
         // preserves whatever was already stored on the product.
@@ -757,9 +763,25 @@ function ProductFormDialog({ open, product, categories, submitting, submitError,
 
           {/* Manual layout instead of FormControlLabel so only the checkbox itself toggles,
               not the label text or surrounding whitespace. */}
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
-            <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
-            <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox checked={active} onChange={e => setActive(e.target.checked)} disabled={submitting} sx={{ p: 0.5 }} />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>Active</Box>
+            </Box>
+            {/* Phase 4c — loose-sale opt-in. Only meaningful for g/kg SKUs;
+                the POS SP rejects loose lines for other units. Kept enabled
+                either way so the admin can toggle the intent freely. */}
+            <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+              <Checkbox
+                checked={soldLoose}
+                onChange={e => setSoldLoose(e.target.checked)}
+                disabled={submitting}
+                sx={{ p: 0.5 }}
+              />
+              <Box component="span" sx={{ fontSize: 14, color: '#1F1F1F', userSelect: 'none' }}>
+                Sold loose (by weight)
+              </Box>
+            </Box>
           </Box>
           {err && <Box sx={{ color: 'error.main', fontSize: 14 }}>{err}</Box>}
           {submitError && <Alert severity="error" sx={{ whiteSpace: 'pre-line' }}>{submitError}</Alert>}

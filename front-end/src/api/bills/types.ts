@@ -24,11 +24,16 @@ export interface BillingProductDto {
   weightUnit: string | null
   mrp: number
   onHand: number
+  /** 01-Aug-2026 (Phase 4c): when true, POS prompts for a weight instead of
+   *  auto-adding 1 packet. Only meaningful with g/kg weightUnit + weightValue > 0. */
+  soldLoose: boolean
 }
 
+/** Cart line — XOR: packet mode uses qty (int > 0), loose uses looseWeightG (g > 0). */
 export interface BillLineRequest {
   productId: string
-  qty: number
+  qty?: number | null
+  looseWeightG?: number | null
 }
 
 /** One tender (feature #5, split payment). Multiple must sum to the total. */
@@ -37,11 +42,17 @@ export interface BillPaymentRequest {
   amount: number
 }
 
+/** Bill-level discount input. Percent → value in 0-100, Amount → flat ₹.
+ *  Both null when no discount. Actual ₹ applied is computed server-side. */
+export type DiscountKind = 'Percent' | 'Amount'
+
 export interface CreateBillRequest {
   payments: BillPaymentRequest[]
   items: BillLineRequest[]
   customerId?: string | null    // required when a payment is 'Credit'
   notes?: string | null
+  discountKind?: DiscountKind | null
+  discountValue?: number | null
 }
 
 export interface BillPaymentDto {
@@ -55,6 +66,8 @@ export interface BillCreatedDto {
   code: string
   totalItems: number
   totalQty: number
+  subtotal: number
+  discountAmount: number
   totalAmount: number
 }
 
@@ -65,6 +78,8 @@ export interface BillListItemDto {
   paymentMode: PaymentSummary
   totalItems: number
   totalQty: number
+  subtotal: number
+  discountAmount: number
   totalAmount: number
   createdAt: string
   createdByName: string | null
@@ -80,7 +95,12 @@ export interface BillItemDto {
   productName: string
   weightValue: number | null
   weightUnit: string | null
-  qty: number
+  /** Nullable — populated only for packet-mode lines. Loose lines set looseWeightG. */
+  qty: number | null
+  /** 01-Aug-2026 (Phase 4c): grams for loose-weight lines. */
+  looseWeightG: number | null
+  /** Pack weight in grams captured at sale time for loose lines. */
+  packWeightGSnapshot: number | null
   unitPrice: number
   lineTotal: number
 }
@@ -92,6 +112,10 @@ export interface BillDetailDto {
   paymentMode: PaymentSummary
   totalItems: number
   totalQty: number
+  subtotal: number
+  discountKind: DiscountKind | null
+  discountValue: number | null
+  discountAmount: number
   totalAmount: number
   notes: string | null
   createdAt: string

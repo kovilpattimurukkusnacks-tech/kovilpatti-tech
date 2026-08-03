@@ -95,6 +95,7 @@ public class ProductService(
             PurchasePrice    = request.PurchasePrice,
             Gst              = request.Gst,
             Active           = request.Active,
+            SoldLoose        = request.SoldLoose,
         };
 
         Guid newId;
@@ -497,7 +498,8 @@ public class ProductService(
             Mrp:              p.Mrp,
             PurchasePrice:    hidePurchase ? null : p.PurchasePrice,
             Gst:              p.Gst,
-            Active:           p.Active
+            Active:           p.Active,
+            SoldLoose:        p.SoldLoose
         );
     }
 }
