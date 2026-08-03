@@ -5,9 +5,13 @@ import {
   Alert, Autocomplete, Box, Button, IconButton, MenuItem, Paper, Table, TableBody,
   TableCell, TableHead, TableRow, TextField, Tooltip,
 } from '@mui/material'
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+import { DatePicker } from '@mui/x-date-pickers/DatePicker'
+import dayjs from 'dayjs'
 import PageHeader from '../../components/PageHeader'
 import { useToast } from '../../context/ToastContext'
-import { formatINR } from '../../utils/format'
+import { formatAmountInput, formatINR, stripAmountFormat } from '../../utils/format'
 import { useVendors } from '../../hooks/useVendors'
 import { useInventories } from '../../hooks/useInventories'
 import { useProducts } from '../../hooks/useProducts'
@@ -252,7 +256,7 @@ export default function AdminPurchaseNew() {
         </Alert>
       )}
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFBE6' }} elevation={0}>
         <Box sx={{ display: 'grid', gridTemplateColumns: { xs: '1fr', sm: '1fr 1fr' }, gap: 2 }}>
           <TextField
             select label="Vendor" value={vendorId}
@@ -269,8 +273,27 @@ export default function AdminPurchaseNew() {
             {godowns.map(g => <MenuItem key={g.id} value={g.id}>{g.name}</MenuItem>)}
           </TextField>
           <TextField label="Invoice Number" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} required size="small" disabled={readOnly || submitting} />
-          <TextField label="Invoice Date" type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} required size="small" disabled={readOnly || submitting} slotProps={{ inputLabel: { shrink: true } }} />
-          <TextField label="Invoice Amount (₹)" type="number" value={invoiceAmount} onChange={e => setInvoiceAmount(e.target.value)} required size="small" disabled={readOnly || submitting} />
+          {/* Same MUI X DatePicker used across the app (ShopUtilities,
+              AdminSettings, staff salary dialogs) — DD/MM/YYYY on every
+              machine, styled to match the app instead of the OS-native
+              calendar a plain type="date" input renders. */}
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <DatePicker
+              label="Invoice Date"
+              format="DD/MM/YYYY"
+              value={invoiceDate ? dayjs(invoiceDate) : null}
+              onChange={v => setInvoiceDate(v && v.isValid() ? v.format('YYYY-MM-DD') : '')}
+              disabled={readOnly || submitting}
+              slotProps={{ textField: { required: true, size: 'small' } }}
+            />
+          </LocalizationProvider>
+          <TextField
+            label="Invoice Amount (₹)" type="text"
+            value={formatAmountInput(invoiceAmount)}
+            onChange={e => setInvoiceAmount(stripAmountFormat(e.target.value))}
+            required size="small" disabled={readOnly || submitting}
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
+          />
           <Box sx={{ display: 'flex', alignItems: 'center' }}>
             {(vendor || (isEdit && existing)) && (
               <Box sx={{
@@ -287,7 +310,7 @@ export default function AdminPurchaseNew() {
         </Box>
       </Paper>
 
-      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFFFF' }} elevation={0}>
+      <Paper sx={{ p: 3, mb: 3, borderRadius: 2, border: '2px solid #1F1F1F', boxShadow: '4px 4px 0 0 #FCD835', bgcolor: '#FFFBE6' }} elevation={0}>
         <Box sx={{ fontWeight: 700, mb: 2, textTransform: 'uppercase', fontSize: 14, letterSpacing: '0.03em' }}>Line Items</Box>
 
         {!readOnly && (
@@ -301,9 +324,23 @@ export default function AdminPurchaseNew() {
               size="small"
               disabled={submitting || !!editingProductId}
               renderInput={params => <TextField {...params} label="Product" />}
+              // Pin the dropdown to always open downward — otherwise it
+              // auto-flips upward when the field sits near the bottom of
+              // the viewport, overlapping the card above it.
+              slotProps={{ popper: { placement: 'bottom-start', modifiers: [{ name: 'flip', enabled: false }] } }}
             />
-            <TextField label="Qty" type="number" size="small" value={pickerQty} onChange={e => setPickerQty(e.target.value)} sx={{ width: 100 }} disabled={submitting} />
-            <TextField label="Unit Cost (₹)" type="number" size="small" value={pickerCost} onChange={e => setPickerCost(e.target.value)} sx={{ width: 140 }} disabled={submitting} />
+            <TextField
+              label="Qty" type="number" size="small" value={pickerQty}
+              onChange={e => setPickerQty(e.target.value)} sx={{ width: 100 }} disabled={submitting}
+              slotProps={{ htmlInput: { autoComplete: 'off' } }}
+            />
+            <TextField
+              label="Unit Cost (₹)" type="text"
+              value={formatAmountInput(pickerCost)}
+              onChange={e => setPickerCost(stripAmountFormat(e.target.value))}
+              size="small" sx={{ width: 140 }} disabled={submitting}
+              slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
+            />
             <Button variant="outlined" onClick={addItem} disabled={!pickerProduct || submitting} sx={{ textTransform: 'none', fontWeight: 600 }}>
               {editingProductId ? 'Update Item' : 'Add Item'}
             </Button>
