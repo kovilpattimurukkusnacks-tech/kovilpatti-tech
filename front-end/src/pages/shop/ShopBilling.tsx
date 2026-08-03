@@ -102,6 +102,11 @@ export default function ShopBilling() {
   // Phase 4c — loose-weight dialog. Set to the product being weighed; null
   // = dialog closed. Cashier commits weight via LooseWeightDialog.onConfirm.
   const [looseTarget, setLooseTarget] = useState<BillingProductDto | null>(null)
+  // 02-Aug-2026 — "Cash received" raw text (empty = not entered). Only used
+  // for the change-due display when the single tender is Cash; the actual
+  // bill payment amount stays = total (customer pays total, cashier keeps
+  // the change). Cleared on save/hold and every cart reset.
+  const [cashReceived, setCashReceived] = useState('')
   // Keep focus on the scan box — the scanner is keyboard-wedge hardware.
   const scanRef = useRef<HTMLInputElement>(null)
 
@@ -278,6 +283,7 @@ export default function ShopBilling() {
           resetPayments()
           setCustomer(null)
           setDiscount(null)
+          setCashReceived('')
           scanRef.current?.focus()
           // Save & Print opens the 80mm receipt in a new tab, which
           // auto-fires the browser print dialog.
@@ -304,7 +310,7 @@ export default function ShopBilling() {
         })),
       },
       {
-        onSuccess: () => { setLines([]); resetPayments(); setCustomer(null); setDiscount(null); scanRef.current?.focus() },
+        onSuccess: () => { setLines([]); resetPayments(); setCustomer(null); setDiscount(null); setCashReceived(''); scanRef.current?.focus() },
         onError: err => setInlineError(err instanceof Error ? err.message : 'Failed to hold the bill.'),
       },
     )
@@ -661,6 +667,76 @@ export default function ShopBilling() {
                 )}
               </Box>
             </Box>
+
+            {/* 02-Aug-2026 — Cash-received + change-due widget. Only visible
+                when the single tender is Cash and cart has lines. Purely a
+                cashier convenience — the bill amount posted to the SP stays
+                = total (customer pays total, cashier keeps the change). */}
+            {!isSplit && payments[0]?.mode === 'Cash' && lines.length > 0 && (() => {
+              const received = parseFloat(cashReceived) || 0
+              const change = received - total
+              const quickAmounts = Array.from(new Set([
+                total,
+                Math.ceil(total / 100)  * 100,
+                Math.ceil(total / 500)  * 500,
+                Math.ceil(total / 1000) * 1000,
+              ])).filter(v => v >= total).slice(0, 4)
+              return (
+                <Box sx={{ mb: 2, p: 1.5, borderRadius: 1.5, bgcolor: '#FFF3CD', border: '1px solid #E0A800' }}>
+                  <Box sx={{ display: 'flex', gap: 1, alignItems: 'center', mb: 1 }}>
+                    <Box sx={{ fontSize: 11, fontWeight: 800, letterSpacing: 0.5, textTransform: 'uppercase', color: '#8A6200', minWidth: 90 }}>
+                      Cash received
+                    </Box>
+                    <TextField
+                      size="small"
+                      // type="text" + inputMode="decimal" — same numeric mobile
+                      // keypad as type="number", but no browser spinner arrows
+                      // (and no scroll-wheel value changes).
+                      value={cashReceived}
+                      onChange={e => {
+                        // Digit-and-single-dot filter — reject anything else.
+                        const v = e.target.value.replace(/[^\d.]/g, '')
+                        // Collapse a stray second dot ("12.3.4" → "12.34").
+                        const parts = v.split('.')
+                        setCashReceived(parts.length > 2 ? `${parts[0]}.${parts.slice(1).join('')}` : v)
+                      }}
+                      placeholder="0"
+                      sx={{ flex: 1, '& input': { fontWeight: 700, textAlign: 'right' }, '& .MuiOutlinedInput-root': { bgcolor: '#FFF8DC' } }}
+                      slotProps={{
+                        input: { startAdornment: <InputAdornment position="start">₹</InputAdornment> },
+                        htmlInput: { inputMode: 'decimal' },
+                      }}
+                    />
+                  </Box>
+                  {/* Quick-amount chips — exact + next-100 + next-500 + next-1000.
+                      De-duped when total is already a round number. */}
+                  <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 0.75, mb: 1 }}>
+                    {quickAmounts.map(v => (
+                      <Chip
+                        key={v}
+                        label={`₹${v}`}
+                        size="small"
+                        onClick={() => setCashReceived(String(v))}
+                        sx={{
+                          fontWeight: 700, cursor: 'pointer',
+                          bgcolor: parseFloat(cashReceived) === v ? '#1F1F1F' : '#FFF8DC',
+                          color:   parseFloat(cashReceived) === v ? '#FCD835' : '#1F1F1F',
+                          border: '1px solid #1F1F1F',
+                        }}
+                      />
+                    ))}
+                  </Box>
+                  <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13, fontWeight: 800 }}>
+                    <span style={{ color: '#8A6200' }}>
+                      {change >= 0 ? 'Change due' : 'Short by'}
+                    </span>
+                    <span style={{ color: change < 0 ? '#C62828' : '#2E7D32', fontSize: 16 }}>
+                      {received > 0 ? formatINR(Math.abs(change)) : '—'}
+                    </span>
+                  </Box>
+                </Box>
+              )
+            })()}
 
             <Box sx={{ display: 'flex', gap: 1 }}>
               <Button
