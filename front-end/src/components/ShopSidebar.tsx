@@ -1,5 +1,5 @@
 import { NavLink, useNavigate } from 'react-router-dom'
-import { ClipboardCheck, ClipboardList, LayoutDashboard, LogOut, ReceiptText, Store, Wallet } from 'lucide-react'
+import { ClipboardList, LayoutDashboard, LogOut, ReceiptText, Store, Wallet } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useShop } from '../hooks/useShops'
 import { featureFlags } from '../featureFlags'
@@ -18,11 +18,6 @@ const navItems = [
   ...(featureFlags.billing
     ? [{ to: '/shop/billing', label: 'Billing', icon: ReceiptText }]
     : []),
-  // Stock Count — periodic shelf audit (25-Jul-2026). Catches drift that
-  // per-receipt confirmation can't see (unrecorded cash sales, shelf
-  // damage, theft, expired discards). BE + hooks were already wired; only
-  // the screens were missing.
-  { to: '/shop/stock-takes',  label: 'Stock Count',    icon: ClipboardCheck },
   // Shop Expenses — this shop's operating expenses (electricity, rent,
   // staff, etc.). Renamed from "Utilities" on 15-Jul-2026 — the earlier
   // name was inaccurate (rent/salary aren't utilities in an accounting

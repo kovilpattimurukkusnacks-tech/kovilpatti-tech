@@ -108,56 +108,16 @@ CREATE INDEX IF NOT EXISTS idx_shop_inv_mov_created_at
 
 
 -- ------------------------------------------------------------
--- 3. Stock-take session — code sequence + header + items
+-- 3. Stock-take — REMOVED 2026-08-03.
 --
--- Users can pause a count mid-way (Draft) and resume; on Submit, one
--- Adjustment movement is written per non-zero diff. Only ONE Draft
--- per shop at a time — partial UNIQUE index below enforces.
+-- Previously defined `stock_take_code_seq` + `shop_stock_takes` +
+-- `shop_stock_take_items`. Deleted along with the FE screens + BE
+-- controllers because the feature wasn't landing cleanly. If it
+-- comes back, restore from git history at commit before this line.
+-- Historical `shop_inventory_movements` rows with `ref_type='StockTake'`
+-- stay in the ledger — they've already applied to on_hand and count
+-- as audit history.
 -- ------------------------------------------------------------
-CREATE SEQUENCE IF NOT EXISTS stock_take_code_seq START 1;
-
-CREATE TABLE IF NOT EXISTS shop_stock_takes (
-  id            uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
-  code          varchar(20)   NOT NULL DEFAULT 'STK' || lpad(nextval('stock_take_code_seq')::text, 4, '0'),
-  shop_id       uuid          NOT NULL REFERENCES shops(id) ON DELETE RESTRICT,
-  status        varchar(20)   NOT NULL DEFAULT 'Draft',
-  started_at    timestamptz   NOT NULL DEFAULT now(),
-  submitted_at  timestamptz   NULL,
-  notes         text          NULL,
-  is_deleted    boolean       NOT NULL DEFAULT false,
-  created_at    timestamptz   NOT NULL DEFAULT now(),
-  created_by    uuid          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  updated_at    timestamptz   NOT NULL DEFAULT now(),
-  updated_by    uuid          REFERENCES users(id) ON DELETE SET NULL,
-  CONSTRAINT uq_shop_stock_takes_code UNIQUE (code),
-  CONSTRAINT chk_stock_take_status
-    CHECK (status IN ('Draft','Submitted','Cancelled')),
-  CONSTRAINT chk_stock_take_submitted_pair
-    CHECK ((status = 'Submitted') = (submitted_at IS NOT NULL))
-);
-
-CREATE UNIQUE INDEX IF NOT EXISTS uq_stock_takes_one_draft_per_shop
-  ON shop_stock_takes(shop_id) WHERE status = 'Draft' AND is_deleted = false;
-
-CREATE INDEX IF NOT EXISTS idx_stock_takes_shop_time
-  ON shop_stock_takes(shop_id, started_at DESC);
-
-
-CREATE TABLE IF NOT EXISTS shop_stock_take_items (
-  id              uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
-  stock_take_id   uuid          NOT NULL REFERENCES shop_stock_takes(id) ON DELETE CASCADE,
-  product_id      uuid          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-  system_qty      numeric(12,3) NOT NULL,
-  counted_qty     numeric(12,3) NOT NULL,
-  -- Generated column — always (counted − system). Read-only from callers.
-  qty_diff        numeric(12,3) GENERATED ALWAYS AS (counted_qty - system_qty) STORED,
-  note            text          NULL,
-  CONSTRAINT uq_stock_take_items_take_product UNIQUE (stock_take_id, product_id),
-  CONSTRAINT chk_stock_take_items_counted_nonneg CHECK (counted_qty >= 0)
-);
-
-CREATE INDEX IF NOT EXISTS idx_stock_take_items_take
-  ON shop_stock_take_items(stock_take_id);
 
 
 COMMIT;

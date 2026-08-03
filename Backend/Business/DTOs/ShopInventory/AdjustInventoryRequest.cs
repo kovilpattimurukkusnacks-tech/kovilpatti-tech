@@ -4,9 +4,7 @@ namespace KovilpattiSnacks.Business.DTOs.ShopInventory;
 
 /// Admin manual adjustment (damaged goods, expiry write-off, one-off
 /// correction). `QtyDelta` is signed — negative writes stock off, positive
-/// adds it. Shop users don't use this endpoint — they go through the
-/// stock-take flow which produces the same Adjustment movement type but
-/// with a session audit trail.
+/// adds it. Admin-only endpoint; no shop-user path today.
 public record AdjustInventoryRequest(
     [Required] Guid   ProductId,
     /// Signed delta. Non-zero.

@@ -95,9 +95,7 @@ public class ShopInventoryService(
     public async Task<ShopInventoryDetailDto> AdjustAsync(
         Guid? shopId, AdjustInventoryRequest request, CancellationToken ct = default)
     {
-        // Admin-only per client policy — shop users must go through the
-        // stock-take flow which produces the same Adjustment movement type
-        // but with a session audit trail.
+        // Admin-only per client policy — no shop-user adjustment path today.
         if (!IsRole(RoleNames.Admin))
             throw new ForbiddenException("Only administrators can record manual adjustments.");
 
@@ -127,152 +125,6 @@ public class ShopInventoryService(
             ?? throw new NotFoundException(
                 $"Adjustment succeeded but no inventory row for product '{request.ProductId}'.");
         return MapDetail(refreshed);
-    }
-
-    // ═══════════════ Stock-take flow ═══════════════
-
-    public async Task<StockTakeDetailDto> StartStockTakeAsync(
-        Guid? shopId, CancellationToken ct = default)
-    {
-        var scopedShopId = ResolveShopId(shopId);
-        var userId = currentUser.UserId
-            ?? throw new UnauthorizedException("User id missing from token.");
-
-        Guid newId;
-        try
-        {
-            newId = await repo.StockTakeStartAsync(scopedShopId, userId, ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState == "23505")
-        {
-            // unique_violation from partial index — a Draft is already open.
-            throw ShopInventoryServiceErrors.Validation(
-                "A draft stock-take is already open for this shop. Finish or cancel it first.");
-        }
-
-        return await GetStockTakeAsync(newId, ct);
-    }
-
-    public async Task<StockTakeDetailDto> UpsertStockTakeLineAsync(
-        Guid stockTakeId, UpsertStockTakeLineRequest request, CancellationToken ct = default)
-    {
-        // Ownership check — a shop user can't touch another shop's session.
-        await EnsureStockTakeAccessAsync(stockTakeId, ct);
-
-        try
-        {
-            await repo.StockTakeUpsertLineAsync(
-                stockTakeId, request.ProductId, request.CountedQty, request.Note, ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState == "22023")
-        {
-            // invalid_parameter_value — session is Submitted / Cancelled.
-            throw ShopInventoryServiceErrors.Validation(
-                "Cannot edit lines on a submitted or cancelled stock-take.");
-        }
-
-        return await GetStockTakeAsync(stockTakeId, ct);
-    }
-
-    public async Task<StockTakeDetailDto> GetStockTakeAsync(
-        Guid stockTakeId, CancellationToken ct = default)
-    {
-        var rows = await repo.StockTakeGetAsync(stockTakeId, ct);
-        if (rows.Count == 0)
-            throw new NotFoundException($"Stock-take '{stockTakeId}' not found.");
-
-        // Ownership check on the returned session's shop_id
-        var header = rows[0];
-        EnsureShopScope(header.Shop_Id);
-
-        // First row carries the header regardless of items. Items are any
-        // row with a non-null product_id (LEFT JOIN → all-null items row on
-        // empty sessions).
-        var items = rows
-            .Where(r => r.Product_Id.HasValue)
-            .Select(r => new StockTakeItemDto(
-                r.Product_Id!.Value,
-                r.Product_Code!,
-                r.Product_Name!,
-                r.System_Qty!.Value,
-                r.Counted_Qty!.Value,
-                r.Qty_Diff!.Value,
-                r.Item_Note))
-            .ToList();
-
-        return new StockTakeDetailDto(
-            header.Id, header.Code, header.Shop_Id, header.Status,
-            header.Started_At, header.Submitted_At, header.Notes, items);
-    }
-
-    public async Task<PagedResult<StockTakeSummaryDto>> ListStockTakesAsync(
-        Guid? shopId, string? status, DateOnly? fromDate, DateOnly? toDate,
-        int page, int pageSize, CancellationToken ct = default)
-    {
-        var scopedShopId = ResolveShopId(shopId);
-        var safePage     = page     < 1 ? 1  : page;
-        var safePageSize = pageSize < 1 ? 25 : (pageSize > 200 ? 200 : pageSize);
-
-        var rows = await repo.StockTakeListAsync(
-            scopedShopId, status, fromDate, toDate, safePage, safePageSize, ct);
-
-        var items = rows.Select(r => new StockTakeSummaryDto(
-            r.Id, r.Code, r.Status, r.Started_At, r.Submitted_At,
-            r.Item_Count, r.Diff_Count, r.Net_Diff_Qty)).ToList();
-
-        // No dedicated count SP — return the visible page's length as total.
-        // Client uses infinite-scroll / next-page probe pattern for stock-take
-        // history. If the client asks for an accurate total later, add
-        // fn_stock_take_count and wire it here.
-        return new PagedResult<StockTakeSummaryDto>(items, items.Count, safePage, safePageSize);
-    }
-
-    public async Task<StockTakeDetailDto> SubmitStockTakeAsync(
-        Guid stockTakeId, CancellationToken ct = default)
-    {
-        await EnsureStockTakeAccessAsync(stockTakeId, ct);
-
-        var userId = currentUser.UserId
-            ?? throw new UnauthorizedException("User id missing from token.");
-
-        try
-        {
-            await repo.StockTakeSubmitAsync(stockTakeId, userId, ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState == "22023")
-        {
-            throw ShopInventoryServiceErrors.Validation(
-                "Only draft stock-takes can be submitted. This session is already finalised.");
-        }
-        catch (PostgresException ex) when (ex.SqlState == "23514")
-        {
-            // check_violation — a computed adjustment would drive on_hand negative.
-            throw ShopInventoryServiceErrors.Validation(
-                "Submit rejected — one or more counted qtys would drive on-hand below zero. "
-                + "Review the diffs and correct the counts before submitting.");
-        }
-
-        return await GetStockTakeAsync(stockTakeId, ct);
-    }
-
-    public async Task<StockTakeDetailDto> CancelStockTakeAsync(
-        Guid stockTakeId, CancelStockTakeRequest request, CancellationToken ct = default)
-    {
-        await EnsureStockTakeAccessAsync(stockTakeId, ct);
-
-        var userId = currentUser.UserId
-            ?? throw new UnauthorizedException("User id missing from token.");
-
-        try
-        {
-            await repo.StockTakeCancelAsync(stockTakeId, request.Reason, userId, ct);
-        }
-        catch (PostgresException ex) when (ex.SqlState == "22023")
-        {
-            throw ShopInventoryServiceErrors.Validation("Cannot cancel a submitted stock-take.");
-        }
-
-        return await GetStockTakeAsync(stockTakeId, ct);
     }
 
     // ═══════════════ Helpers ═══════════════
@@ -317,13 +169,6 @@ public class ShopInventoryService(
     {
         if (IsRole(RoleNames.ShopUser) && currentUser.ShopId != rowShopId)
             throw new ForbiddenException("This resource does not belong to your shop.");
-    }
-
-    private async Task EnsureStockTakeAccessAsync(Guid stockTakeId, CancellationToken ct)
-    {
-        // Peek at the header via the same _get SP; throws 404 if missing,
-        // enforces shop scope for ShopUser.
-        _ = await GetStockTakeAsync(stockTakeId, ct);
     }
 
     // ═══════════════ Mappers ═══════════════

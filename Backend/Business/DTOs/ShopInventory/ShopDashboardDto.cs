@@ -13,7 +13,6 @@ namespace KovilpattiSnacks.Business.DTOs.ShopInventory;
 ///   • TodayAdjustments  → "⚙ N adjustments today"
 ///   • RecentMovements   → last-10 activity feed
 ///   • PendingRequests   → phase-2 stock-request queue count
-///   • LastStockTake     → nullable — "last count was N days ago" card
 ///
 /// Fields populated only from the shop-inventory slice — sales / cash-in-till
 /// / top-products / P&L come later when bills + cash slices land, and this
@@ -40,7 +39,4 @@ public record ShopDashboardDto(
     IReadOnlyList<ShopInventoryMovementDto> RecentMovements,
 
     // Phase-2 queue signals
-    long    PendingRequestsCount,
-
-    // Stock-take
-    StockTakeSummaryDto? LastStockTake);
+    long    PendingRequestsCount);
