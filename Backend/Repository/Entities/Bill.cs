@@ -13,16 +13,22 @@ public class BillingProduct
     public string?  Weight_Unit   { get; set; }
     public decimal  Mrp           { get; set; }
     public decimal  On_Hand       { get; set; }
+    /// 01-Aug-2026 (Phase 4c): admin toggle. When true the POS lets the
+    /// cashier pick a weight (g/kg) instead of a packet count.
+    public bool     Sold_Loose    { get; set; }
 }
 
 /// Row returned by fn_bill_create — the freshly issued bill's identity + totals.
+/// 01-Aug-2026: Subtotal + Discount_Amount added; Total_Amount is post-discount.
 public class BillCreated
 {
-    public Guid    Id           { get; set; }
-    public string  Code         { get; set; } = default!;
-    public int     Total_Items  { get; set; }
-    public int     Total_Qty    { get; set; }
-    public decimal Total_Amount { get; set; }
+    public Guid    Id              { get; set; }
+    public string  Code            { get; set; } = default!;
+    public int     Total_Items     { get; set; }
+    public int     Total_Qty       { get; set; }
+    public decimal Subtotal        { get; set; }
+    public decimal Discount_Amount { get; set; }
+    public decimal Total_Amount    { get; set; }
 }
 
 /// List row from fn_bill_list. Total_Count is the window COUNT(*) — same
@@ -35,6 +41,8 @@ public class BillListRow
     public string    Payment_Mode    { get; set; } = default!;
     public int       Total_Items     { get; set; }
     public int       Total_Qty       { get; set; }
+    public decimal   Subtotal        { get; set; }
+    public decimal   Discount_Amount { get; set; }
     public decimal   Total_Amount    { get; set; }
     public DateTime  Created_At         { get; set; }
     public string?   Created_By_Name    { get; set; }
@@ -53,6 +61,10 @@ public class BillHeader
     public string    Payment_Mode      { get; set; } = default!;
     public int       Total_Items       { get; set; }
     public int       Total_Qty         { get; set; }
+    public decimal   Subtotal          { get; set; }
+    public string?   Discount_Kind     { get; set; }
+    public decimal?  Discount_Value    { get; set; }
+    public decimal   Discount_Amount   { get; set; }
     public decimal   Total_Amount      { get; set; }
     public string?   Notes             { get; set; }
     public DateTime  Created_At         { get; set; }
@@ -83,7 +95,12 @@ public class BillItemRow
     public string   Product_Name { get; set; } = default!;
     public decimal? Weight_Value { get; set; }
     public string?  Weight_Unit  { get; set; }
-    public int      Qty          { get; set; }
+    /// Nullable now — populated only for packet-mode lines.
+    public int?     Qty          { get; set; }
+    /// 01-Aug-2026 (Phase 4c): populated for loose-weight lines (XOR Qty).
+    public decimal? Loose_Weight_G          { get; set; }
+    /// Pack weight in grams captured at sale time. Only set for loose lines.
+    public decimal? Pack_Weight_G_Snapshot  { get; set; }
     public decimal  Unit_Price   { get; set; }
     public decimal  Line_Total   { get; set; }
 }

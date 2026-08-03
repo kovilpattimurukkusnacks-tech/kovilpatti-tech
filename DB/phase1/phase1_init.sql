@@ -234,6 +234,11 @@ CREATE TABLE products (
   -- for now; client will surface it in a later phase.
   gst            numeric(5,2),
   active         boolean       NOT NULL DEFAULT true,
+  -- 01-Aug-2026 (Phase 4c): loose-sale flag. When true the POS allows the
+  -- product to be sold by weight (grams) at MRP÷pack_weight per kg, in
+  -- addition to normal packet sales. Only meaningful when weight_unit ∈
+  -- ('g','kg') AND weight_value > 0 — enforced at the SP layer, not here.
+  sold_loose     boolean       NOT NULL DEFAULT false,
   is_deleted     boolean       NOT NULL DEFAULT false,
   created_at     timestamptz   NOT NULL DEFAULT now(),
   created_by     uuid          REFERENCES users(id) ON DELETE SET NULL,

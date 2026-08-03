@@ -78,6 +78,9 @@ public static class DependencyInjection
         // Phase 5b — inbound e-way bills + receive gate
         services.AddScoped<IEwayBillService, EwayBillService>();
 
+        // Phase 4c — EOD close-out
+        services.AddScoped<IEodService, EodService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");

@@ -3,8 +3,14 @@ import {
   Alert, Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem,
   TextField,
 } from '@mui/material'
+import { LocalizationProvider } from '@mui/x-date-pickers/LocalizationProvider'
+import { AdapterDayjs } from '@mui/x-date-pickers/AdapterDayjs'
+import { DatePicker } from '@mui/x-date-pickers/DatePicker'
+import { DateTimePicker } from '@mui/x-date-pickers/DateTimePicker'
+import dayjs from 'dayjs'
 import { ValidationError } from '../../api/errors'
 import { useRecordEwayBill } from '../../hooks/useEwayBills'
+import { formatAmountInput, stripAmountFormat } from '../../utils/format'
 import type { EwayTransportMode } from '../../api/eway-bills/types'
 
 type Props = {
@@ -152,34 +158,43 @@ export default function EwayBillDialog({ open, onClose, purchaseId, prefill }: P
             onChange={e => setEwayNumber(e.target.value)}
             inputMode="numeric"
           />
-          <TextField
-            label="Generation Date/Time" size="small"
-            type="datetime-local"
-            value={generationDate}
-            onChange={e => setGenerationDate(e.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
+          {/* Same MUI X pickers used across the app — themed to match
+              instead of the OS-native calendar a plain type="date"/
+              "datetime-local" input renders. */}
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <DateTimePicker
+              label="Generation Date/Time"
+              format="DD/MM/YYYY HH:mm"
+              value={generationDate ? dayjs(generationDate) : null}
+              onChange={v => setGenerationDate(v && v.isValid() ? v.format('YYYY-MM-DDTHH:mm') : '')}
+              slotProps={{ textField: { size: 'small' } }}
+            />
+          </LocalizationProvider>
 
           <TextField
             label="Invoice / Document Number" size="small"
             value={documentNumber}
             onChange={e => setDocumentNumber(e.target.value)}
           />
-          <TextField
-            label="Document Date" size="small"
-            type="date"
-            value={documentDate}
-            onChange={e => setDocumentDate(e.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <DatePicker
+              label="Document Date"
+              format="DD/MM/YYYY"
+              value={documentDate ? dayjs(documentDate) : null}
+              onChange={v => setDocumentDate(v && v.isValid() ? v.format('YYYY-MM-DD') : '')}
+              slotProps={{ textField: { size: 'small' } }}
+            />
+          </LocalizationProvider>
 
-          <TextField
-            label="Valid Until" size="small"
-            type="datetime-local"
-            value={validUntil}
-            onChange={e => setValidUntil(e.target.value)}
-            slotProps={{ inputLabel: { shrink: true } }}
-          />
+          <LocalizationProvider dateAdapter={AdapterDayjs}>
+            <DateTimePicker
+              label="Valid Until"
+              format="DD/MM/YYYY HH:mm"
+              value={validUntil ? dayjs(validUntil) : null}
+              onChange={v => setValidUntil(v && v.isValid() ? v.format('YYYY-MM-DDTHH:mm') : '')}
+              slotProps={{ textField: { size: 'small' } }}
+            />
+          </LocalizationProvider>
           <Box />{/* filler cell — keeps grid alignment */}
 
           <TextField
@@ -220,6 +235,7 @@ export default function EwayBillDialog({ open, onClose, purchaseId, prefill }: P
             label="Distance (km)" size="small" type="number"
             value={distanceKm}
             onChange={e => setDistanceKm(e.target.value)}
+            slotProps={{ htmlInput: { autoComplete: 'off' } }}
           />
 
           <TextField
@@ -234,33 +250,38 @@ export default function EwayBillDialog({ open, onClose, purchaseId, prefill }: P
           />
 
           <TextField
-            label="Taxable Amount (₹)" size="small" type="number"
-            value={taxableAmount}
-            onChange={e => setTaxableAmount(e.target.value)}
+            label="Taxable Amount (₹)" size="small" type="text"
+            value={formatAmountInput(taxableAmount)}
+            onChange={e => setTaxableAmount(stripAmountFormat(e.target.value))}
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
-            label="Total Amount (₹)" size="small" type="number"
-            value={totalAmount}
-            onChange={e => setTotalAmount(e.target.value)}
+            label="Total Amount (₹)" size="small" type="text"
+            value={formatAmountInput(totalAmount)}
+            onChange={e => setTotalAmount(stripAmountFormat(e.target.value))}
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
 
           <TextField
-            label="CGST (₹)" size="small" type="number"
-            value={cgstAmount}
-            onChange={e => setCgstAmount(e.target.value)}
+            label="CGST (₹)" size="small" type="text"
+            value={formatAmountInput(cgstAmount)}
+            onChange={e => setCgstAmount(stripAmountFormat(e.target.value))}
             helperText="Leave blank for interstate"
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
-            label="SGST (₹)" size="small" type="number"
-            value={sgstAmount}
-            onChange={e => setSgstAmount(e.target.value)}
+            label="SGST (₹)" size="small" type="text"
+            value={formatAmountInput(sgstAmount)}
+            onChange={e => setSgstAmount(stripAmountFormat(e.target.value))}
             helperText="Leave blank for interstate"
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
-            label="IGST (₹)" size="small" type="number"
-            value={igstAmount}
-            onChange={e => setIgstAmount(e.target.value)}
+            label="IGST (₹)" size="small" type="text"
+            value={formatAmountInput(igstAmount)}
+            onChange={e => setIgstAmount(stripAmountFormat(e.target.value))}
             helperText="Interstate: enter IGST only"
+            slotProps={{ htmlInput: { inputMode: 'decimal', autoComplete: 'off' } }}
           />
           <TextField
             label="Portal PDF URL" size="small"

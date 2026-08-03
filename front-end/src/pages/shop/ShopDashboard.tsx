@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowUpRight, ChevronDown, ChevronRight,
   ClipboardCheck, ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
@@ -23,6 +24,7 @@ import { formatIstDateTime } from '../../utils/formatDate'
  */
 export default function ShopDashboard() {
   const { data, isLoading, isError, error } = useShopDashboard()
+  const navigate = useNavigate()
 
   if (isError) {
     return (
@@ -188,15 +190,25 @@ export default function ShopDashboard() {
           ) : !data?.lastStockTake ? (
             <EmptyState
               message="No stock-takes recorded yet."
-              hint="Run a physical count to reconcile shelf stock with the system."
+              hint="Open Stock Count from the sidebar to reconcile shelf stock with the system."
             />
           ) : (
+            // Whole tile is a link-into-detail. Not a "quick action" button
+            // — the tile is a summary drill-down (25-Jul-2026), matching how
+            // the low-stock rows will eventually navigate into product detail.
             <Box
+              onClick={() => navigate(`/shop/stock-takes/${data.lastStockTake!.id}`)}
               sx={{
                 mt: 1, px: 1.5, py: 1.25,
                 borderRadius: 1,
                 bgcolor: '#FFFBE6',
                 border: '1px solid rgba(31,31,31,0.15)',
+                cursor: 'pointer',
+                transition: 'background-color 120ms ease, border-color 120ms ease',
+                '&:hover': {
+                  bgcolor: '#FFF3B8',
+                  borderColor: 'rgba(31,31,31,0.35)',
+                },
               }}
             >
               <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>

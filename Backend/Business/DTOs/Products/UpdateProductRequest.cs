@@ -17,5 +17,7 @@ public record UpdateProductRequest(
     string? Code = null,
     // Optional scannable code for POS billing (14-Jul-2026). Blank → null
     // (clears the barcode); the SP persists whatever is sent.
-    string? Barcode = null
+    string? Barcode = null,
+    // 01-Aug-2026 (Phase 4c): loose-sale opt-in flag.
+    bool SoldLoose = false
 ) : IProductPayload;

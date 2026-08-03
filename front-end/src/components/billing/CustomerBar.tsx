@@ -90,7 +90,7 @@ export default function CustomerBar({
           onKeyDown={e => { if (e.key === 'Enter') handleFind() }}
           placeholder="Customer mobile (10 digits)"
           slotProps={{ htmlInput: { inputMode: 'numeric', maxLength: 10 } }}
-          sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFFFF' } }}
+          sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFF8DC' } }}
         />
         <Button
           variant="outlined"
@@ -112,7 +112,7 @@ export default function CustomerBar({
             onChange={e => setName(e.target.value)}
             onKeyDown={e => { if (e.key === 'Enter' && name.trim()) handleAdd() }}
             placeholder="New customer name"
-            sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFFFFF' } }}
+            sx={{ '& .MuiOutlinedInput-root': { bgcolor: '#FFF8DC' } }}
           />
           <Button
             variant="contained"

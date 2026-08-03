@@ -347,6 +347,9 @@ export default function ShopRequestNew() {
         purchasePrice: null,
         gst: null,
         active: true,
+        // Stock-request items are packet-based; sold_loose only matters
+        // for the retail POS flow. Default false on rebuilt stubs.
+        soldLoose: false,
       }
       map.set(it.productId, { product: stub, qty: it.requestedQty })
     }
@@ -776,6 +779,8 @@ export default function ShopRequestNew() {
           categoryId: it.categoryId ?? 0,
           categoryName: it.categoryName, type: '',
           purchasePrice: null, gst: null, active: true,
+          // Stock-request draft snapshots don't carry sold_loose; default false.
+          soldLoose: false,
         }
         map.set(it.productId, { product: stub, qty: it.qty })
       }
