@@ -2,7 +2,6 @@ import { apiClient } from '../client'
 import type { PagedResult } from '../stock-requests/types'
 import type {
   AdjustInventoryRequest,
-  CancelStockTakeRequest,
   ShopDashboardDto,
   ShopInventoryDetailDto,
   ShopInventoryListFilters,
@@ -11,10 +10,6 @@ import type {
   ShopInventoryMovementFilters,
   ShopInventoryRowDto,
   ShopInventoryTreeItemDto,
-  StockTakeDetailDto,
-  StockTakeListFilters,
-  StockTakeSummaryDto,
-  UpsertStockTakeLineRequest,
 } from './types'
 
 function q(params: Record<string, string | number | undefined | null>): string {
@@ -73,39 +68,6 @@ export const shopInventoryApi = {
   adjust: (req: AdjustInventoryRequest, shopId: string) =>
     apiClient.post<ShopInventoryDetailDto>(
       `/api/shop-inventory/adjust${q({ shopId })}`,
-      req,
-    ),
-
-  // ── Stock-take flow ──
-  startStockTake: (shopId?: string) =>
-    apiClient.post<StockTakeDetailDto>(
-      `/api/shop-inventory/stock-takes${q({ shopId })}`,
-      {},
-    ),
-
-  getStockTake: (id: string) =>
-    apiClient.get<StockTakeDetailDto>(`/api/shop-inventory/stock-takes/${id}`),
-
-  listStockTakes: (f?: StockTakeListFilters) =>
-    apiClient.get<PagedResult<StockTakeSummaryDto>>(
-      `/api/shop-inventory/stock-takes${q({ ...f })}`,
-    ),
-
-  upsertStockTakeLine: (id: string, req: UpsertStockTakeLineRequest) =>
-    apiClient.put<StockTakeDetailDto>(
-      `/api/shop-inventory/stock-takes/${id}/lines`,
-      req,
-    ),
-
-  submitStockTake: (id: string) =>
-    apiClient.post<StockTakeDetailDto>(
-      `/api/shop-inventory/stock-takes/${id}/submit`,
-      {},
-    ),
-
-  cancelStockTake: (id: string, req: CancelStockTakeRequest) =>
-    apiClient.post<StockTakeDetailDto>(
-      `/api/shop-inventory/stock-takes/${id}/cancel`,
       req,
     ),
 }

@@ -65,40 +65,6 @@ export type ShopInventoryMovementDto = {
   createdByName: string | null
 }
 
-export type StockTakeStatus = 'Draft' | 'Submitted' | 'Cancelled'
-
-export type StockTakeSummaryDto = {
-  id: string
-  code: string
-  status: StockTakeStatus
-  startedAt: string
-  submittedAt: string | null
-  itemCount: number
-  diffCount: number
-  netDiffQty: number
-}
-
-export type StockTakeItemDto = {
-  productId: string
-  productCode: string
-  productName: string
-  systemQty: number
-  countedQty: number
-  qtyDiff: number
-  note: string | null
-}
-
-export type StockTakeDetailDto = {
-  id: string
-  code: string
-  shopId: string
-  status: StockTakeStatus
-  startedAt: string
-  submittedAt: string | null
-  notes: string | null
-  items: StockTakeItemDto[]
-}
-
 // Slim row for the dashboard's category-tree browse. FE groups by
 // categoryId and rolls up onHand through the categories tree (fetched
 // separately via /api/categories).
@@ -124,23 +90,12 @@ export type ShopDashboardDto = {
   todayAdjustments: number
   recentMovements: ShopInventoryMovementDto[]
   pendingRequestsCount: number
-  lastStockTake: StockTakeSummaryDto | null
 }
 
 // ── Request bodies ──
 export type AdjustInventoryRequest = {
   productId: string
   qtyDelta: number       // signed
-  reason: string
-}
-
-export type UpsertStockTakeLineRequest = {
-  productId: string
-  countedQty: number     // ≥ 0
-  note?: string | null
-}
-
-export type CancelStockTakeRequest = {
   reason: string
 }
 
@@ -160,11 +115,3 @@ export type ShopInventoryMovementFilters = {
   pageSize?: number
 }
 
-export type StockTakeListFilters = {
-  shopId?: string
-  status?: StockTakeStatus
-  fromDate?: string
-  toDate?: string
-  page?: number
-  pageSize?: number
-}

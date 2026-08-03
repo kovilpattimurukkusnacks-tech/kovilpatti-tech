@@ -2,11 +2,8 @@ import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tansta
 import { shopInventoryApi } from '../api/shop-inventory/api'
 import type {
   AdjustInventoryRequest,
-  CancelStockTakeRequest,
   ShopInventoryListFilters,
   ShopInventoryMovementFilters,
-  StockTakeListFilters,
-  UpsertStockTakeLineRequest,
 } from '../api/shop-inventory/types'
 
 /**
@@ -28,10 +25,6 @@ export const shopInventoryKeys = {
     ['shop-inventory', 'movements', productId, f ?? {}] as const,
   movements:      (f?: ShopInventoryMovementFilters) =>
     ['shop-inventory', 'movements', 'all', f ?? {}] as const,
-
-  stockTakes:     (f?: StockTakeListFilters) =>
-    ['shop-inventory', 'stock-takes', f ?? {}] as const,
-  stockTake:      (id: string) => ['shop-inventory', 'stock-takes', id] as const,
 }
 
 // ═══════════════ Dashboard ═══════════════
@@ -129,7 +122,7 @@ export function useShopInventoryMovements(filters?: ShopInventoryMovementFilters
 /**
  * Admin manual write-off / correction. Invalidates every read that could
  * be affected — dashboard, on-hand list, product detail, low-stock,
- * valuation, movements, and (for completeness) any open stock-take.
+ * valuation, and movements.
  */
 export function useAdjustInventory() {
   const qc = useQueryClient()
@@ -142,73 +135,3 @@ export function useAdjustInventory() {
   })
 }
 
-// ═══════════════ Stock-take flow ═══════════════
-
-export function useStockTakes(filters?: StockTakeListFilters) {
-  return useQuery({
-    queryKey: shopInventoryKeys.stockTakes(filters),
-    queryFn:  () => shopInventoryApi.listStockTakes(filters),
-    placeholderData: keepPreviousData,
-  })
-}
-
-export function useStockTake(id: string | undefined) {
-  return useQuery({
-    queryKey: id ? shopInventoryKeys.stockTake(id) : ['shop-inventory', 'stock-takes', 'idle'],
-    queryFn:  () => shopInventoryApi.getStockTake(id!),
-    enabled:  !!id,
-  })
-}
-
-export function useStartStockTake() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (shopId?: string) => shopInventoryApi.startStockTake(shopId),
-    onSuccess: (created) => {
-      // Prime the detail cache so the caller can navigate straight to the
-      // new session without a second fetch.
-      qc.setQueryData(shopInventoryKeys.stockTake(created.id), created)
-      qc.invalidateQueries({ queryKey: ['shop-inventory', 'stock-takes'] })
-      qc.invalidateQueries({ queryKey: ['shop-inventory', 'dashboard'] })
-    },
-  })
-}
-
-export function useUpsertStockTakeLine() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, req }: { id: string; req: UpsertStockTakeLineRequest }) =>
-      shopInventoryApi.upsertStockTakeLine(id, req),
-    // Patch the detail cache with the server-returned session so the
-    // count screen re-renders with the updated qty_diff without a refetch.
-    onSuccess: (updated) => {
-      qc.setQueryData(shopInventoryKeys.stockTake(updated.id), updated)
-    },
-  })
-}
-
-export function useSubmitStockTake() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: (id: string) => shopInventoryApi.submitStockTake(id),
-    onSuccess: (updated) => {
-      qc.setQueryData(shopInventoryKeys.stockTake(updated.id), updated)
-      // Submit writes Adjustment movements + shop_inventory changes → nuke
-      // every dependent cache.
-      qc.invalidateQueries({ queryKey: shopInventoryKeys.all })
-    },
-  })
-}
-
-export function useCancelStockTake() {
-  const qc = useQueryClient()
-  return useMutation({
-    mutationFn: ({ id, req }: { id: string; req: CancelStockTakeRequest }) =>
-      shopInventoryApi.cancelStockTake(id, req),
-    onSuccess: (updated) => {
-      qc.setQueryData(shopInventoryKeys.stockTake(updated.id), updated)
-      qc.invalidateQueries({ queryKey: ['shop-inventory', 'stock-takes'] })
-      qc.invalidateQueries({ queryKey: ['shop-inventory', 'dashboard'] })
-    },
-  })
-}
