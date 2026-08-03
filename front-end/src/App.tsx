@@ -33,6 +33,8 @@ import AdminVendors from './pages/admin/AdminVendors'
 import AdminPurchases from './pages/admin/AdminPurchases'
 import AdminPurchaseNew from './pages/admin/AdminPurchaseNew'
 import ShopUtilities from './pages/shop/ShopUtilities'
+import ShopStockTakes from './pages/shop/ShopStockTakes'
+import ShopStockTakeDetail from './pages/shop/ShopStockTakeDetail'
 import PrintRequestPicklist from './pages/print/PrintRequestPicklist'
 import PrintRequestThermal from './pages/print/PrintRequestThermal'
 import PrintBillThermal from './pages/print/PrintBillThermal'
@@ -109,6 +111,11 @@ const router = createBrowserRouter(
             rename of the feature). Component name kept for internal
             stability — only the URL surface changed. */}
         <Route path="expenses" element={<ShopUtilities />} />
+        {/* Stock Count — periodic shelf audit (25-Jul-2026). BE + hooks
+            already wired; these are the missing screens. Detail page
+            renders editable in Draft, read-only in Submitted/Cancelled. */}
+        <Route path="stock-takes"     element={<ShopStockTakes />} />
+        <Route path="stock-takes/:id" element={<ShopStockTakeDetail />} />
       </Route>
 
       <Route path="/inventory" element={<RoleGate allow="Inventory"><InventoryLayout /></RoleGate>}>

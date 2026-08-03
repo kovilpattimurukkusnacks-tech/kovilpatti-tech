@@ -90,6 +90,18 @@ CREATE TABLE IF NOT EXISTS bills (
   -- stock_requests.total_items/total_qty/total_amount).
   total_items    int           NOT NULL DEFAULT 0,
   total_qty      int           NOT NULL DEFAULT 0,
+  -- 01-Aug-2026 (Phase 4c): pre-discount subtotal (Σ line_total) vs
+  -- post-discount total_amount. discount_kind = NULL means no discount.
+  -- discount_value = raw input (e.g. 10 for "10%" or 50 for "₹50 off"),
+  -- discount_amount = computed ₹ actually taken off. Kept as separate
+  -- columns so a downstream report can distinguish "10% (₹85)" from
+  -- "₹85 flat" without re-deriving. total_amount is always the final
+  -- amount the customer paid (subtotal − discount_amount) so payments
+  -- still tie to it exactly.
+  subtotal          numeric(12,2) NOT NULL DEFAULT 0,
+  discount_kind     varchar(10)   NULL,
+  discount_value    numeric(10,2) NULL,
+  discount_amount   numeric(12,2) NOT NULL DEFAULT 0,
   total_amount   numeric(12,2) NOT NULL DEFAULT 0,
   notes          varchar(500)  NULL,
   -- Cancellation trail — set together by fn_bill_cancel.
@@ -113,7 +125,19 @@ CREATE TABLE IF NOT EXISTS bills (
     CHECK ((status = 'Cancelled') = (cancelled_at IS NOT NULL)),
   CONSTRAINT chk_bills_cancel_reason_type
     CHECK (cancel_reason_type IS NULL
-           OR cancel_reason_type IN ('Mistake','Duplicate','CustomerRefused','Other'))
+           OR cancel_reason_type IN ('Mistake','Duplicate','CustomerRefused','Other')),
+  -- Discount integrity — kind ↔ value ↔ amount move together.
+  CONSTRAINT chk_bills_discount_kind
+    CHECK (discount_kind IS NULL OR discount_kind IN ('Percent','Amount')),
+  CONSTRAINT chk_bills_discount_pair
+    CHECK ((discount_kind IS NULL AND discount_value IS NULL AND discount_amount = 0)
+           OR (discount_kind IS NOT NULL AND discount_value IS NOT NULL AND discount_amount >= 0)),
+  CONSTRAINT chk_bills_discount_percent_range
+    CHECK (discount_kind <> 'Percent' OR (discount_value >= 0 AND discount_value <= 100)),
+  CONSTRAINT chk_bills_subtotal_nonneg
+    CHECK (subtotal >= 0 AND discount_amount >= 0),
+  CONSTRAINT chk_bills_total_math
+    CHECK (total_amount = subtotal - discount_amount)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bills_shop_time   ON bills(shop_id, created_at DESC);
@@ -129,14 +153,34 @@ CREATE TABLE IF NOT EXISTS bill_items (
   id           uuid          PRIMARY KEY DEFAULT gen_random_uuid(),
   bill_id      uuid          NOT NULL REFERENCES bills(id) ON DELETE CASCADE,
   product_id   uuid          NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-  qty          int           NOT NULL,
+  -- 01-Aug-2026 (Phase 4c): a line is EITHER a packet count (qty)
+  --   OR a loose-weight sale (loose_weight_g). Never both. The uq
+  --   constraint on (bill_id, product_id) means a customer buying both
+  --   packet + loose of the same SKU must pick one mode — rare enough
+  --   in v1 that we don't split into two lines.
+  qty              int,
+  loose_weight_g   numeric(10,3),
   -- MRP snapshot at sale time — a later MRP edit must not rewrite an
   -- issued bill (same rationale as stock_request_items.unit_price).
-  unit_price   numeric(10,2) NOT NULL,
-  line_total   numeric(12,2) GENERATED ALWAYS AS (qty * unit_price) STORED,
+  unit_price       numeric(10,2) NOT NULL,
+  -- Pack weight (grams) snapshot at sale time. Populated only for loose
+  -- lines so returns can recompute the packet-equivalent without needing
+  -- the current product row.
+  pack_weight_g_snapshot numeric(10,3),
+  -- Regular column (not GENERATED). SP computes:
+  --   packet mode: qty × unit_price
+  --   loose mode:  ROUND((loose_weight_g / pack_weight_g_snapshot) × unit_price, 2)
+  line_total       numeric(12,2) NOT NULL,
   CONSTRAINT uq_bill_items_bill_product UNIQUE (bill_id, product_id),
-  CONSTRAINT chk_bill_items_qty_pos        CHECK (qty > 0),
-  CONSTRAINT chk_bill_items_price_nonneg   CHECK (unit_price >= 0)
+  CONSTRAINT chk_bill_items_mode
+    CHECK ((qty IS NOT NULL) <> (loose_weight_g IS NOT NULL)),
+  CONSTRAINT chk_bill_items_qty_pos
+    CHECK (qty IS NULL OR qty > 0),
+  CONSTRAINT chk_bill_items_loose_pos
+    CHECK (loose_weight_g IS NULL OR loose_weight_g > 0),
+  CONSTRAINT chk_bill_items_price_nonneg   CHECK (unit_price >= 0),
+  CONSTRAINT chk_bill_items_loose_pack_snapshot
+    CHECK ((loose_weight_g IS NULL) OR (pack_weight_g_snapshot IS NOT NULL AND pack_weight_g_snapshot > 0))
 );
 
 CREATE INDEX IF NOT EXISTS idx_bill_items_bill    ON bill_items(bill_id);

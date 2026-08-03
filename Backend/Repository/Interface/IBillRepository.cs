@@ -11,6 +11,7 @@ public interface IBillRepository
     /// <param name="itemsJson">jsonb array of {"productId": uuid, "qty": int}</param>
     Task<BillCreated> CreateAsync(
         Guid shopId, Guid userId, Guid? customerId, string paymentsJson, string itemsJson, string? notes,
+        string? discountKind, decimal? discountValue,
         CancellationToken ct = default);
 
     Task<List<BillPaymentRow>> GetPaymentsAsync(Guid billId, CancellationToken ct = default);

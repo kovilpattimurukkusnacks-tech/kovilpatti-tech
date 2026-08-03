@@ -138,7 +138,7 @@ export default function AdminPurchases() {
             <TextField
               select size="small" value={vendorFilter}
               onChange={e => { setVendorFilter(e.target.value); resetPage() }}
-              sx={{ minWidth: 220, bgcolor: '#FFFFFF' }}
+              sx={{ minWidth: 220, bgcolor: '#FFFBE6' }}
             >
               <MenuItem value="All">All vendors</MenuItem>
               {vendorOptions.map(v => <MenuItem key={v.id} value={v.id}>{v.name}</MenuItem>)}

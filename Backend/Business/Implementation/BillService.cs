@@ -41,7 +41,8 @@ public class BillService(
         var shopId = RequireShopId();
         var rows = await bills.BillingProductsAsync(shopId, Normalize(search), limit: 500, ct);
         return rows.Select(p => new BillingProductDto(
-            p.Id, p.Code, p.Barcode, p.Name, p.Category_Name, p.Weight_Value, p.Weight_Unit, p.Mrp, p.On_Hand)).ToList();
+            p.Id, p.Code, p.Barcode, p.Name, p.Category_Name, p.Weight_Value, p.Weight_Unit,
+            p.Mrp, p.On_Hand, p.Sold_Loose)).ToList();
     }
 
     public async Task<BillCreatedDto> CreateAsync(CreateBillRequest request, CancellationToken ct = default)
@@ -52,9 +53,16 @@ public class BillService(
         var shopId = RequireShopId();
         var userId = RequireUserId();
 
-        // Keys must match fn_bill_create's jsonb reads (x->>'productId' / 'qty').
+        // Keys must match fn_bill_create's jsonb reads (x->>'productId' / 'qty'
+        // / 'looseWeightG'). Exactly one of qty / looseWeightG is set per line;
+        // the SP raises on both-null-or-both-set.
         var itemsJson = JsonSerializer.Serialize(
-            request.Items.Select(i => new { productId = i.ProductId, qty = i.Qty }));
+            request.Items.Select(i => new
+            {
+                productId    = i.ProductId,
+                qty          = i.Qty,
+                looseWeightG = i.LooseWeightG,
+            }));
         // Keys must match fn_bill_create's payment reads (x->>'mode' / 'amount').
         var paymentsJson = JsonSerializer.Serialize(
             request.Payments.Select(p => new { mode = p.Mode, amount = p.Amount }));
@@ -62,9 +70,11 @@ public class BillService(
         try
         {
             var created = await bills.CreateAsync(
-                shopId, userId, request.CustomerId, paymentsJson, itemsJson, Normalize(request.Notes), ct);
+                shopId, userId, request.CustomerId, paymentsJson, itemsJson, Normalize(request.Notes),
+                request.DiscountKind, request.DiscountValue, ct);
             return new BillCreatedDto(
-                created.Id, created.Code, created.Total_Items, created.Total_Qty, created.Total_Amount);
+                created.Id, created.Code, created.Total_Items, created.Total_Qty,
+                created.Subtotal, created.Discount_Amount, created.Total_Amount);
         }
         catch (PostgresException ex) when (ex.SqlState == "23514")
         {
@@ -126,13 +136,17 @@ public class BillService(
 
         return new BillDetailDto(
             header.Id, header.Code, header.Status, header.Payment_Mode,
-            header.Total_Items, header.Total_Qty, header.Total_Amount, header.Notes,
+            header.Total_Items, header.Total_Qty,
+            header.Subtotal, header.Discount_Kind, header.Discount_Value, header.Discount_Amount,
+            header.Total_Amount, header.Notes,
             header.Created_At, header.Created_By_Name,
             header.Cancelled_At, header.Cancelled_By_Name, header.Cancel_Reason_Type, header.Cancel_Reason,
             header.Customer_Id, header.Customer_Name, header.Customer_Phone,
             items.Select(i => new BillItemDto(
                 i.Id, i.Product_Id, i.Product_Code, i.Product_Name,
-                i.Weight_Value, i.Weight_Unit, i.Qty, i.Unit_Price, i.Line_Total)).ToList(),
+                i.Weight_Value, i.Weight_Unit,
+                i.Qty, i.Loose_Weight_G, i.Pack_Weight_G_Snapshot,
+                i.Unit_Price, i.Line_Total)).ToList(),
             payments.Select(p => new BillPaymentDto(p.Id, p.Mode, p.Amount)).ToList());
     }
 
@@ -282,6 +296,7 @@ public class BillService(
 
     private static BillListItemDto MapListItem(BillListRow r) => new(
         r.Id, r.Code, r.Status, r.Payment_Mode, r.Total_Items, r.Total_Qty,
-        r.Total_Amount, r.Created_At, r.Created_By_Name, r.Cancelled_At,
+        r.Subtotal, r.Discount_Amount, r.Total_Amount,
+        r.Created_At, r.Created_By_Name, r.Cancelled_At,
         r.Cancel_Reason_Type, r.Cancel_Reason);
 }

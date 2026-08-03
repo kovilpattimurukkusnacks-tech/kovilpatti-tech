@@ -35,11 +35,43 @@ public class CreateBillRequestValidator : AbstractValidator<CreateBillRequest>
         RuleForEach(x => x.Items).ChildRules(item =>
         {
             item.RuleFor(i => i.ProductId).NotEmpty();
-            item.RuleFor(i => i.Qty).GreaterThan(0).WithMessage("Quantity must be at least 1.");
+            // 01-Aug-2026 (Phase 4c): each line is EITHER a packet Qty OR a
+            // LooseWeightG (grams). SP rechecks sold_loose against the
+            // product; here we only enforce the XOR shape + range.
+            item.RuleFor(i => i)
+                .Must(i => (i.Qty is not null) ^ (i.LooseWeightG is not null))
+                .WithMessage("Each item must have either a Qty (packets) OR a LooseWeightG (grams), not both.");
+            item.RuleFor(i => i.Qty!.Value)
+                .GreaterThan(0)
+                .When(i => i.Qty is not null)
+                .WithMessage("Quantity must be at least 1.");
+            item.RuleFor(i => i.LooseWeightG!.Value)
+                .GreaterThan(0)
+                .When(i => i.LooseWeightG is not null)
+                .WithMessage("Loose weight must be greater than zero.");
         });
 
         RuleFor(x => x.Notes)
             .MaximumLength(500).When(x => x.Notes is not null);
+
+        // Discount rules — kind + value move together. Percent is bounded
+        // 0..100, Amount is a non-negative flat ₹ off (capped to subtotal
+        // inside the SP so we don't need to know subtotal here).
+        RuleFor(x => x)
+            .Must(x => (x.DiscountKind is null) == (x.DiscountValue is null))
+            .WithMessage("Discount kind and value must both be set or both be empty.");
+        RuleFor(x => x.DiscountKind!)
+            .Must(k => k is "Percent" or "Amount")
+            .When(x => x.DiscountKind is not null)
+            .WithMessage("Discount kind must be Percent or Amount.");
+        RuleFor(x => x.DiscountValue!.Value)
+            .InclusiveBetween(0, 100)
+            .When(x => x.DiscountKind == "Percent")
+            .WithMessage("Percent discount must be between 0 and 100.");
+        RuleFor(x => x.DiscountValue!.Value)
+            .GreaterThanOrEqualTo(0)
+            .When(x => x.DiscountKind == "Amount")
+            .WithMessage("Amount discount cannot be negative.");
     }
 }
 

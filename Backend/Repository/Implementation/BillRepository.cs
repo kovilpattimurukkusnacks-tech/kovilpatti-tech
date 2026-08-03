@@ -19,11 +19,12 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
 
     public async Task<BillCreated> CreateAsync(
         Guid shopId, Guid userId, Guid? customerId, string paymentsJson, string itemsJson, string? notes,
+        string? discountKind, decimal? discountValue,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql =
-            "SELECT * FROM fn_bill_create(@p_shop_id, @p_user_id, @p_customer_id, @p_payments::jsonb, @p_items::jsonb, @p_notes)";
+            "SELECT * FROM fn_bill_create(@p_shop_id, @p_user_id, @p_customer_id, @p_payments::jsonb, @p_items::jsonb, @p_notes, @p_discount_kind, @p_discount_value)";
         return await conn.QuerySingleAsync<BillCreated>(new CommandDefinition(sql, new
         {
             p_shop_id = shopId,
@@ -32,6 +33,8 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
             p_payments = paymentsJson,
             p_items = itemsJson,
             p_notes = notes,
+            p_discount_kind = discountKind,
+            p_discount_value = discountValue,
         }, cancellationToken: ct));
     }
 

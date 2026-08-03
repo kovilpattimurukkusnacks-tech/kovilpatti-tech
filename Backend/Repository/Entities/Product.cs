@@ -18,4 +18,7 @@ public class Product
     // Hidden in the UI for now; persisted as percent (0..100), nullable.
     public decimal? Gst { get; set; }
     public bool Active { get; set; }
+    /// 01-Aug-2026 (Phase 4c): opt-in loose-sale flag. The POS uses this to
+    /// decide whether to prompt for a weight instead of a packet count.
+    public bool SoldLoose { get; set; }
 }

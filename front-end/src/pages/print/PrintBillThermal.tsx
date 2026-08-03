@@ -76,23 +76,31 @@ export default function PrintBillThermal() {
             </tr>
           </thead>
           <tbody>
-            {bill.items.map(it => (
-              <tr key={it.id}>
-                <td>
-                  <div className="item-name">
-                    {it.productName}
-                    {it.weightValue != null && (
-                      <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700 }}>
-                        {it.weightValue}{it.weightUnit ?? ''}
-                      </span>
-                    )}
-                  </div>
-                </td>
-                <td className="num">{it.qty}</td>
-                <td className="num">{formatINR(it.unitPrice, { prefix: false })}</td>
-                <td className="num">{formatINR(it.lineTotal, { prefix: false })}</td>
-              </tr>
-            ))}
+            {bill.items.map(it => {
+              const isLoose = it.qty == null && it.looseWeightG != null
+              return (
+                <tr key={it.id}>
+                  <td>
+                    <div className="item-name">
+                      {it.productName}
+                      {it.weightValue != null && (
+                        <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700 }}>
+                          {it.weightValue}{it.weightUnit ?? ''}
+                        </span>
+                      )}
+                      {isLoose && (
+                        <span style={{ marginLeft: 4, fontSize: 7.5, fontWeight: 700, color: '#7C4A00' }}>
+                          (LOOSE)
+                        </span>
+                      )}
+                    </div>
+                  </td>
+                  <td className="num">{isLoose ? `${it.looseWeightG}g` : it.qty}</td>
+                  <td className="num">{formatINR(it.unitPrice, { prefix: false })}</td>
+                  <td className="num">{formatINR(it.lineTotal, { prefix: false })}</td>
+                </tr>
+              )
+            })}
           </tbody>
         </table>
 
@@ -103,6 +111,20 @@ export default function PrintBillThermal() {
           <span className="v">{bill.totalItems}</span>
           <span>Total Qty:</span>
           <span className="v">{bill.totalQty}</span>
+          {/* Phase 4c — subtotal + discount rows print only when a discount
+              was applied. Keeps the pre-discount receipt tight for the
+              majority of bills. */}
+          {bill.discountAmount > 0 && (
+            <>
+              <span>Subtotal:</span>
+              <span className="v">{formatINR(bill.subtotal)}</span>
+              <span>
+                Discount{bill.discountKind === 'Percent' && bill.discountValue != null
+                  ? ` (${bill.discountValue}%)` : ''}:
+              </span>
+              <span className="v">− {formatINR(bill.discountAmount)}</span>
+            </>
+          )}
         </div>
 
         <div className="thermal-rule-dashed" />

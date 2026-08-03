@@ -37,6 +37,8 @@ DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, in
 -- inactive rows. Drop the pre-flag shape so a re-run doesn't leave a
 -- 5-arg overload alongside the new 6-arg one.
 DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int);
+-- 01-Aug-2026: RETURNS TABLE grew sold_loose — drop 6-arg shape too.
+DROP FUNCTION IF EXISTS fn_product_list_paged(varchar, int[], varchar[], int, int, boolean);
 
 CREATE OR REPLACE FUNCTION fn_product_list_paged(
   p_search           varchar    DEFAULT NULL,
@@ -59,12 +61,13 @@ RETURNS TABLE (
   mrp                numeric,
   purchase_price     numeric,
   gst                numeric,
-  active             boolean
+  active             boolean,
+  sold_loose         boolean
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.barcode, p.name, p.category_id, c.name AS category_name,
          p.type, p.weight_value, p.weight_unit,
-         p.mrp, p.purchase_price, p.gst, p.active
+         p.mrp, p.purchase_price, p.gst, p.active, p.sold_loose
   FROM products p
   INNER JOIN categories c ON c.id = p.category_id
   WHERE p.is_deleted = false
