@@ -210,7 +210,7 @@ export default function Landing() {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="username"
-                className="landing-login-input w-full px-3 py-2.5 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-white"
+                className="landing-login-input w-full px-3 py-2.5 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-[#FFFBE6]"
                 required
                 autoComplete="username"
                 autoFocus
@@ -225,7 +225,7 @@ export default function Landing() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="landing-login-input w-full px-3 py-2.5 pr-10 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-white"
+                  className="landing-login-input w-full px-3 py-2.5 pr-10 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-[#FFFBE6]"
                   required
                   autoComplete="current-password"
                 />
