@@ -49,12 +49,10 @@ public class ShopDashboardService(
         var recentTask     = invRepo.ListMovementsAsync(scopedShopId, null, null, null, 1, RecentMovementsCount, ct);
         var pendingReqsTask = stockRequestRepo.ListPagedAsync(
             scopedShopId, null, "Pending", null, 1, 1, null, null, null, ct: ct);
-        var lastTakeTask   = invRepo.StockTakeListAsync(
-            scopedShopId, null, null, null, 1, 1, ct);
 
         await Task.WhenAll(
             valuationTask, onHandTask, lowStockTask, todayBucketsTask,
-            recentTask, pendingReqsTask, lastTakeTask);
+            recentTask, pendingReqsTask);
 
         var valuation     = await valuationTask;
         var (_, skuCount) = await onHandTask;
@@ -62,7 +60,6 @@ public class ShopDashboardService(
         var todayBuckets  = await todayBucketsTask;
         var recent        = await recentTask;
         var (_, pendingReqCount) = await pendingReqsTask;
-        var lastTakeRows  = await lastTakeTask;
 
         // Extract today's Receipt + Adjustment buckets from the summary
         var receiptBucket    = todayBuckets.FirstOrDefault(b => b.Movement_Type == "Receipt");
@@ -85,15 +82,6 @@ public class ShopDashboardService(
             m.Ref_Type, m.Ref_Id, m.Note,
             m.Created_At, m.Created_By, m.Created_By_Name)).ToList();
 
-        StockTakeSummaryDto? lastTake = null;
-        if (lastTakeRows.Count > 0)
-        {
-            var r = lastTakeRows[0];
-            lastTake = new StockTakeSummaryDto(
-                r.Id, r.Code, r.Status, r.Started_At, r.Submitted_At,
-                r.Item_Count, r.Diff_Count, r.Net_Diff_Qty);
-        }
-
         return new ShopDashboardDto(
             ShopId:         shop.Id,
             ShopCode:       shop.Code,
@@ -106,8 +94,7 @@ public class ShopDashboardService(
             TodayReceiptsQty:   receiptBucket?.Total_Qty ?? 0m,
             TodayAdjustments:   adjustmentBucket?.Total_Lines ?? 0,
             RecentMovements:    recentDtos,
-            PendingRequestsCount: pendingReqCount,
-            LastStockTake:      lastTake);
+            PendingRequestsCount: pendingReqCount);
     }
 
     private bool IsRole(string role)

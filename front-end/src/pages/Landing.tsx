@@ -1,10 +1,13 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
 import { Eye, EyeOff } from 'lucide-react'
+import { motion } from 'framer-motion'
+import Tilt from 'react-parallax-tilt'
 import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
 import { ApiError } from '../api/errors'
 import { BASE_URL } from '../api/config'
+import PremiumLoginScene from '../components/PremiumLoginScene'
 import './Landing.css'
 
 export default function Landing() {
@@ -126,26 +129,80 @@ export default function Landing() {
     }
   }
 
+  // Frosted-glass styling shared by both cards — semi-transparent cream over
+  // the dark 3D scene, backdrop blur so the particle field reads through as
+  // a subtle luminous glow, gold border for the brand rim.
+  const glassSx: React.CSSProperties = {
+    background: 'rgba(255, 251, 230, 0.82)',
+    backdropFilter: 'blur(18px) saturate(160%)',
+    WebkitBackdropFilter: 'blur(18px) saturate(160%)',
+    border: '1px solid rgba(252, 216, 53, 0.45)',
+    boxShadow: '0 20px 60px -12px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+  }
+
+  // Framer-motion cascade — welcome card in first, login form second.
+  // Tightly-tuned easing so both feel deliberate, not "app loading".
+  const cardMotion = {
+    initial: { opacity: 0, y: 24, filter: 'blur(6px)' },
+    animate: { opacity: 1, y: 0, filter: 'blur(0px)' },
+    transition: { duration: 0.85, ease: [0.16, 1, 0.3, 1] as const },
+  }
+
   return (
     <div className="relative min-h-screen flex flex-col">
+      {/* 3D animated background — R3F canvas fixed to viewport at z=0.
+          Everything above sits at z-10 with pointer-events restored. */}
+      <PremiumLoginScene />
+
       <header className="relative z-10 px-6 sm:px-8 py-5 flex items-center gap-3">
         {/* Logo on its own — the emblem already spells out the brand, so
             the redundant text title that lived here was dropped. */}
-        <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="h-12 sm:h-14 w-auto" />
+        <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="h-12 sm:h-14 w-auto drop-shadow-2xl" />
       </header>
 
       <main className="relative z-10 flex-1 flex items-center justify-center px-6 py-12">
         <div className="max-w-md w-full">
-          <div className="landing-welcome-card text-center mb-6 px-6 py-8 rounded-2xl bg-[#FFFBE6]">
-            <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="mx-auto w-56 sm:w-64 h-auto mb-4" />
-            <p className="text-[#1F1F1F] text-base font-bold uppercase tracking-widest">Welcome — sign in to continue</p>
-          </div>
-
-          <form
-            onSubmit={handleSubmit}
-            className="landing-welcome-card bg-[#FFFBE6] rounded-2xl p-6 sm:p-8 space-y-4"
-            noValidate
+          {/* Welcome card — parallax tilt on hover, framer-motion mount. */}
+          <Tilt
+            tiltMaxAngleX={6}
+            tiltMaxAngleY={6}
+            perspective={1200}
+            glareEnable
+            glareMaxOpacity={0.15}
+            glareColor="#FCD835"
+            glarePosition="all"
+            scale={1.01}
+            transitionSpeed={800}
           >
+            <motion.div
+              {...cardMotion}
+              className="landing-welcome-card text-center mb-6 px-6 py-8 rounded-2xl"
+              style={glassSx}
+            >
+              <img src="/logo.png" alt="Kovilpatti Murukku & Snacks" className="mx-auto w-56 sm:w-64 h-auto mb-4" />
+              <p className="text-[#1F1F1F] text-base font-bold uppercase tracking-widest">Welcome — sign in to continue</p>
+            </motion.div>
+          </Tilt>
+
+          <Tilt
+            tiltMaxAngleX={5}
+            tiltMaxAngleY={5}
+            perspective={1200}
+            glareEnable
+            glareMaxOpacity={0.12}
+            glareColor="#FCD835"
+            glarePosition="all"
+            scale={1.005}
+            transitionSpeed={800}
+          >
+            <motion.form
+              {...cardMotion}
+              transition={{ ...cardMotion.transition, delay: 0.12 }}
+              onSubmit={handleSubmit}
+              className="landing-welcome-card rounded-2xl p-6 sm:p-8 space-y-4"
+              style={glassSx}
+              noValidate
+            >
             <div>
               <label className="block text-xs font-bold uppercase tracking-widest text-[#1F1F1F]/75 mb-1.5">Username</label>
               <input
@@ -153,7 +210,7 @@ export default function Landing() {
                 value={username}
                 onChange={e => setUsername(e.target.value)}
                 placeholder="username"
-                className="landing-login-input w-full px-3 py-2.5 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-white"
+                className="landing-login-input w-full px-3 py-2.5 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-[#FFFBE6]"
                 required
                 autoComplete="username"
                 autoFocus
@@ -168,7 +225,7 @@ export default function Landing() {
                   value={password}
                   onChange={e => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="landing-login-input w-full px-3 py-2.5 pr-10 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-white"
+                  className="landing-login-input w-full px-3 py-2.5 pr-10 rounded-lg text-sm text-[#1F1F1F] focus:outline-none focus:ring-2 focus:ring-[#FCD835] bg-[#FFFBE6]"
                   required
                   autoComplete="current-password"
                 />
@@ -199,9 +256,11 @@ export default function Landing() {
               </div>
             )}
 
-            <button
+            <motion.button
               type="submit"
               disabled={!username || !password || submitting}
+              whileHover={{ scale: 1.02, boxShadow: '0 0 24px rgba(252, 216, 53, 0.55)' }}
+              whileTap={{ scale: 0.98 }}
               className="landing-login-submit w-full gold-gradient gold-gradient-hover-target disabled:bg-gray-300 disabled:text-gray-500 py-3 rounded-lg text-sm font-bold uppercase tracking-widest transition"
             >
               {wakingUp
@@ -209,8 +268,9 @@ export default function Landing() {
                 : submitting
                   ? (retryCount > 0 ? 'Retrying…' : 'Signing in…')
                   : 'Sign In'}
-            </button>
-          </form>
+            </motion.button>
+            </motion.form>
+          </Tilt>
         </div>
       </main>
     </div>

@@ -1,8 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
 import {
   AlertTriangle, ArrowUpRight, ChevronDown, ChevronRight,
-  ClipboardCheck, ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
+  ClipboardList, FolderTree, Package, Sparkles, TrendingUp, Wallet,
 } from 'lucide-react'
 import { Alert, Box, Chip, Paper, Skeleton } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
@@ -14,7 +13,6 @@ import type {
 } from '../../api/shop-inventory/types'
 import type { CategoryDto } from '../../api/categories/types'
 import { formatINR } from '../../utils/format'
-import { formatIstDateTime } from '../../utils/formatDate'
 
 /**
  * Shop user's post-login landing page (see project_kovilpatti_shop_landing
@@ -24,7 +22,6 @@ import { formatIstDateTime } from '../../utils/formatDate'
  */
 export default function ShopDashboard() {
   const { data, isLoading, isError, error } = useShopDashboard()
-  const navigate = useNavigate()
 
   if (isError) {
     return (
@@ -132,7 +129,7 @@ export default function ShopDashboard() {
             }
             secondary={
               (data?.todayAdjustments ?? 0) > 0
-                ? 'stock-take / manual corrections'
+                ? 'manual corrections'
                 : 'no corrections today'
             }
             tone="muted"
@@ -140,114 +137,37 @@ export default function ShopDashboard() {
         </Box>
       </Paper>
 
-      {/* ─── Low stock alerts + Last stock-take (two-column on desktop) ─── */}
-      <Box
-        sx={{
-          display: 'grid',
-          gridTemplateColumns: { xs: '1fr', md: '2fr 1fr' },
-          gap: 2,
-          mb: 3,
-        }}
-      >
-        <Paper elevation={0} sx={panelSx}>
-          <SectionHeader
-            icon={<AlertTriangle className="w-4 h-4 text-[#C62828]" />}
-            title="Low stock"
-            trailing={
-              (data?.lowStockCount ?? 0) > 0 ? (
-                <Chip
-                  size="small"
-                  label={`${data?.lowStockCount ?? 0} items`}
-                  sx={{
-                    borderRadius: 999, fontWeight: 700, fontSize: 11,
-                    bgcolor: '#FFEBEE', color: '#B71C1C',
-                    border: '1px solid rgba(198,40,40,0.35)',
-                  }}
-                />
-              ) : undefined
-            }
-          />
-          {isLoading ? (
-            <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
-              <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
-              <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
-              <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
-            </Box>
-          ) : (data?.lowStock.length ?? 0) === 0 ? (
-            <EmptyState message="No items are below the reorder threshold. 🎉" />
-          ) : (
-            <LowStockByCategory items={data!.lowStock} />
-          )}
-        </Paper>
-
-        <Paper elevation={0} sx={panelSx}>
-          <SectionHeader
-            icon={<ClipboardCheck className="w-4 h-4" />}
-            title="Last stock-take"
-          />
-          {isLoading ? (
-            <Skeleton variant="rectangular" height={80} sx={{ mt: 1.5, borderRadius: 1 }} />
-          ) : !data?.lastStockTake ? (
-            <EmptyState
-              message="No stock-takes recorded yet."
-              hint="Open Stock Count from the sidebar to reconcile shelf stock with the system."
-            />
-          ) : (
-            // Whole tile is a link-into-detail. Not a "quick action" button
-            // — the tile is a summary drill-down (25-Jul-2026), matching how
-            // the low-stock rows will eventually navigate into product detail.
-            <Box
-              onClick={() => navigate(`/shop/stock-takes/${data.lastStockTake!.id}`)}
-              sx={{
-                mt: 1, px: 1.5, py: 1.25,
-                borderRadius: 1,
-                bgcolor: '#FFFBE6',
-                border: '1px solid rgba(31,31,31,0.15)',
-                cursor: 'pointer',
-                transition: 'background-color 120ms ease, border-color 120ms ease',
-                '&:hover': {
-                  bgcolor: '#FFF3B8',
-                  borderColor: 'rgba(31,31,31,0.35)',
-                },
-              }}
-            >
-              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-                <Box sx={{ fontWeight: 700, fontSize: 14 }}>{data.lastStockTake.code}</Box>
-                <Chip
-                  size="small"
-                  label={data.lastStockTake.status}
-                  sx={{
-                    borderRadius: 999, fontWeight: 700, fontSize: 10,
-                    ...(data.lastStockTake.status === 'Submitted'
-                      ? { bgcolor: '#E8F5E9', color: '#1B5E20', border: '1px solid rgba(46,125,50,0.4)' }
-                      : data.lastStockTake.status === 'Draft'
-                      ? { bgcolor: '#FFF8E1', color: '#7C4A00', border: '1px solid rgba(194,138,0,0.45)' }
-                      : { bgcolor: '#F5F5F5', color: '#616161', border: '1px solid rgba(0,0,0,0.15)' }),
-                  }}
-                />
-              </Box>
-              <Box sx={{ fontSize: 11.5, color: '#1F1F1F99' }}>
-                Started {formatIstDateTime(data.lastStockTake.startedAt)}
-              </Box>
-              <Box sx={{ mt: 0.75, display: 'flex', gap: 2, fontSize: 12 }}>
-                <span>
-                  <strong>{data.lastStockTake.itemCount}</strong> lines
-                </span>
-                <span>
-                  <strong>{data.lastStockTake.diffCount}</strong> diffs
-                </span>
-                <span
-                  style={{
-                    color: data.lastStockTake.netDiffQty !== 0 ? '#C62828' : '#1F1F1F99',
-                  }}
-                >
-                  Net <strong>{data.lastStockTake.netDiffQty > 0 ? '+' : ''}{data.lastStockTake.netDiffQty}</strong>
-                </span>
-              </Box>
-            </Box>
-          )}
-        </Paper>
-      </Box>
+      {/* ─── Low stock alerts ─── */}
+      <Paper elevation={0} sx={{ ...panelSx, mb: 3 }}>
+        <SectionHeader
+          icon={<AlertTriangle className="w-4 h-4 text-[#C62828]" />}
+          title="Low stock"
+          trailing={
+            (data?.lowStockCount ?? 0) > 0 ? (
+              <Chip
+                size="small"
+                label={`${data?.lowStockCount ?? 0} items`}
+                sx={{
+                  borderRadius: 999, fontWeight: 700, fontSize: 11,
+                  bgcolor: '#FFEBEE', color: '#B71C1C',
+                  border: '1px solid rgba(198,40,40,0.35)',
+                }}
+              />
+            ) : undefined
+          }
+        />
+        {isLoading ? (
+          <Box sx={{ mt: 1.5, display: 'flex', flexDirection: 'column', gap: 1 }}>
+            <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
+            <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
+            <Skeleton variant="rectangular" height={40} sx={{ borderRadius: 1 }} />
+          </Box>
+        ) : (data?.lowStock.length ?? 0) === 0 ? (
+          <EmptyState message="No items are below the reorder threshold. 🎉" />
+        ) : (
+          <LowStockByCategory items={data!.lowStock} />
+        )}
+      </Paper>
 
       {/* ─── Inventory by category tree ───
           Expandable browse of stock rolled up through the category tree:

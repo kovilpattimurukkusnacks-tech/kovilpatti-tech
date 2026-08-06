@@ -95,8 +95,7 @@ public class ShopInventoryController(IShopInventoryService svc) : ControllerBase
 
     /// POST /api/shop-inventory/adjust?shopId=…
     /// Body: { productId, qtyDelta (signed), reason }
-    /// Records a `ManualAdjustment` movement. Shop users go through the
-    /// stock-take flow instead. Service layer enforces admin-only.
+    /// Records a `ManualAdjustment` movement. Admin only.
     [HttpPost("adjust")]
     [Authorize(Roles = RoleNames.Admin)]
     public async Task<ActionResult<ShopInventoryDetailDto>> Adjust(
@@ -104,65 +103,4 @@ public class ShopInventoryController(IShopInventoryService svc) : ControllerBase
         [FromBody]  AdjustInventoryRequest request,
         CancellationToken ct = default)
         => Ok(await svc.AdjustAsync(shopId, request, ct));
-
-    // ═══════════════ Stock-take flow ═══════════════
-
-    /// POST /api/shop-inventory/stock-takes?shopId=…
-    /// Starts a new Draft session; SP raises 409 if one already exists.
-    [HttpPost("stock-takes")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<StockTakeDetailDto>> StartStockTake(
-        [FromQuery] Guid? shopId, CancellationToken ct)
-    {
-        var dto = await svc.StartStockTakeAsync(shopId, ct);
-        return CreatedAtAction(nameof(GetStockTake), new { id = dto.Id }, dto);
-    }
-
-    /// GET /api/shop-inventory/stock-takes/{id}
-    [HttpGet("stock-takes/{id:guid}")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<StockTakeDetailDto>> GetStockTake(Guid id, CancellationToken ct)
-        => Ok(await svc.GetStockTakeAsync(id, ct));
-
-    /// GET /api/shop-inventory/stock-takes?shopId=…&status=Draft&…
-    [HttpGet("stock-takes")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<PagedResult<StockTakeSummaryDto>>> ListStockTakes(
-        [FromQuery] Guid?     shopId,
-        [FromQuery] string?   status,
-        [FromQuery] DateOnly? fromDate,
-        [FromQuery] DateOnly? toDate,
-        [FromQuery] int       page     = 1,
-        [FromQuery] int       pageSize = 25,
-        CancellationToken ct = default)
-        => Ok(await svc.ListStockTakesAsync(shopId, status, fromDate, toDate, page, pageSize, ct));
-
-    /// PUT /api/shop-inventory/stock-takes/{id}/lines
-    /// Body: { productId, countedQty, note? }
-    /// Save (or overwrite) one counted-qty line. Session must be Draft.
-    [HttpPut("stock-takes/{id:guid}/lines")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<StockTakeDetailDto>> UpsertStockTakeLine(
-        Guid id,
-        [FromBody] UpsertStockTakeLineRequest request,
-        CancellationToken ct = default)
-        => Ok(await svc.UpsertStockTakeLineAsync(id, request, ct));
-
-    /// POST /api/shop-inventory/stock-takes/{id}/submit
-    /// Writes Adjustment movements for non-zero diffs; marks Submitted.
-    [HttpPost("stock-takes/{id:guid}/submit")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<StockTakeDetailDto>> SubmitStockTake(
-        Guid id, CancellationToken ct)
-        => Ok(await svc.SubmitStockTakeAsync(id, ct));
-
-    /// POST /api/shop-inventory/stock-takes/{id}/cancel
-    /// Body: { reason }
-    [HttpPost("stock-takes/{id:guid}/cancel")]
-    [Authorize(Roles = RoleNames.ShopUser + "," + RoleNames.Admin)]
-    public async Task<ActionResult<StockTakeDetailDto>> CancelStockTake(
-        Guid id,
-        [FromBody] CancelStockTakeRequest request,
-        CancellationToken ct = default)
-        => Ok(await svc.CancelStockTakeAsync(id, request, ct));
 }

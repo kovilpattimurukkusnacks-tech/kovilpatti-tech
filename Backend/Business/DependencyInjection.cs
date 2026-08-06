@@ -61,7 +61,7 @@ public static class DependencyInjection
         // Phase 4 — staff salary
         services.AddScoped<IStaffSalaryService, StaffSalaryService>();
 
-        // Phase 4 — shop inventory + stock-take + dashboard aggregate
+        // Phase 4 — shop inventory + dashboard aggregate
         services.AddScoped<IShopInventoryService, ShopInventoryService>();
         services.AddScoped<IShopDashboardService, ShopDashboardService>();
 
