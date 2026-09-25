@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Navigate, useNavigate } from 'react-router-dom'
+import * as Sentry from '@sentry/react'
 import { Eye, EyeOff } from 'lucide-react'
 import { motion } from 'framer-motion'
 import Tilt from 'react-parallax-tilt'
@@ -7,6 +8,7 @@ import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
 import { ApiError } from '../api/errors'
 import { BASE_URL } from '../api/config'
+import { getRequestInfo } from '../api/client'
 import PremiumLoginScene from '../components/PremiumLoginScene'
 import './Landing.css'
 
@@ -30,6 +32,39 @@ export default function Landing() {
 
   // Already authenticated? Bounce to the role-specific landing.
   if (currentUser) return <Navigate to={roleHomePath(currentUser.role)} replace />
+
+  // Login failures → Sentry (24-Sep-2026). Login bypasses React Query, so
+  // main.tsx's global onError never sees it and every failed login used to
+  // vanish. Called once per submit, on the FINAL failure (after retries).
+  // `login.outcome`: network = request never reached the BE (not in Railway
+  // logs); 401 = wrong credentials (warning — typos are expected); 429 =
+  // lockout; 5xx = BE error. One fingerprint per outcome → one Sentry issue each.
+  const reportLoginFailure = (err: unknown, uiAttempt: number) => {
+    const info = getRequestInfo(err)
+    const status = err instanceof ApiError ? err.status : undefined
+    const outcome =
+      status == null ? 'network'
+        : status === 401 ? '401'
+        : status === 429 ? '429'
+        : status >= 500 ? '5xx'
+        : String(status)
+    Sentry.withScope(scope => {
+      scope.setLevel(outcome === '401' ? 'warning' : 'error')
+      scope.setFingerprint(['login-failure', outcome])
+      scope.setTags({
+        'login.outcome': outcome,
+        'login.ui_attempt': String(uiAttempt),
+        'api.base': BASE_URL,
+        ...(info && { correlation_id: info.correlationId }),
+      })
+      scope.setUser({ username: username.trim() })
+      scope.setContext('login', {
+        online: typeof navigator !== 'undefined' ? navigator.onLine : undefined,
+        request: info,
+      })
+      Sentry.captureException(err)
+    })
+  }
 
   // Extracted so both the initial submit and the auto-retry can share the
   // same login flow without duplicating the try/catch tree.
@@ -71,11 +106,13 @@ export default function Landing() {
     const err = first.err
     if (err instanceof ApiError) {
       if (err.status === 401) {
+        reportLoginFailure(err, 1)
         setError('Invalid username or password.')
         return
       }
       if (err.status === 429) {
         // BE-supplied message already carries "wait X minutes". No retry.
+        reportLoginFailure(err, 1)
         setError(err.message)
         return
       }
@@ -86,6 +123,7 @@ export default function Landing() {
         return
       }
       // Anything else (400 with a specific message etc.) — surface as-is.
+      reportLoginFailure(err, 1)
       setError(`${err.message}\n(API ${BASE_URL} · status ${err.status})`)
       return
     }
@@ -116,6 +154,7 @@ export default function Landing() {
     // off the screen without opening DevTools.
     setWakingUp(false)
     const err = second.err
+    reportLoginFailure(err, 2)
     if (err instanceof ApiError && [502, 503, 504].includes(err.status)) {
       setError(
         `Still can't reach the server. Try again in a minute, switch to mobile data, or contact support.\n(API ${BASE_URL} · status ${err.status})`

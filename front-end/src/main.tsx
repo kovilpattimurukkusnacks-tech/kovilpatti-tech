@@ -5,6 +5,8 @@ import * as Sentry from '@sentry/react'
 import './styles/global.css'
 import App from './App.tsx'
 import { ToastProvider } from './context/ToastContext'
+import { BASE_URL } from './api/config'
+import { getRequestInfo } from './api/client'
 
 // Sentry — client-side error tracking (11-Jul-2026, client login-issue postmortem).
 // Only initialises when VITE_SENTRY_DSN is set at build time; otherwise this
@@ -29,6 +31,9 @@ if (SENTRY_DSN) {
     // falls back to Vite's build MODE ('production' / 'development')
     // when the explicit label isn't set — useful locally.
     environment: (import.meta.env.VITE_APP_ENV as string | undefined) || import.meta.env.MODE,
+    // Build identifier (24-Sep-2026) — the deploy's git commit, injected by
+    // vite.config.ts. Tells us whether the client is on a stale cached build.
+    release: (import.meta.env.VITE_RELEASE as string | undefined) || undefined,
     // Sample rate for performance traces — 10% keeps us well under the
     // free tier's 100k spans/month while still surfacing slow endpoints.
     tracesSampleRate: 0.1,
@@ -38,6 +43,24 @@ if (SENTRY_DSN) {
       // and session health per release. No PII collected — just a session id.
       Sentry.browserSessionIntegration(),
     ],
+  })
+  // Which BE this bundle talks to — a missing VITE_API_URL shows up as
+  // localhost here, a wrong deploy as the other environment's host.
+  Sentry.setTag('api.base', BASE_URL)
+}
+
+/** Capture an API error with the endpoint + correlation ID from client.ts,
+ *  so a Sentry event can be matched to its Railway log line. `api.status`
+ *  = 'network' means the request never reached the BE (no Railway log). */
+function captureApiError(err: unknown) {
+  const info = getRequestInfo(err)
+  Sentry.captureException(err, info && {
+    tags: {
+      'api.method': info.method,
+      'api.status': info.status == null ? 'network' : String(info.status),
+      correlation_id: info.correlationId,
+    },
+    contexts: { api_request: { ...info, base: BASE_URL } },
   })
 }
 
@@ -54,10 +77,10 @@ if (SENTRY_DSN) {
 // a curated silence.
 const queryClient = new QueryClient({
   queryCache: new QueryCache({
-    onError: (err) => Sentry.captureException(err),
+    onError: captureApiError,
   }),
   mutationCache: new MutationCache({
-    onError: (err) => Sentry.captureException(err),
+    onError: captureApiError,
   }),
   defaultOptions: {
     queries: {
