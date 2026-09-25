@@ -1,5 +1,6 @@
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
+import * as Sentry from '@sentry/react'
 import type { CurrentUser } from '../types'
 import { authApi } from '../api/auth/api'
 import { tokenStore, UNAUTHORIZED_EVENT } from '../api/tokenStore'
@@ -83,6 +84,16 @@ export function AppProvider({ children }: { children: ReactNode }) {
     queryClient.clear()
     setCurrentUser(null)
   }
+
+  // Sentry identity (24-Sep-2026) — every event carries who hit it, so the
+  // client's errors can be told apart from ours. Covers login, page reload
+  // (restored from storage), logout and the 401 teardown below in one place.
+  useEffect(() => {
+    Sentry.setUser(currentUser
+      ? { id: currentUser.userId, username: currentUser.username }
+      : null)
+    Sentry.setTag('user.role', currentUser?.role ?? 'anonymous')
+  }, [currentUser])
 
   // 401 handler — when any API call returns 401, the client clears the token
   // and dispatches this event. Drop currentUser so the auth guard (RoleGate)
