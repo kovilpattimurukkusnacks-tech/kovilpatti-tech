@@ -7,7 +7,7 @@ import Tilt from 'react-parallax-tilt'
 import { useApp } from '../context/AppContext'
 import { roleHomePath } from '../routes'
 import { ApiError } from '../api/errors'
-import { BASE_URL } from '../api/config'
+import { API_LABEL } from '../api/config'
 import { getRequestInfo } from '../api/client'
 import PremiumLoginScene from '../components/PremiumLoginScene'
 import './Landing.css'
@@ -54,7 +54,7 @@ export default function Landing() {
       scope.setTags({
         'login.outcome': outcome,
         'login.ui_attempt': String(uiAttempt),
-        'api.base': BASE_URL,
+        'api.base': API_LABEL,
         ...(info && { correlation_id: info.correlationId }),
       })
       scope.setUser({ username: username.trim() })
@@ -124,7 +124,7 @@ export default function Landing() {
       }
       // Anything else (400 with a specific message etc.) — surface as-is.
       reportLoginFailure(err, 1)
-      setError(`${err.message}\n(API ${BASE_URL} · status ${err.status})`)
+      setError(`${err.message}\n(API ${API_LABEL} · status ${err.status})`)
       return
     }
     // Non-ApiError = network/DNS/CORS/TLS — browser couldn't reach the API.
@@ -157,13 +157,13 @@ export default function Landing() {
     reportLoginFailure(err, 2)
     if (err instanceof ApiError && [502, 503, 504].includes(err.status)) {
       setError(
-        `Still can't reach the server. Try again in a minute, switch to mobile data, or contact support.\n(API ${BASE_URL} · status ${err.status})`
+        `Still can't reach the server. Try again in a minute, switch to mobile data, or contact support.\n(API ${API_LABEL} · status ${err.status})`
       )
     } else if (err instanceof ApiError) {
-      setError(`${err.message}\n(API ${BASE_URL} · status ${err.status})`)
+      setError(`${err.message}\n(API ${API_LABEL} · status ${err.status})`)
     } else {
       setError(
-        `Still can't reach the server. Check your internet connection, try mobile data instead of Wi-Fi, or contact support.\n(API ${BASE_URL} · network error)`
+        `Still can't reach the server. Check your internet connection, try mobile data instead of Wi-Fi, or contact support.\n(API ${API_LABEL} · network error)`
       )
     }
   }
