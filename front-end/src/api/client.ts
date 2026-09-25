@@ -13,6 +13,7 @@
  * a per-resource module under `src/api/<resource>/api.ts` that uses this.
  */
 
+import * as Sentry from '@sentry/react'
 import { BASE_URL } from './config'
 import { tokenStore, UNAUTHORIZED_EVENT } from './tokenStore'
 import {
@@ -23,6 +24,31 @@ type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
 
 type RequestOpts = {
   signal?: AbortSignal
+}
+
+/** What we know about the request that produced an error. `status` is
+ *  undefined when fetch() itself threw (network / DNS / CORS / TLS) — the
+ *  request never got a response, so Railway has no log line for it either. */
+export type ApiRequestInfo = {
+  method: HttpMethod
+  path: string
+  status?: number
+  correlationId: string
+}
+
+// Sentry context (24-Sep-2026). Errors thrown by `request` are tagged here so
+// the Sentry capture sites (main.tsx onError, Landing login) can attach the
+// correlation ID + endpoint — grep the same ID in Railway logs. WeakMap so
+// native TypeErrors stay unmodified (auth/api.ts relies on instanceof TypeError).
+const requestInfoByError = new WeakMap<object, ApiRequestInfo>()
+
+export function getRequestInfo(err: unknown): ApiRequestInfo | undefined {
+  return (err && typeof err === 'object') ? requestInfoByError.get(err) : undefined
+}
+
+function tagError<E>(err: E, info: ApiRequestInfo): E {
+  if (err && typeof err === 'object') requestInfoByError.set(err, info)
+  return err
 }
 
 /**
@@ -53,20 +79,40 @@ let refreshInFlight: Promise<boolean> | null = null
 async function performRefresh(): Promise<boolean> {
   const rt = tokenStore.getRefresh()
   if (!rt) return false
+  const corrId = newCorrelationId()
   try {
     // Raw fetch (not `request`) so a 401 here doesn't re-enter the interceptor.
     const res = await fetch(`${BASE_URL}/api/auth/refresh`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        Accept: 'application/json',
+        'X-Correlation-Id': corrId,
+      },
       body: JSON.stringify({ refreshToken: rt }),
     })
-    if (!res.ok) return false
+    if (!res.ok) {
+      // 401 = refresh token expired / revoked → the user is bounced to login.
+      // Warning, not error: expected after 14 days, but it's the only trace
+      // when a user reports "it logged me out".
+      Sentry.captureMessage(`Session refresh rejected (${res.status})`, {
+        level: res.status === 401 ? 'warning' : 'error',
+        fingerprint: ['auth-refresh-failed', String(res.status)],
+        tags: { 'api.status': String(res.status), correlation_id: res.headers.get('X-Correlation-Id') ?? corrId },
+      })
+      return false
+    }
     const data = await res.json() as { token?: string; refreshToken?: string }
     if (!data.token || !data.refreshToken) return false
     tokenStore.set(data.token)
     tokenStore.setRefresh(data.refreshToken)
     return true
-  } catch {
+  } catch (err) {
+    // Network failure mid-session — the request never reached the BE.
+    Sentry.captureException(err, {
+      fingerprint: ['auth-refresh-network'],
+      tags: { 'api.status': 'network', correlation_id: corrId },
+    })
     return false
   }
 }
@@ -81,6 +127,9 @@ function ensureRefreshed(): Promise<boolean> {
 async function request<T>(method: HttpMethod, path: string, body?: unknown, opts: RequestOpts = {}): Promise<T> {
   const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
   const url = `${BASE_URL}${path}`
+  // Updated by every doFetch (incl. the post-refresh replay) so a thrown
+  // error carries the ID of the attempt that actually failed.
+  let info: ApiRequestInfo = { method, path, correlationId: '' }
 
   // Closure so we can replay the exact same request after a token refresh —
   // reads the CURRENT access token each time (a refresh swaps it underneath).
@@ -99,14 +148,22 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown, opts
     const corrId = newCorrelationId()
     headers['X-Correlation-Id'] = corrId
 
+    info = { method, path, correlationId: corrId }
+
     const t0 = typeof performance !== 'undefined' ? performance.now() : 0
-    const resp = await fetch(url, {
-      method,
-      headers,
-      body: body === undefined ? undefined : (isFormData ? (body as FormData) : JSON.stringify(body)),
-      signal: opts.signal,
-    })
+    let resp: Response
+    try {
+      resp = await fetch(url, {
+        method,
+        headers,
+        body: body === undefined ? undefined : (isFormData ? (body as FormData) : JSON.stringify(body)),
+        signal: opts.signal,
+      })
+    } catch (err) {
+      throw tagError(err, info)
+    }
     const effectiveId = resp.headers.get('X-Correlation-Id') ?? corrId
+    info = { method, path, status: resp.status, correlationId: effectiveId }
     const dt = typeof performance !== 'undefined' ? Math.round(performance.now() - t0) : 0
     // eslint-disable-next-line no-console
     console.info(`[kovilpatti] ${effectiveId} ${method} ${path} → ${resp.status} in ${dt}ms`)
@@ -141,21 +198,21 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown, opts
 
   switch (response.status) {
     case 400:
-      throw new ValidationError(parsed)
+      throw tagError(new ValidationError(parsed), info)
     case 401:
       tokenStore.clear()
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
-      throw new UnauthorizedError(parsed)
+      throw tagError(new UnauthorizedError(parsed), info)
     case 403:
-      throw new ForbiddenError(parsed)
+      throw tagError(new ForbiddenError(parsed), info)
     case 404:
-      throw new NotFoundError(parsed)
+      throw tagError(new NotFoundError(parsed), info)
     default: {
       const message =
         (parsed && typeof parsed === 'object' && 'error' in parsed && typeof (parsed as { error: unknown }).error === 'string')
           ? (parsed as { error: string }).error
           : `Request failed with status ${response.status}`
-      throw new ApiError(response.status, message, parsed)
+      throw tagError(new ApiError(response.status, message, parsed), info)
     }
   }
 }
