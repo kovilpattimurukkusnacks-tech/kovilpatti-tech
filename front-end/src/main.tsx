@@ -5,7 +5,7 @@ import * as Sentry from '@sentry/react'
 import './styles/global.css'
 import App from './App.tsx'
 import { ToastProvider } from './context/ToastContext'
-import { BASE_URL } from './api/config'
+import { API_LABEL } from './api/config'
 import { getRequestInfo } from './api/client'
 
 // Sentry — client-side error tracking (11-Jul-2026, client login-issue postmortem).
@@ -46,7 +46,7 @@ if (SENTRY_DSN) {
   })
   // Which BE this bundle talks to — a missing VITE_API_URL shows up as
   // localhost here, a wrong deploy as the other environment's host.
-  Sentry.setTag('api.base', BASE_URL)
+  Sentry.setTag('api.base', API_LABEL)
 }
 
 /** Capture an API error with the endpoint + correlation ID from client.ts,
@@ -60,7 +60,7 @@ function captureApiError(err: unknown) {
       'api.status': info.status == null ? 'network' : String(info.status),
       correlation_id: info.correlationId,
     },
-    contexts: { api_request: { ...info, base: BASE_URL } },
+    contexts: { api_request: { ...info, base: API_LABEL } },
   })
 }
 
