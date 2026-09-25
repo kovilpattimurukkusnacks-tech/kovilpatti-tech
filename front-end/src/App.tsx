@@ -27,6 +27,8 @@ import AdminRequestDetail from './pages/admin/AdminRequestDetail'
 import AdminSettings from './pages/admin/AdminSettings'
 import AdminAccounts from './pages/admin/AdminAccounts'
 import AdminDashboard from './pages/admin/AdminDashboard'
+import AdminSales from './pages/admin/AdminSales'
+import AdminShopStock from './pages/admin/AdminShopStock'
 // Phase 5a — vendor master + vendor purchases (no e-way wiring yet).
 // See DB/planned/phase5_vendor_purchases.md.
 import AdminVendors from './pages/admin/AdminVendors'
@@ -86,6 +88,10 @@ const router = createBrowserRouter(
         <Route path="requests/:id/edit" element={<ShopRequestNew />} />
         <Route path="dashboard" element={<AdminDashboard />} />
         <Route path="accounts" element={<AdminAccounts />} />
+        {/* Phase 4d — admin POS views. Sidebar entries are behind the
+            billing flag; routes stay reachable like /shop/billing. */}
+        <Route path="sales" element={<AdminSales />} />
+        <Route path="shop-stock" element={<AdminShopStock />} />
         {/* Phase 5a — vendor purchases (no e-way wiring yet). */}
         <Route path="vendors" element={<AdminVendors />} />
         <Route path="purchases" element={<AdminPurchases />} />

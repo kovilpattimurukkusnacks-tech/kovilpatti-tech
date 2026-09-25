@@ -33,4 +33,8 @@ public interface IShopInventoryService
     /// refreshed detail so caches stay in sync.
     Task<ShopInventoryDetailDto> AdjustAsync(
         Guid? shopId, AdjustInventoryRequest request, CancellationToken ct = default);
+
+    /// Phase 4d — opening stock import (Admin). dryRun = preview only.
+    Task<OpeningImportResultDto> ImportOpeningAsync(
+        Guid? shopId, Stream fileStream, string fileName, bool dryRun, CancellationToken ct = default);
 }

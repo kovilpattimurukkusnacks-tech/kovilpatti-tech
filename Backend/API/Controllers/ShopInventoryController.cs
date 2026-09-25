@@ -103,4 +103,26 @@ public class ShopInventoryController(IShopInventoryService svc) : ControllerBase
         [FromBody]  AdjustInventoryRequest request,
         CancellationToken ct = default)
         => Ok(await svc.AdjustAsync(shopId, request, ct));
+
+    // ═══════════════ Opening stock import (Admin only, Phase 4d) ═══════════════
+
+    /// POST /api/shop-inventory/opening-import?shopId=…&dryRun=true
+    /// multipart file (.xlsx / .csv) with columns code, qty, unit_cost (optional).
+    /// Sets each listed product's on-hand to the counted qty. dryRun=true (the
+    /// default) only previews; dryRun=false applies when the file has no errors.
+    [HttpPost("opening-import")]
+    [Authorize(Roles = RoleNames.Admin)]
+    [RequestSizeLimit(5_000_000)]
+    public async Task<ActionResult<OpeningImportResultDto>> ImportOpening(
+        [FromQuery] Guid? shopId,
+        IFormFile file,
+        [FromQuery] bool dryRun = true,
+        CancellationToken ct = default)
+    {
+        if (file is null || file.Length == 0)
+            return BadRequest(new { error = "Upload a non-empty .xlsx or .csv file." });
+
+        await using var stream = file.OpenReadStream();
+        return Ok(await svc.ImportOpeningAsync(shopId, stream, file.FileName, dryRun, ct));
+    }
 }

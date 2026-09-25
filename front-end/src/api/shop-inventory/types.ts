@@ -92,6 +92,31 @@ export type ShopDashboardDto = {
   pendingRequestsCount: number
 }
 
+// ── Opening stock import (Phase 4d) ──
+export type OpeningImportStatus = 'Changed' | 'Unchanged' | 'Error'
+
+export type OpeningImportRowDto = {
+  rowNo: number              // spreadsheet row (header = 1)
+  inputCode: string
+  productId: string | null
+  productCode: string | null
+  productName: string | null
+  currentQty: number | null  // null on Error rows
+  newQty: number | null
+  delta: number | null
+  status: OpeningImportStatus
+  message: string | null
+}
+
+export type OpeningImportResultDto = {
+  dryRun: boolean
+  applied: boolean           // true only when a real import committed
+  changedCount: number
+  unchangedCount: number
+  errorCount: number
+  rows: OpeningImportRowDto[]
+}
+
 // ── Request bodies ──
 export type AdjustInventoryRequest = {
   productId: string

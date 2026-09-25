@@ -66,12 +66,26 @@ function linePacketsConsumed(l: BillLine): number {
   return 0
 }
 
-/** Money for a cart line — packet: qty × mrp; loose: (g/packG) × mrp. */
+/** Round to the paisa, half away from zero — same as PostgreSQL ROUND(x, 2)
+ *  for the positive amounts billing deals with. */
+function roundMoney(n: number): number {
+  return Math.round((n + Number.EPSILON) * 100) / 100
+}
+
+/** Money for a cart line — packet: qty × mrp; loose: (g/packG) × mrp.
+ *  25-Sep-2026: loose lines are rounded to the paisa exactly like
+ *  fn_bill_create (ROUND(line, 2)), so the on-screen total always equals the
+ *  saved bill. Unrounded lines used to make the tender sum miss the server
+ *  total by a paisa and the bill was rejected. Computed in paise to keep
+ *  float error away from the .5 boundary. */
 function lineAmount(l: BillLine): number {
-  if (l.qty != null) return l.qty * l.product.mrp
+  if (l.qty != null) return roundMoney(l.qty * l.product.mrp)
   if (l.looseWeightG != null) {
     const pack = packSizeGrams(l.product)
-    if (pack) return (l.looseWeightG / pack) * l.product.mrp
+    if (pack) {
+      const mrpPaise = Math.round(l.product.mrp * 100)
+      return Math.round((l.looseWeightG * mrpPaise) / pack) / 100
+    }
   }
   return 0
 }
@@ -212,13 +226,14 @@ export default function ShopBilling() {
   // Phase 4c: subtotal = pre-discount line sum. total = post-discount amount
   // the customer actually pays (matches SP's total_amount + payment settle).
   // Loose lines contribute (weight/pack) × mrp via lineAmount().
-  const subtotal = lines.reduce((s, l) => s + lineAmount(l), 0)
+  // All three rounded to the paisa, mirroring fn_bill_create.
+  const subtotal = roundMoney(lines.reduce((s, l) => s + lineAmount(l), 0))
   const discountAmount = discount == null
     ? 0
     : discount.kind === 'Percent'
-      ? Math.min(subtotal, Math.round(subtotal * discount.value) / 100)
+      ? Math.min(subtotal, roundMoney((subtotal * discount.value) / 100))
       : Math.min(subtotal, discount.value)
-  const total = subtotal - discountAmount
+  const total = roundMoney(subtotal - discountAmount)
 
   // Payment maths. Single tender ⇒ amount is implicitly the full total.
   const isSplit = payments.length > 1

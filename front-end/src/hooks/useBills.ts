@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { billsApi } from '../api/bills/api'
+import { customersKeys } from './useCustomers'
 import type {
   BillListFilters, CreateBillRequest, CancelBillRequest,
   BillReturnListFilters, CreateBillReturnRequest, CreateHoldRequest,
@@ -57,6 +58,9 @@ export function useCancelBill() {
     mutationFn: ({ id, req }: { id: string; req: CancelBillRequest }) => billsApi.cancel(id, req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: billsKeys.all })
+      // 25-Sep-2026: cancelling a credit bill now reverses the customer's
+      // balance server-side — refresh the credit customer list + ledger.
+      qc.invalidateQueries({ queryKey: customersKeys.all })
     },
   })
 }

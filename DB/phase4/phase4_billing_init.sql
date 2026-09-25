@@ -142,6 +142,12 @@ CREATE TABLE IF NOT EXISTS bills (
 
 CREATE INDEX IF NOT EXISTS idx_bills_shop_time   ON bills(shop_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bills_status      ON bills(status) WHERE is_deleted = false;
+-- 25-Sep-2026: admin all-shops date-range reads (fn_admin_bill_list /
+-- fn_admin_sales_*) filter on created_at without a shop — the shop-leading
+-- index above can't serve them. idx_bills_customer was previously only in
+-- the customers-credit one-shot migration; baked in here for fresh deploys.
+CREATE INDEX IF NOT EXISTS idx_bills_created_at  ON bills(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_bills_customer    ON bills(customer_id) WHERE customer_id IS NOT NULL;
 
 
 -- ------------------------------------------------------------
@@ -220,7 +226,9 @@ CREATE TABLE IF NOT EXISTS customer_credit_ledger (
   balance_after numeric(12,2) NOT NULL,
   created_at    timestamptz   NOT NULL DEFAULT now(),
   created_by    uuid          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
-  CONSTRAINT chk_ccl_entry_type CHECK (entry_type IN ('Credit','Settlement')),
+  -- 25-Sep-2026: 'Reversal' = credit given back when the source bill is
+  -- cancelled (fn_bill_cancel). mode stays NULL — no cash changes hands.
+  CONSTRAINT chk_ccl_entry_type CHECK (entry_type IN ('Credit','Settlement','Reversal')),
   CONSTRAINT chk_ccl_amount_pos CHECK (amount > 0),
   CONSTRAINT chk_ccl_mode       CHECK (mode IS NULL OR mode IN ('Cash','UPI'))
 );
@@ -305,6 +313,8 @@ CREATE TABLE IF NOT EXISTS bill_returns (
 
 CREATE INDEX IF NOT EXISTS idx_bill_returns_shop_time ON bill_returns(shop_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_bill_returns_source     ON bill_returns(source_bill_id);
+-- 25-Sep-2026: admin all-shops return reads filter on created_at alone.
+CREATE INDEX IF NOT EXISTS idx_bill_returns_created_at ON bill_returns(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS bill_return_items (
   id           uuid          PRIMARY KEY DEFAULT gen_random_uuid(),

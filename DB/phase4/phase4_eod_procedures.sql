@@ -6,8 +6,14 @@
 -- p_to is exclusive. Values are always non-negative — refunds/cancellations
 -- are separate columns, so the FE can spell out the derivation.
 --
--- Rules (Phase 4c v1):
---   cash_sales      = Σ bill_payments.amount over Issued bills in window.
+-- Rules (Phase 4c v1, sales rule fixed 25-Sep-2026):
+--   cash_sales      = Σ bill_payments.amount over bills CREATED in window,
+--                     whatever their status now (Issued or Cancelled). A
+--                     bill issued and cancelled inside the same window then
+--                     nets to zero (+sale here, −cancel_cash_back below).
+--                     Previously only status='Issued' counted, so such a
+--                     bill's cash was subtracted without ever being added
+--                     and expected_cash came out short.
 --   upi_sales       = same, UPI mode.
 --   credit_sales    = same, Credit mode (informational — no cash impact).
 --   cash_refunds    = Σ bill_returns.total_amount where refund_mode='Cash'
@@ -47,7 +53,7 @@ LANGUAGE sql STABLE AS $$
     JOIN bill_payments bp ON bp.bill_id = b.id
     WHERE b.shop_id = p_shop_id
       AND b.is_deleted = false
-      AND b.status = 'Issued'
+      AND b.status IN ('Issued', 'Cancelled')
       AND b.created_at >= p_from AND b.created_at < p_to
   ),
   refunds AS (

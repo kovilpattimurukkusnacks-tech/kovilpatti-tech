@@ -124,6 +124,7 @@ DECLARE
   v_pay_sum         numeric(12,2) := 0;
   v_credit_sum      numeric(12,2) := 0;
   v_summary_mode    varchar(10);
+  v_has_credit      boolean := false;
   v_cust            record;
 BEGIN
   -- Discount input validation. Kind + value move together.
@@ -160,12 +161,15 @@ BEGIN
     END IF;
     v_pay_sum := v_pay_sum + v_pay.amount;
     IF v_pay.mode = 'Credit' THEN
+      v_has_credit := true;
       v_credit_sum := v_credit_sum + v_pay.amount;
     END IF;
   END LOOP;
 
-  -- A credit tender needs a customer with enough remaining limit.
-  IF v_credit_sum > 0 THEN
+  -- A credit tender needs a customer. Lock the row now (before any stock
+  -- movement) so lock order stays customer → inventory, same as before;
+  -- the limit check itself runs once the final total is known (below).
+  IF v_has_credit THEN
     IF p_customer_id IS NULL THEN
       RAISE EXCEPTION 'A customer is required for a credit sale.';
     END IF;
@@ -175,10 +179,6 @@ BEGIN
     FOR UPDATE;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Customer not found.';
-    END IF;
-    IF v_cust.credit_limit > 0 AND (v_cust.credit_balance + v_credit_sum) > v_cust.credit_limit THEN
-      RAISE EXCEPTION 'Credit limit exceeded: balance % + % is over the limit of %.',
-        v_cust.credit_balance, v_credit_sum, v_cust.credit_limit;
     END IF;
   END IF;
 
@@ -287,28 +287,62 @@ BEGIN
   END IF;
   v_total_amount := v_subtotal - v_discount_amount;
 
+  IF v_total_amount <= 0 THEN
+    RAISE EXCEPTION 'Bill total must be greater than zero.';
+  END IF;
+
+  -- 25-Sep-2026: a single tender means "the customer pays the whole bill",
+  -- so the server's rounded total is authoritative. The FE computes loose-
+  -- weight lines in floating point and could send a total that differs by
+  -- a paisa from Σ ROUND(line, 2) here, which used to reject valid bills.
+  -- Split tenders still must match exactly (the cashier typed each amount).
+  IF v_pay_count = 1 THEN
+    v_pay_sum    := v_total_amount;
+    v_credit_sum := CASE WHEN v_has_credit THEN v_total_amount ELSE 0 END;
+  END IF;
+
   -- Tenders must settle the DISCOUNTED total exactly (UI computes cash
   -- change against total_amount, not subtotal).
   IF v_pay_sum <> v_total_amount THEN
     RAISE EXCEPTION 'Payments (%) must equal the bill total (%).', v_pay_sum, v_total_amount;
   END IF;
 
-  FOR v_pay IN
-    SELECT (x->>'mode')::varchar AS mode, (x->>'amount')::numeric AS amount
-    FROM jsonb_array_elements(p_payments) x
-  LOOP
+  -- Credit limit — checked against the FINAL credit portion. Nested IF, not
+  -- AND: v_cust is only assigned when a credit tender exists, and reading a
+  -- field of an unassigned record raises.
+  IF v_has_credit THEN
+    IF v_cust.credit_limit > 0
+       AND (v_cust.credit_balance + v_credit_sum) > v_cust.credit_limit THEN
+      RAISE EXCEPTION 'Credit limit exceeded: balance % + % is over the limit of %.',
+        v_cust.credit_balance, v_credit_sum, v_cust.credit_limit;
+    END IF;
+  END IF;
+
+  IF v_pay_count = 1 THEN
     INSERT INTO bill_payments (bill_id, mode, amount)
-    VALUES (v_bill_id, v_pay.mode, v_pay.amount);
-  END LOOP;
+    VALUES (v_bill_id, (p_payments->0->>'mode'), v_total_amount);
+  ELSE
+    FOR v_pay IN
+      SELECT (x->>'mode')::varchar AS mode, (x->>'amount')::numeric AS amount
+      FROM jsonb_array_elements(p_payments) x
+    LOOP
+      INSERT INTO bill_payments (bill_id, mode, amount)
+      VALUES (v_bill_id, v_pay.mode, v_pay.amount);
+    END LOOP;
+  END IF;
 
   -- Post the credit portion to the customer's balance + ledger.
+  -- 25-Sep-2026: columns qualified. The bare `WHERE id = …` collided with
+  -- this function's RETURNS TABLE column `id` ("column reference id is
+  -- ambiguous"), so every credit sale failed with a DB error.
   IF v_credit_sum > 0 THEN
-    UPDATE customers SET credit_balance = credit_balance + v_credit_sum, updated_by = p_user_id
-    WHERE id = p_customer_id;
+    UPDATE customers c
+    SET    credit_balance = c.credit_balance + v_credit_sum, updated_by = p_user_id
+    WHERE  c.id = p_customer_id;
 
     INSERT INTO customer_credit_ledger (customer_id, bill_id, entry_type, amount, balance_after, created_by)
     VALUES (p_customer_id, v_bill_id, 'Credit', v_credit_sum,
-            (SELECT credit_balance FROM customers WHERE id = p_customer_id), p_user_id);
+            (SELECT c.credit_balance FROM customers c WHERE c.id = p_customer_id), p_user_id);
   END IF;
 
   UPDATE bills b
@@ -354,6 +388,17 @@ $$;
 -- p_shop_id scopes the lookup so a shop user can only cancel their own
 -- shop's bills (service passes the JWT shop claim). Each line writes a
 -- Refund movement putting goods back on the shelf.
+--
+-- 25-Sep-2026 fixes:
+--   • A bill with any return recorded against it can no longer be
+--     cancelled. Previously the cancel refunded the FULL billed qty to
+--     stock (double-counting what the return already put back) and the
+--     EOD treated the full cash as handed back again.
+--   • A credit tender is reversed: customers.credit_balance drops by the
+--     bill's credit portion and a 'Reversal' ledger row is written.
+--     Blocked if the customer has already paid part of it off (balance <
+--     credit portion) — that needs a manual cash settlement first, since
+--     the balance can't go negative.
 -- ------------------------------------------------------------
 CREATE OR REPLACE FUNCTION fn_bill_cancel(
   p_bill_id      uuid,
@@ -367,12 +412,14 @@ LANGUAGE plpgsql AS $$
 DECLARE
   v_bill        record;
   v_line        record;
+  v_credit_amt  numeric(12,2);
+  v_balance     numeric(12,2);
 BEGIN
   IF p_reason_type NOT IN ('Mistake','Duplicate','CustomerRefused','Other') THEN
     RAISE EXCEPTION 'Please choose a valid cancellation reason.';
   END IF;
 
-  SELECT b.id, b.code, b.status
+  SELECT b.id, b.code, b.status, b.customer_id
   INTO v_bill
   FROM bills b
   WHERE b.id = p_bill_id AND b.shop_id = p_shop_id AND b.is_deleted = false
@@ -384,6 +431,40 @@ BEGIN
 
   IF v_bill.status = 'Cancelled' THEN
     RAISE EXCEPTION 'Bill % is already cancelled.', v_bill.code;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM bill_returns br
+             WHERE br.source_bill_id = p_bill_id AND br.is_deleted = false) THEN
+    RAISE EXCEPTION 'Bill % already has a return recorded, so it can''t be cancelled. Return the remaining items instead.',
+      v_bill.code;
+  END IF;
+
+  -- Reverse the credit portion (if any) before touching stock.
+  SELECT COALESCE(SUM(bp.amount), 0) INTO v_credit_amt
+  FROM bill_payments bp
+  WHERE bp.bill_id = p_bill_id AND bp.mode = 'Credit';
+
+  IF v_credit_amt > 0 THEN
+    SELECT c.credit_balance INTO v_balance
+    FROM customers c
+    WHERE c.id = v_bill.customer_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'The credit customer on bill % no longer exists, so the credit can''t be reversed.', v_bill.code;
+    END IF;
+    IF v_balance < v_credit_amt THEN
+      RAISE EXCEPTION 'Bill % was ₹% on credit, but the customer''s outstanding balance is only ₹% (part is already paid). Settle the difference with the customer first.',
+        v_bill.code, v_credit_amt, v_balance;
+    END IF;
+
+    UPDATE customers
+    SET credit_balance = credit_balance - v_credit_amt, updated_by = p_user_id
+    WHERE id = v_bill.customer_id;
+
+    INSERT INTO customer_credit_ledger (customer_id, bill_id, entry_type, amount, mode, note, balance_after, created_by)
+    VALUES (v_bill.customer_id, p_bill_id, 'Reversal', v_credit_amt, NULL,
+            'Bill ' || v_bill.code || ' cancelled',
+            v_balance - v_credit_amt, p_user_id);
   END IF;
 
   -- 01-Aug-2026: refund packet-equivalent for both modes. Packet lines
@@ -663,6 +744,7 @@ DECLARE
   v_billed_qty   int;
   v_returned_qty int;
   v_unit_price   numeric(10,2);
+  v_product_name varchar;
   v_total_items  int := 0;
   v_total_qty    int := 0;
   v_total_amount numeric(12,2) := 0;
@@ -711,13 +793,23 @@ BEGIN
       RAISE EXCEPTION 'Return quantity must be a positive whole number.';
     END IF;
 
-    SELECT bi.qty, bi.unit_price
-    INTO v_billed_qty, v_unit_price
+    SELECT bi.qty, bi.unit_price, p.name
+    INTO v_billed_qty, v_unit_price, v_product_name
     FROM bill_items bi
+    JOIN products p ON p.id = bi.product_id
     WHERE bi.bill_id = p_bill_id AND bi.product_id = v_line.product_id;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION 'A product on the return was not on bill %.', v_bill.code;
+    END IF;
+
+    -- 25-Sep-2026: loose-weight lines have qty NULL, so the over-return
+    -- check below compared against NULL and silently passed — any qty of a
+    -- loose line could be "returned" for cash. fn_bill_returnable_items
+    -- already hides these lines; enforce the same rule here.
+    IF v_billed_qty IS NULL THEN
+      RAISE EXCEPTION '"%" was sold loose by weight, so it can''t be returned here. Cancel the whole bill instead.',
+        v_product_name;
     END IF;
 
     SELECT COALESCE(SUM(bri.qty), 0)
