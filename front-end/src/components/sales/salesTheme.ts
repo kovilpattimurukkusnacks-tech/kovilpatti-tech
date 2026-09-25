@@ -12,7 +12,13 @@ export const GAIN_GREEN = '#2E7D32'
 export const gridSx: SxProps<Theme> = {
   border: 0,
   bgcolor: CREAM,
-  '& .MuiDataGrid-columnHeaders, & .MuiDataGrid-columnHeader, & .MuiDataGrid-filler': { bgcolor: '#FCD835' },
+  '& .MuiDataGrid-columnHeaders, & .MuiDataGrid-columnHeader': { bgcolor: '#FCD835' },
+  // MUI X paints the filler cells (space right of the last column, under the
+  // scrollbar) white and wins over plain sx — !important, same as SalaryTab.
+  '& .MuiDataGrid-filler, & .MuiDataGrid-scrollbarFiller': { backgroundColor: `${CREAM} !important` },
+  '& .MuiDataGrid-columnHeaders .MuiDataGrid-filler, & .MuiDataGrid-columnHeaders .MuiDataGrid-scrollbarFiller, & .MuiDataGrid-scrollbarFiller--header':
+    { backgroundColor: '#FCD835 !important' },
+  '& .MuiDataGrid-sortButton': { backgroundColor: 'transparent !important' },
   '& .MuiDataGrid-columnHeaderTitle': { fontWeight: 800, fontSize: 12, textTransform: 'uppercase' },
   '& .MuiDataGrid-row': { cursor: 'pointer' },
   '& .MuiDataGrid-row:hover': { bgcolor: CREAM_DEEP },

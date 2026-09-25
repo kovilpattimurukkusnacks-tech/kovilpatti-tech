@@ -55,7 +55,7 @@ export default function SalesOverview({ filters, onShopClick }: {
     { field: 'upiSales', headerName: 'UPI', type: 'number', width: 120, valueFormatter: money },
     { field: 'creditSales', headerName: 'Credit', type: 'number', width: 120, valueFormatter: money },
     { field: 'discountTotal', headerName: 'Discounts', type: 'number', width: 115, valueFormatter: money },
-    { field: 'cancelledCount', headerName: 'Cancelled', type: 'number', width: 100,
+    { field: 'cancelledCount', headerName: 'Cancelled', type: 'number', width: 150,
       renderCell: ({ row }) => row.cancelledCount > 0
         ? <span style={{ color: LOSS_RED, fontWeight: 700 }}>{row.cancelledCount} · {formatINR(row.cancelledAmount)}</span>
         : <span style={{ opacity: 0.4 }}>—</span> },

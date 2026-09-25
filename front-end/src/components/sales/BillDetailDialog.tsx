@@ -36,9 +36,9 @@ export default function BillDetailDialog({ billId, onClose }: { billId: string |
 
           {b.status === 'Cancelled' && (
             <Alert severity="warning" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
-              <strong>Cancelled</strong> {formatIstDateTime(b.cancelledAt)} by {b.cancelledByName ?? '—'} ·{' '}
-              {CANCEL_REASON[b.cancelReasonType ?? ''] ?? b.cancelReasonType}
-              {b.cancelReason ? ` — “${b.cancelReason}”` : ''}
+              <strong>Cancelled</strong> {formatIstDateTime(b.cancelledAt)} by {b.cancelledByName ?? '—'}
+              {b.cancelReasonType && <> · {CANCEL_REASON[b.cancelReasonType] ?? b.cancelReasonType}</>}
+              {b.cancelReason && <>{b.cancelReasonType ? ' — ' : ' · '}“{b.cancelReason}”</>}
             </Alert>
           )}
 

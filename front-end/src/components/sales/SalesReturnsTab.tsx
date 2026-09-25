@@ -47,12 +47,18 @@ export default function SalesReturnsTab({ filters }: { filters: SalesFilters }) 
     { field: 'cancelledAt', headerName: 'Cancelled at', width: 160, valueFormatter: v => formatIstDateTime(v as string) },
     { field: 'cancelledByName', headerName: 'Cancelled by', width: 140, valueFormatter: v => (v as string) ?? '—' },
     { field: 'cancelReasonType', headerName: 'Reason', flex: 1, minWidth: 200,
-      renderCell: ({ row }) => (
-        <span>
-          <strong>{CANCEL_REASON[row.cancelReasonType ?? ''] ?? row.cancelReasonType ?? '—'}</strong>
-          {row.cancelReason ? ` — ${row.cancelReason}` : ''}
-        </span>
-      ) },
+      renderCell: ({ row }) => {
+        // Bills cancelled before reason types existed have only the note.
+        const type = row.cancelReasonType ? (CANCEL_REASON[row.cancelReasonType] ?? row.cancelReasonType) : null
+        if (!type && !row.cancelReason) return <span style={{ opacity: 0.5 }}>No reason given</span>
+        return (
+          <span>
+            {type && <strong>{type}</strong>}
+            {type && row.cancelReason ? ' — ' : ''}
+            {row.cancelReason ?? ''}
+          </span>
+        )
+      } },
   ]
 
   const returnCols: GridColDef<AdminBillReturnListItemDto>[] = [

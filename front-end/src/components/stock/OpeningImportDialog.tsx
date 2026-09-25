@@ -155,7 +155,9 @@ export default function OpeningImportDialog({ shopId, shopName, onClose, onDone 
         <Button onClick={onClose} disabled={importer.isPending} sx={{ textTransform: 'none', fontWeight: 700 }}>
           {result?.applied ? 'Close' : 'Cancel'}
         </Button>
-        {!result?.applied && (
+        {/* Only once a preview exists — the app's gold button styling makes a
+            disabled contained button look clickable. */}
+        {result && !result.applied && (
           <Button variant="contained" color="primary" disabled={!canApply || importer.isPending}
             onClick={() => file && run(false, file)} sx={{ textTransform: 'none', fontWeight: 700 }}>
             {importer.isPending ? 'Saving…' : `Apply ${result?.changedCount ?? 0} change${result?.changedCount === 1 ? '' : 's'}`}
