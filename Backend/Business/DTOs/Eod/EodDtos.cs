@@ -1,6 +1,6 @@
 namespace KovilpattiSnacks.Business.DTOs.Eod;
 
-/// GET /api/eod/expected — the tender snapshot for a proposed close window.
+/// GET /api/eod/expected — the tender snapshot for the next close window.
 public record EodExpectedDto(
     DateTimeOffset WindowFrom,
     DateTimeOffset WindowTo,
@@ -10,7 +10,13 @@ public record EodExpectedDto(
     decimal CashRefunds,
     decimal UpiRefunds,
     decimal CancelCashBack,
-    /// = CashSales − CashRefunds − CancelCashBack. What the till should hold.
+    /// UPI handed back on cancelled bills (informational — not in the till).
+    decimal CancelUpiBack,
+    /// Udhaar (credit) repaid in cash — this cash IS in the till.
+    decimal CashSettlements,
+    decimal UpiSettlements,
+    /// = CashSales + CashSettlements − CashRefunds − CancelCashBack.
+    /// What the till should hold.
     decimal ExpectedCash,
     long BillCount,
     long ReturnCount,
@@ -20,13 +26,13 @@ public record EodExpectedDto(
 /// One denomination line on a close request.
 public record EodDenominationInput(int Denomination, int Count);
 
-/// POST /api/eod/close — cashier submits denominations for the window.
-/// `WindowFrom` is client-supplied so the server can trust the range the
-/// cashier saw. The BE re-computes expected totals inside the transaction
-/// so a stale FE cache can't hide a variance.
+/// POST /api/eod/close — cashier submits denominations.
+/// 25-Sep-2026: the close window is decided by the server (previous close →
+/// now). WindowFrom / WindowTo are still accepted so older front-ends keep
+/// working, but they are ignored.
 public record EodCloseRequest(
-    DateTimeOffset WindowFrom,
-    DateTimeOffset WindowTo,
+    DateTimeOffset? WindowFrom,
+    DateTimeOffset? WindowTo,
     IReadOnlyList<EodDenominationInput> Denominations,
     string? Notes
 );
@@ -43,6 +49,9 @@ public record EodSessionListItemDto(
     decimal CashRefunds,
     decimal UpiRefunds,
     decimal CancelCashBack,
+    decimal CancelUpiBack,
+    decimal CashSettlements,
+    decimal UpiSettlements,
     decimal ExpectedCash,
     decimal PhysicalCash,
     /// physical − expected. Positive = surplus, negative = shortage.

@@ -5,7 +5,7 @@ namespace KovilpattiSnacks.Business.Validators.Bills;
 
 public class CreateBillReturnRequestValidator : AbstractValidator<CreateBillReturnRequest>
 {
-    private static readonly string[] RefundModes = ["Cash", "UPI"];
+    private static readonly string[] RefundModes = ["Cash", "UPI", "Credit"];
     private static readonly string[] ReasonTypes = ["Damaged", "WrongItem", "ChangedMind", "Other"];
 
     public CreateBillReturnRequestValidator()
@@ -14,7 +14,7 @@ public class CreateBillReturnRequestValidator : AbstractValidator<CreateBillRetu
 
         RuleFor(x => x.RefundMode)
             .Must(m => RefundModes.Contains(m))
-            .WithMessage("Refund mode must be Cash or UPI.");
+            .WithMessage("Refund mode must be Cash, UPI or Credit.");
 
         RuleFor(x => x.ReasonType)
             .Must(t => ReasonTypes.Contains(t))
@@ -22,6 +22,9 @@ public class CreateBillReturnRequestValidator : AbstractValidator<CreateBillRetu
 
         RuleFor(x => x.ReasonNote)
             .MaximumLength(500).When(x => x.ReasonNote is not null);
+        RuleFor(x => x.ReasonNote)
+            .NotEmpty().When(x => x.ReasonType == "Other")
+            .WithMessage("Please write why the items are being returned.");
 
         RuleFor(x => x.Items)
             .NotEmpty().WithMessage("A return must contain at least one item.")

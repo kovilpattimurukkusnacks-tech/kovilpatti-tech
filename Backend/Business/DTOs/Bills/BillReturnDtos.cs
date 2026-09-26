@@ -13,13 +13,19 @@ public record ReturnableItemDto(
     decimal UnitPrice,
     int BilledQty,
     int ReturnedQty,
-    int ReturnableQty);
+    int ReturnableQty,
+    /// UnitPrice after the bill's discount share — what one unit refunds.
+    decimal RefundUnitPrice);
+
+/// How a return on a bill can be refunded — one row per tender mode the
+/// bill was paid with. A refund must go back the way the money came in.
+public record RefundOptionDto(string Mode, decimal Paid, decimal Refunded, decimal Remaining);
 
 public record ReturnLineRequest(Guid ProductId, int Qty);
 
 public record CreateBillReturnRequest(
     Guid SourceBillId,
-    string RefundMode,          // 'Cash' | 'UPI'
+    string RefundMode,          // 'Cash' | 'UPI' | 'Credit' (must be a mode paid on the bill)
     string ReasonType,          // 'Damaged' | 'WrongItem' | 'ChangedMind' | 'Other'
     string? ReasonNote,
     List<ReturnLineRequest> Items);

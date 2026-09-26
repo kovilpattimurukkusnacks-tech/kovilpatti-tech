@@ -77,6 +77,9 @@ public static class DependencyInjection
         // Phase 4c — EOD close-out (cash_sessions + cash_denominations)
         services.AddScoped<IEodRepository, EodRepository>();
 
+        // Phase 4d — admin-side POS reports (all shops, read-only)
+        services.AddScoped<IAdminPosRepository, AdminPosRepository>();
+
         return services;
     }
 }

@@ -1,7 +1,8 @@
 // Phase 4b — customers + credit (features #6 + #4). Client term: "credit".
 
 export type SettleMode = 'Cash' | 'UPI'
-export type LedgerEntryType = 'Credit' | 'Settlement'
+/** 'Reversal' (25-Sep-2026): written when a credit bill is cancelled. */
+export type LedgerEntryType = 'Credit' | 'Settlement' | 'Reversal'
 
 export interface CustomerDto {
   id: string

@@ -71,7 +71,7 @@ public class BillService(
         {
             var created = await bills.CreateAsync(
                 shopId, userId, request.CustomerId, paymentsJson, itemsJson, Normalize(request.Notes),
-                request.DiscountKind, request.DiscountValue, ct);
+                request.DiscountKind, request.DiscountValue, request.CashTendered, ct);
             return new BillCreatedDto(
                 created.Id, created.Code, created.Total_Items, created.Total_Qty,
                 created.Subtotal, created.Discount_Amount, created.Total_Amount);
@@ -102,7 +102,7 @@ public class BillService(
         try
         {
             await bills.CancelAsync(
-                billId, shopId, userId, request.ReasonType, Normalize(request.ReasonNote), ct);
+                billId, shopId, userId, request.ReasonType, Normalize(request.ReasonNote), isAdmin: false, ct);
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001")
         {
@@ -119,6 +119,7 @@ public class BillService(
         int page, int pageSize, CancellationToken ct = default)
     {
         var shopId = RequireShopId();
+        (page, pageSize) = Paging(page, pageSize);
         var rows = await bills.ListAsync(
             shopId, Normalize(search), Normalize(status), from, to, page, pageSize, ct);
         var total = rows.Count > 0 ? rows[0].Total_Count : 0;
@@ -161,7 +162,15 @@ public class BillService(
             throw new NotFoundException($"Bill '{billId}' not found.");
         return rows.Select(r => new ReturnableItemDto(
             r.Product_Id, r.Product_Code, r.Product_Name, r.Weight_Value, r.Weight_Unit,
-            r.Unit_Price, r.Billed_Qty, r.Returned_Qty, r.Returnable_Qty)).ToList();
+            r.Unit_Price, r.Billed_Qty, r.Returned_Qty, r.Returnable_Qty, r.Refund_Unit_Price)).ToList();
+    }
+
+    public async Task<IReadOnlyList<RefundOptionDto>> RefundOptionsAsync(
+        Guid billId, CancellationToken ct = default)
+    {
+        var shopId = RequireShopId();
+        var rows = await bills.RefundOptionsAsync(billId, shopId, ct);
+        return rows.Select(r => new RefundOptionDto(r.Mode, r.Paid, r.Refunded, r.Remaining)).ToList();
     }
 
     public async Task<BillReturnCreatedDto> CreateReturnAsync(
@@ -181,7 +190,7 @@ public class BillService(
         {
             var created = await bills.CreateReturnAsync(
                 request.SourceBillId, shopId, userId, request.RefundMode,
-                request.ReasonType, Normalize(request.ReasonNote), itemsJson, ct);
+                request.ReasonType, Normalize(request.ReasonNote), itemsJson, isAdmin: false, ct);
             return new BillReturnCreatedDto(
                 created.Id, created.Code, created.Total_Items, created.Total_Qty, created.Total_Amount);
         }
@@ -200,6 +209,7 @@ public class BillService(
         int page, int pageSize, CancellationToken ct = default)
     {
         var shopId = RequireShopId();
+        (page, pageSize) = Paging(page, pageSize);
         var rows = await bills.ListReturnsAsync(shopId, Normalize(search), from, to, page, pageSize, ct);
         var total = rows.Count > 0 ? rows[0].Total_Count : 0;
         var items = rows.Select(r => new BillReturnListItemDto(
@@ -234,11 +244,16 @@ public class BillService(
             throw BillServiceErrors.Validation("Nothing to hold — the bill is empty.");
         if (request.Items.Select(i => i.ProductId).Distinct().Count() != request.Items.Count)
             throw BillServiceErrors.Validation("The same product appears twice — adjust the quantity on one line instead.");
+        // 25-Sep-2026: loose lines can be held too (same XOR as a bill line).
+        if (request.Items.Any(i => (i.Qty is null) == (i.LooseWeightG is null)))
+            throw BillServiceErrors.Validation("Each line must be either a packet qty OR a loose weight (grams).");
+        if (request.Items.Any(i => i.Qty is <= 0 || i.LooseWeightG is <= 0))
+            throw BillServiceErrors.Validation("Quantities and weights must be greater than zero.");
 
         var shopId = RequireShopId();
         var userId = RequireUserId();
         var itemsJson = JsonSerializer.Serialize(
-            request.Items.Select(i => new { productId = i.ProductId, qty = i.Qty }));
+            request.Items.Select(i => new { productId = i.ProductId, qty = i.Qty, looseWeightG = i.LooseWeightG }));
         try
         {
             var id = await bills.HoldCreateAsync(
@@ -268,7 +283,8 @@ public class BillService(
         return new HeldBillDetailDto(
             header.Id, header.Customer_Id, header.Label, header.Note,
             items.Select(i => new HeldBillItemDto(
-                i.Id, i.Code, i.Barcode, i.Name, i.Weight_Value, i.Weight_Unit, i.Mrp, i.On_Hand, i.Qty)).ToList());
+                i.Id, i.Code, i.Barcode, i.Name, i.Weight_Value, i.Weight_Unit, i.Mrp, i.On_Hand,
+                i.Sold_Loose, i.Qty, i.Loose_Weight_G)).ToList());
     }
 
     public async Task DeleteHoldAsync(Guid heldBillId, CancellationToken ct = default)
@@ -293,6 +309,9 @@ public class BillService(
         => currentUser.UserId ?? throw new UnauthorizedException("Authenticated user required.");
 
     private static string? Normalize(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static (int page, int pageSize) Paging(int page, int pageSize)
+        => (page < 1 ? 1 : page, pageSize < 1 ? 10 : Math.Min(pageSize, 200));
 
     private static BillListItemDto MapListItem(BillListRow r) => new(
         r.Id, r.Code, r.Status, r.Payment_Mode, r.Total_Items, r.Total_Qty,

@@ -11,13 +11,14 @@ public interface IBillRepository
     /// <param name="itemsJson">jsonb array of {"productId": uuid, "qty": int}</param>
     Task<BillCreated> CreateAsync(
         Guid shopId, Guid userId, Guid? customerId, string paymentsJson, string itemsJson, string? notes,
-        string? discountKind, decimal? discountValue,
+        string? discountKind, decimal? discountValue, decimal? cashTendered,
         CancellationToken ct = default);
 
     Task<List<BillPaymentRow>> GetPaymentsAsync(Guid billId, CancellationToken ct = default);
 
+    /// <param name="isAdmin">true = admin override (any cashier's bill, closed days).</param>
     Task CancelAsync(
-        Guid billId, Guid shopId, Guid userId, string reasonType, string? reasonNote,
+        Guid billId, Guid shopId, Guid userId, string reasonType, string? reasonNote, bool isAdmin,
         CancellationToken ct = default);
 
     Task<List<BillListRow>> ListAsync(
@@ -33,10 +34,15 @@ public interface IBillRepository
     Task<List<BillReturnableItem>> ReturnableItemsAsync(
         Guid billId, Guid shopId, CancellationToken ct = default);
 
+    /// One row per tender mode on the bill — paid / refunded / remaining.
+    Task<List<BillRefundOption>> RefundOptionsAsync(
+        Guid billId, Guid shopId, CancellationToken ct = default);
+
     /// <param name="itemsJson">jsonb array of {"productId": uuid, "qty": int}</param>
+    /// <param name="isAdmin">true = admin override (past the return window).</param>
     Task<BillReturnCreated> CreateReturnAsync(
         Guid billId, Guid shopId, Guid userId, string refundMode,
-        string reasonType, string? reasonNote, string itemsJson, CancellationToken ct = default);
+        string reasonType, string? reasonNote, string itemsJson, bool isAdmin, CancellationToken ct = default);
 
     Task<List<BillReturnListRow>> ListReturnsAsync(
         Guid shopId, string? search, DateOnly? from, DateOnly? to,

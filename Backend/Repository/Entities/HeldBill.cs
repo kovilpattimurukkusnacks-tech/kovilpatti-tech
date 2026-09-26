@@ -35,5 +35,8 @@ public class HeldBillItemRow
     public string?  Weight_Unit  { get; set; }
     public decimal  Mrp          { get; set; }
     public decimal  On_Hand      { get; set; }
-    public int      Qty          { get; set; }
+    public bool     Sold_Loose   { get; set; }
+    /// Packet lines carry Qty; loose lines carry Loose_Weight_G (grams).
+    public int?     Qty          { get; set; }
+    public decimal? Loose_Weight_G { get; set; }
 }

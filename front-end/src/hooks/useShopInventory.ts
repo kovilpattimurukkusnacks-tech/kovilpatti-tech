@@ -124,6 +124,21 @@ export function useShopInventoryMovements(filters?: ShopInventoryMovementFilters
  * be affected — dashboard, on-hand list, product detail, low-stock,
  * valuation, and movements.
  */
+/**
+ * Phase 4d — opening stock import (Admin). Preview (dryRun) writes nothing,
+ * so only a real apply invalidates the stock reads.
+ */
+export function useImportOpeningStock() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ file, shopId, dryRun }: { file: File; shopId: string; dryRun: boolean }) =>
+      shopInventoryApi.importOpening(file, shopId, dryRun),
+    onSuccess: (result) => {
+      if (result.applied) qc.invalidateQueries({ queryKey: shopInventoryKeys.all })
+    },
+  })
+}
+
 export function useAdjustInventory() {
   const qc = useQueryClient()
   return useMutation({

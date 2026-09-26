@@ -27,8 +27,13 @@ CREATE TABLE IF NOT EXISTS cash_sessions (
   cash_refunds    numeric(12,2) NOT NULL DEFAULT 0,
   upi_refunds     numeric(12,2) NOT NULL DEFAULT 0,
   cancel_cash_back numeric(12,2) NOT NULL DEFAULT 0,
+  -- 25-Sep-2026: udhaar repaid at the counter + UPI handed back on cancels.
+  cash_settlements numeric(12,2) NOT NULL DEFAULT 0,
+  upi_settlements  numeric(12,2) NOT NULL DEFAULT 0,
+  cancel_upi_back  numeric(12,2) NOT NULL DEFAULT 0,
 
-  -- Expected cash in till = cash_sales − cash_refunds − cancel_cash_back.
+  -- Expected cash in till = cash_sales + cash_settlements − cash_refunds
+  --                         − cancel_cash_back.
   expected_cash   numeric(12,2) NOT NULL,
   -- Sum of denomination × count from cash_denominations. Cashier's count.
   physical_cash   numeric(12,2) NOT NULL,

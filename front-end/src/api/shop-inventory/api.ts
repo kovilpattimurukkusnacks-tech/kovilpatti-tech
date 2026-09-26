@@ -10,6 +10,7 @@ import type {
   ShopInventoryMovementFilters,
   ShopInventoryRowDto,
   ShopInventoryTreeItemDto,
+  OpeningImportResultDto,
 } from './types'
 
 function q(params: Record<string, string | number | undefined | null>): string {
@@ -70,4 +71,15 @@ export const shopInventoryApi = {
       `/api/shop-inventory/adjust${q({ shopId })}`,
       req,
     ),
+
+  // ── Admin-only opening stock import (Phase 4d) ──
+  // dryRun=true previews; dryRun=false applies only when the file has no errors.
+  importOpening: (file: File, shopId: string, dryRun: boolean) => {
+    const form = new FormData()
+    form.append('file', file)
+    return apiClient.post<OpeningImportResultDto>(
+      `/api/shop-inventory/opening-import${q({ shopId, dryRun: String(dryRun) })}`,
+      form,
+    )
+  },
 }

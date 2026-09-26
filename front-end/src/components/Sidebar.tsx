@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 import { NavLink, useLocation, useNavigate } from 'react-router-dom'
-import { LayoutDashboard, Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt, Truck, ListOrdered } from 'lucide-react'
+import { LayoutDashboard, Package, LogOut, UserPlus, Warehouse, Store, User, ChevronDown, ChevronRight, ClipboardList, Settings, Receipt, Truck, ListOrdered, IndianRupee, Boxes } from 'lucide-react'
 import { useApp } from '../context/AppContext'
+import { featureFlags } from '../featureFlags'
 import './Sidebar.css'
 
 const navItems = [
@@ -13,6 +14,14 @@ const navItems = [
   // by date range. Admin-only — only ever rendered inside the /admin route
   // group so a role check here would be redundant.
   { to: '/admin/accounts', label: 'Accounts', icon: Receipt },
+  // Phase 4d — POS billing admin views. Same flag as the shop-side
+  // Billing menu, so they appear together once billing goes live.
+  ...(featureFlags.billing
+    ? [
+        { to: '/admin/sales',      label: 'Sales',      icon: IndianRupee },
+        { to: '/admin/shop-stock', label: 'Shop Stock', icon: Boxes },
+      ]
+    : []),
   // Settings moved to the gear icon beside the Admin name at the bottom.
 ]
 

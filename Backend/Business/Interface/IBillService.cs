@@ -23,6 +23,10 @@ public interface IBillService
     Task<IReadOnlyList<ReturnableItemDto>> ReturnableItemsAsync(
         Guid billId, CancellationToken ct = default);
 
+    /// Refund modes a return on this bill may use (the modes it was paid in).
+    Task<IReadOnlyList<RefundOptionDto>> RefundOptionsAsync(
+        Guid billId, CancellationToken ct = default);
+
     Task<BillReturnCreatedDto> CreateReturnAsync(
         CreateBillReturnRequest request, CancellationToken ct = default);
 
