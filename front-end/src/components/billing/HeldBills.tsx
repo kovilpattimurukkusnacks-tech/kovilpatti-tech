@@ -16,7 +16,8 @@ import type { BillingProductDto } from '../../api/bills/types'
 // the draft), Discard throws it away. Drafts consume no stock.
 // ───────────────────────────────────────────────────────────────
 
-export type ResumeLine = { product: BillingProductDto; qty: number }
+// 25-Sep-2026: loose lines survive a hold — exactly one of qty / looseWeightG is set.
+export type ResumeLine = { product: BillingProductDto; qty: number | null; looseWeightG: number | null }
 
 export default function HeldBills({ onResume }: { onResume: (lines: ResumeLine[]) => void }) {
   const holds = useHolds()
@@ -36,13 +37,10 @@ export default function HeldBills({ onResume }: { onResume: (lines: ResumeLine[]
           id: i.productId, code: i.code, barcode: i.barcode, name: i.name,
           categoryName: null,
           weightValue: i.weightValue, weightUnit: i.weightUnit, mrp: i.mrp, onHand: i.onHand,
-          // Held-bill items don't carry the sold_loose flag (v1 doesn't
-          // preserve loose lines across a hold/resume). Default to false;
-          // the ShopBilling addProduct path would branch to the loose
-          // dialog if we ever lit this true on a held-then-resumed cart.
-          soldLoose: false,
+          soldLoose: i.soldLoose,
         },
         qty: i.qty,
+        looseWeightG: i.looseWeightG,
       }))
       onResume(lines)
       await billsApi.holdDelete(id)   // resumed drafts are consumed

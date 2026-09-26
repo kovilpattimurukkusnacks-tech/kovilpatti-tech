@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { billsApi } from '../api/bills/api'
+import { customersKeys } from './useCustomers'
 import type {
   BillListFilters, CreateBillRequest, CancelBillRequest,
   BillReturnListFilters, CreateBillReturnRequest, CreateHoldRequest,
@@ -11,6 +12,7 @@ export const billsKeys = {
   list: (f?: BillListFilters) => ['bills', 'list', f ?? {}] as const,
   detail: (id: string) => ['bills', 'detail', id] as const,
   returnable: (billId: string) => ['bills', 'returnable', billId] as const,
+  refundOptions: (billId: string) => ['bills', 'refund-options', billId] as const,
   returns: (f?: BillReturnListFilters) => ['bills', 'returns', f ?? {}] as const,
   returnDetail: (id: string) => ['bills', 'returns', 'detail', id] as const,
   holds: ['bills', 'holds'] as const,
@@ -57,6 +59,9 @@ export function useCancelBill() {
     mutationFn: ({ id, req }: { id: string; req: CancelBillRequest }) => billsApi.cancel(id, req),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: billsKeys.all })
+      // 25-Sep-2026: cancelling a credit bill now reverses the customer's
+      // balance server-side — refresh the credit customer list + ledger.
+      qc.invalidateQueries({ queryKey: customersKeys.all })
     },
   })
 }
@@ -68,6 +73,16 @@ export function useReturnableItems(billId: string | undefined) {
   return useQuery({
     queryKey: billsKeys.returnable(billId ?? ''),
     queryFn: () => billsApi.returnableItems(billId!),
+    enabled: !!billId,
+    staleTime: 0,
+  })
+}
+
+/** Modes the bill was paid in + what is still refundable per mode. */
+export function useRefundOptions(billId: string | undefined) {
+  return useQuery({
+    queryKey: billsKeys.refundOptions(billId ?? ''),
+    queryFn: () => billsApi.refundOptions(billId!),
     enabled: !!billId,
     staleTime: 0,
   })
@@ -94,8 +109,10 @@ export function useCreateBillReturn() {
     mutationFn: (req: CreateBillReturnRequest) => billsApi.createReturn(req),
     onSuccess: () => {
       // Return puts stock back and creates a return record — bills, returns,
-      // and product on-hand all changed.
+      // and product on-hand all changed. A Credit refund also moves the
+      // customer's balance.
       qc.invalidateQueries({ queryKey: billsKeys.all })
+      qc.invalidateQueries({ queryKey: customersKeys.all })
     },
   })
 }

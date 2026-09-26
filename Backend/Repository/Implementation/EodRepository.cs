@@ -26,40 +26,34 @@ public class EodRepository(IDbConnectionFactory factory) : IEodRepository
             cancellationToken: ct));
     }
 
-    // Small POCO for the LastCloseAtAsync scalar. Dapper's ValueTuple binding
+    // Small POCO for the WindowFromAsync scalar. Dapper's ValueTuple binding
     // is version-fragile; a plain class with the exact column name always maps.
-    private class LastCloseRow { public DateTimeOffset? closed_at { get; set; } }
+    private class WindowFromRow { public DateTimeOffset window_from { get; set; } }
 
-    public async Task<DateTimeOffset?> LastCloseAtAsync(Guid shopId, CancellationToken ct = default)
+    public async Task<DateTimeOffset> WindowFromAsync(Guid shopId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        // Wrapping fn_eod_last_close in a row-shaped SELECT so Dapper's
-        // NULL-scalar handling doesn't trip on the first-close case (empty
-        // cash_sessions → MAX(closed_at) IS NULL).
-        const string sql = "SELECT fn_eod_last_close(@p_shop_id) AS closed_at";
-        var row = await conn.QueryFirstOrDefaultAsync<LastCloseRow>(
+        // Same rule fn_eod_close applies: last close, else the shop's first
+        // billing activity, else now().
+        const string sql = "SELECT fn_eod_window_from(@p_shop_id) AS window_from";
+        var row = await conn.QuerySingleAsync<WindowFromRow>(
             new CommandDefinition(sql, new { p_shop_id = shopId }, cancellationToken: ct));
-        return row?.closed_at;
+        return row.window_from;
     }
 
     public async Task<Guid> CloseAsync(
-        Guid shopId, Guid userId,
-        DateTimeOffset windowFrom, DateTimeOffset windowTo,
-        string denominationsJson, string? notes,
+        Guid shopId, Guid userId, string denominationsJson, string? notes,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
-        const string sql = @"
-            SELECT fn_eod_close(@p_shop_id, @p_user_id, @p_window_from, @p_window_to,
-                                @p_denominations::jsonb, @p_notes)";
+        // 25-Sep-2026: the window is decided inside fn_eod_close (previous
+        // close → now), never by the client.
+        const string sql =
+            "SELECT fn_eod_close(@p_shop_id, @p_user_id, @p_denominations::jsonb, @p_notes)";
         return await conn.ExecuteScalarAsync<Guid>(new CommandDefinition(sql, new
         {
             p_shop_id       = shopId,
             p_user_id       = userId,
-            // Same UTC normalisation as ExpectedAsync — Npgsql rejects
-            // non-UTC DateTimeOffset for timestamptz params.
-            p_window_from   = windowFrom.ToUniversalTime(),
-            p_window_to     = windowTo.ToUniversalTime(),
             p_denominations = denominationsJson,
             p_notes         = notes,
         }, cancellationToken: ct));

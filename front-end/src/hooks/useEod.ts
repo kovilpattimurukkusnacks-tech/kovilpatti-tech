@@ -4,16 +4,17 @@ import type { EodCloseRequest } from '../api/eod/types'
 
 export const eodKeys = {
   all: ['eod'] as const,
-  expected: (from?: string, to?: string) => ['eod', 'expected', from ?? null, to ?? null] as const,
+  expected: ['eod', 'expected'] as const,
   recent: (limit: number) => ['eod', 'recent', limit] as const,
 }
 
 /** Expected tender snapshot. Auto-refresh every 15s so a cashier who leaves
- *  the dialog open picks up bills issued in the meantime. */
-export function useEodExpected(from?: string, to?: string, enabled = true) {
+ *  the dialog open picks up bills issued in the meantime. The window is
+ *  server-decided (previous close → now), the same one the close records. */
+export function useEodExpected(enabled = true) {
   return useQuery({
-    queryKey: eodKeys.expected(from, to),
-    queryFn: () => eodApi.expected(from, to),
+    queryKey: eodKeys.expected,
+    queryFn: () => eodApi.expected(),
     enabled,
     refetchInterval: 15_000,
   })

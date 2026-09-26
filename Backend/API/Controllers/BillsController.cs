@@ -59,6 +59,12 @@ public class BillsController(IBillService billService) : ControllerBase
         Guid id, CancellationToken ct)
         => Ok(await billService.ReturnableItemsAsync(id, ct));
 
+    /// Tender modes the bill was paid in, with what's still refundable per mode.
+    [HttpGet("{id:guid}/refund-options")]
+    public async Task<ActionResult<IReadOnlyList<RefundOptionDto>>> RefundOptions(
+        Guid id, CancellationToken ct)
+        => Ok(await billService.RefundOptionsAsync(id, ct));
+
     [HttpPost("returns")]
     public async Task<ActionResult<BillReturnCreatedDto>> CreateReturn(
         [FromBody] CreateBillReturnRequest request, CancellationToken ct)

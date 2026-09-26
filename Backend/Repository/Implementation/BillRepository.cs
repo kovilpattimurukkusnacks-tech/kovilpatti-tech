@@ -19,12 +19,12 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
 
     public async Task<BillCreated> CreateAsync(
         Guid shopId, Guid userId, Guid? customerId, string paymentsJson, string itemsJson, string? notes,
-        string? discountKind, decimal? discountValue,
+        string? discountKind, decimal? discountValue, decimal? cashTendered,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql =
-            "SELECT * FROM fn_bill_create(@p_shop_id, @p_user_id, @p_customer_id, @p_payments::jsonb, @p_items::jsonb, @p_notes, @p_discount_kind, @p_discount_value)";
+            "SELECT * FROM fn_bill_create(@p_shop_id, @p_user_id, @p_customer_id, @p_payments::jsonb, @p_items::jsonb, @p_notes, @p_discount_kind, @p_discount_value, @p_cash_tendered)";
         return await conn.QuerySingleAsync<BillCreated>(new CommandDefinition(sql, new
         {
             p_shop_id = shopId,
@@ -35,6 +35,7 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
             p_notes = notes,
             p_discount_kind = discountKind,
             p_discount_value = discountValue,
+            p_cash_tendered = cashTendered,
         }, cancellationToken: ct));
     }
 
@@ -48,16 +49,16 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
     }
 
     public async Task CancelAsync(
-        Guid billId, Guid shopId, Guid userId, string reasonType, string? reasonNote,
+        Guid billId, Guid shopId, Guid userId, string reasonType, string? reasonNote, bool isAdmin,
         CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql =
-            "SELECT fn_bill_cancel(@p_bill_id, @p_shop_id, @p_user_id, @p_reason_type, @p_reason_note)";
+            "SELECT fn_bill_cancel(@p_bill_id, @p_shop_id, @p_user_id, @p_reason_type, @p_reason_note, @p_is_admin)";
         await conn.ExecuteAsync(new CommandDefinition(sql, new
         {
             p_bill_id = billId, p_shop_id = shopId, p_user_id = userId,
-            p_reason_type = reasonType, p_reason_note = reasonNote,
+            p_reason_type = reasonType, p_reason_note = reasonNote, p_is_admin = isAdmin,
         }, cancellationToken: ct));
     }
 
@@ -105,14 +106,24 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
         return rows.ToList();
     }
 
+    public async Task<List<BillRefundOption>> RefundOptionsAsync(
+        Guid billId, Guid shopId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_bill_refund_options(@p_bill_id, @p_shop_id)";
+        var rows = await conn.QueryAsync<BillRefundOption>(new CommandDefinition(
+            sql, new { p_bill_id = billId, p_shop_id = shopId }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     public async Task<BillReturnCreated> CreateReturnAsync(
         Guid billId, Guid shopId, Guid userId, string refundMode,
-        string reasonType, string? reasonNote, string itemsJson, CancellationToken ct = default)
+        string reasonType, string? reasonNote, string itemsJson, bool isAdmin, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         const string sql =
             "SELECT * FROM fn_bill_return_create(@p_bill_id, @p_shop_id, @p_user_id, " +
-            "@p_refund_mode, @p_reason_type, @p_reason_note, @p_items::jsonb)";
+            "@p_refund_mode, @p_reason_type, @p_reason_note, @p_items::jsonb, @p_is_admin)";
         return await conn.QuerySingleAsync<BillReturnCreated>(new CommandDefinition(sql, new
         {
             p_bill_id = billId,
@@ -122,6 +133,7 @@ public class BillRepository(IDbConnectionFactory factory) : IBillRepository
             p_reason_type = reasonType,
             p_reason_note = reasonNote,
             p_items = itemsJson,
+            p_is_admin = isAdmin,
         }, cancellationToken: ct));
     }
 

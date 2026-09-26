@@ -7,6 +7,9 @@ import { Scale } from 'lucide-react'
 import { formatINR } from '../../utils/format'
 import type { BillingProductDto } from '../../api/bills/types'
 
+/** Same cap as the server (typo guard: 25000 kg instead of 250 g). */
+const MAX_LOOSE_G = 50_000
+
 type Props = {
   open: boolean
   product: BillingProductDto | null
@@ -54,13 +57,16 @@ export default function LooseWeightDialog({ open, product, onClose, onConfirm }:
     return (weightG / packG) * product.mrp
   }, [product, packG, weightG])
 
-  const packetsConsumed = packG && weightG > 0 ? Math.ceil(weightG / packG) : 0
+  // 25-Sep-2026: stock is deducted by the exact fraction of a pack (3 dp),
+  // same as fn_bill_create — not rounded up to whole packets.
+  const packetsConsumed = packG && weightG > 0 ? Math.max(Math.round((weightG / packG) * 1000) / 1000, 0.001) : 0
   const stockOk = product ? packetsConsumed <= product.onHand : true
 
   const handleApply = () => {
     if (weightG <= 0) { setErr('Enter a weight greater than zero.'); return }
+    if (weightG > MAX_LOOSE_G) { setErr('That weight is too large — the limit is 50 kg per line.'); return }
     if (!packG) { setErr('This product has no pack weight — mark it in g/kg first.'); return }
-    if (!stockOk) { setErr(`Not enough stock — sale would need ${packetsConsumed} packet(s), only ${product?.onHand ?? 0} on hand.`); return }
+    if (!stockOk) { setErr(`Not enough stock — sale would need ${packetsConsumed} pack(s), only ${product?.onHand ?? 0} on hand.`); return }
     onConfirm(weightG)
   }
 
@@ -121,7 +127,7 @@ export default function LooseWeightDialog({ open, product, onClose, onConfirm }:
             <strong>{weightG > 0 ? `${weightG} g` : '—'}</strong>
           </Box>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 13 }}>
-            <span>Packet-equivalent (deducted)</span>
+            <span>Packs deducted from stock</span>
             <strong>{packetsConsumed || '—'}</strong>
           </Box>
           <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800, mt: 0.5, pt: 0.5, borderTop: '1px dashed #E0A800' }}>

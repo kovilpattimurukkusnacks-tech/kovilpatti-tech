@@ -2,7 +2,7 @@ import { apiClient } from '../client'
 import type {
   BillingProductDto, CreateBillRequest, BillCreatedDto,
   BillListItemDto, BillDetailDto, BillListFilters, PagedResult, CancelBillRequest,
-  ReturnableItemDto, CreateBillReturnRequest, BillReturnCreatedDto,
+  ReturnableItemDto, RefundOptionDto, CreateBillReturnRequest, BillReturnCreatedDto,
   BillReturnListItemDto, BillReturnDetailDto, BillReturnListFilters,
   CreateHoldRequest, HeldBillCreatedDto, HeldBillListItemDto, HeldBillDetailDto,
 } from './types'
@@ -53,6 +53,10 @@ export const billsApi = {
   // ── Returns (feature #1) ──
   returnableItems: (billId: string) =>
     apiClient.get<ReturnableItemDto[]>(`/api/bills/${billId}/returnable`),
+
+  // Modes the bill was paid in + what is still refundable per mode.
+  refundOptions: (billId: string) =>
+    apiClient.get<RefundOptionDto[]>(`/api/bills/${billId}/refund-options`),
 
   createReturn: (req: CreateBillReturnRequest) =>
     apiClient.post<BillReturnCreatedDto>('/api/bills/returns', req),

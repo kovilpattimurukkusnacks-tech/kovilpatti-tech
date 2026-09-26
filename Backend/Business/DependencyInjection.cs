@@ -81,6 +81,9 @@ public static class DependencyInjection
         // Phase 4c — EOD close-out
         services.AddScoped<IEodService, EodService>();
 
+        // Phase 4d — admin-side POS reports (all shops, read-only)
+        services.AddScoped<IAdminPosService, AdminPosService>();
+
         // JWT bearer authentication
         var jwt = config.GetSection(JwtSettings.SectionName).Get<JwtSettings>()
             ?? throw new InvalidOperationException("Jwt settings missing.");

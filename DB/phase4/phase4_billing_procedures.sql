@@ -81,11 +81,14 @@ $$;
 -- ------------------------------------------------------------
 -- p_customer_id: optional customer (walk-in = NULL). A 'Credit' tender
 -- requires one and posts to their balance/ledger (feature #4).
--- 01-Aug-2026 (Phase 4c): fn_bill_create signature grew p_discount_kind +
--- p_discount_value. DROP the old shape so PostgreSQL can re-create with
--- the extended RETURNS TABLE (existing callers can't overload just by
--- adding params at the tail — Dapper resolves by name).
+-- 25-Sep-2026 (billing loophole fixes): signature grew p_cash_tendered.
+-- Also: customer must belong to the shop on EVERY bill (not only credit),
+-- discount capped by app_settings.bill_max_discount_percent, loose weight
+-- capped at 50 kg, and loose lines deduct the EXACT fraction of a pack from
+-- stock (was CEIL — a 50 g sale from a 200 g pack took a whole pack).
 DROP FUNCTION IF EXISTS fn_bill_create(uuid, uuid, uuid, jsonb, jsonb, varchar);
+DROP FUNCTION IF EXISTS fn_bill_create(uuid, uuid, uuid, jsonb, jsonb, varchar, varchar, numeric);
+DROP FUNCTION IF EXISTS fn_bill_create(uuid, uuid, uuid, jsonb, jsonb, varchar, varchar, numeric, numeric);
 
 CREATE OR REPLACE FUNCTION fn_bill_create(
   p_shop_id       uuid,
@@ -97,7 +100,9 @@ CREATE OR REPLACE FUNCTION fn_bill_create(
   -- Bill-level discount. 'Percent' → discount_value is 0-100 (%),
   -- 'Amount' → discount_value is a flat ₹ off. NULL/NULL = no discount.
   p_discount_kind  varchar DEFAULT NULL,
-  p_discount_value numeric DEFAULT NULL
+  p_discount_value numeric DEFAULT NULL,
+  -- Cash the customer handed over (optional). Must cover the Cash tender.
+  p_cash_tendered  numeric DEFAULT NULL
 )
 RETURNS TABLE (
   id              uuid,
@@ -110,6 +115,7 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql AS $$
 DECLARE
+  c_max_loose_g     CONSTANT numeric := 50000;   -- 50 kg per line
   v_bill_id         uuid;
   v_code            varchar(20);
   v_line            record;
@@ -123,8 +129,11 @@ DECLARE
   v_pay_count       int;
   v_pay_sum         numeric(12,2) := 0;
   v_credit_sum      numeric(12,2) := 0;
+  v_cash_sum        numeric(12,2) := 0;
   v_summary_mode    varchar(10);
+  v_has_credit      boolean := false;
   v_cust            record;
+  v_max_disc_pct    numeric;
 BEGIN
   -- Discount input validation. Kind + value move together.
   IF (p_discount_kind IS NULL) <> (p_discount_value IS NULL) THEN
@@ -145,6 +154,9 @@ BEGIN
   IF p_payments IS NULL OR jsonb_array_length(p_payments) = 0 THEN
     RAISE EXCEPTION 'Bill must have at least one payment.';
   END IF;
+  IF p_cash_tendered IS NOT NULL AND p_cash_tendered < 0 THEN
+    RAISE EXCEPTION 'Cash received cannot be negative.';
+  END IF;
 
   v_pay_count := jsonb_array_length(p_payments);
 
@@ -160,25 +172,35 @@ BEGIN
     END IF;
     v_pay_sum := v_pay_sum + v_pay.amount;
     IF v_pay.mode = 'Credit' THEN
+      v_has_credit := true;
       v_credit_sum := v_credit_sum + v_pay.amount;
+    ELSIF v_pay.mode = 'Cash' THEN
+      v_cash_sum := v_cash_sum + v_pay.amount;
     END IF;
   END LOOP;
 
-  -- A credit tender needs a customer with enough remaining limit.
-  IF v_credit_sum > 0 THEN
-    IF p_customer_id IS NULL THEN
-      RAISE EXCEPTION 'A customer is required for a credit sale.';
+  -- A credit tender needs a customer.
+  IF v_has_credit AND p_customer_id IS NULL THEN
+    RAISE EXCEPTION 'A customer is required for a credit sale.';
+  END IF;
+
+  -- Any attached customer must belong to THIS shop (was only checked for
+  -- credit sales — another shop's customer could be attached and their
+  -- name/phone read back on the bill). Row-locked when credit is involved;
+  -- lock order stays customer → inventory.
+  IF p_customer_id IS NOT NULL THEN
+    IF v_has_credit THEN
+      SELECT c.id, c.credit_limit, c.credit_balance INTO v_cust
+      FROM customers c
+      WHERE c.id = p_customer_id AND c.shop_id = p_shop_id AND c.is_deleted = false
+      FOR UPDATE;
+    ELSE
+      SELECT c.id, c.credit_limit, c.credit_balance INTO v_cust
+      FROM customers c
+      WHERE c.id = p_customer_id AND c.shop_id = p_shop_id AND c.is_deleted = false;
     END IF;
-    SELECT c.id, c.credit_limit, c.credit_balance INTO v_cust
-    FROM customers c
-    WHERE c.id = p_customer_id AND c.shop_id = p_shop_id AND c.is_deleted = false
-    FOR UPDATE;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Customer not found.';
-    END IF;
-    IF v_cust.credit_limit > 0 AND (v_cust.credit_balance + v_credit_sum) > v_cust.credit_limit THEN
-      RAISE EXCEPTION 'Credit limit exceeded: balance % + % is over the limit of %.',
-        v_cust.credit_balance, v_credit_sum, v_cust.credit_limit;
     END IF;
   END IF;
 
@@ -190,21 +212,16 @@ BEGIN
 
   v_summary_mode := CASE WHEN v_pay_count = 1 THEN (p_payments->0->>'mode') ELSE 'Split' END;
 
-  INSERT INTO bills (shop_id, customer_id, payment_mode, notes, created_by)
-  VALUES (p_shop_id, p_customer_id, v_summary_mode, p_notes, p_user_id)
+  INSERT INTO bills (shop_id, customer_id, payment_mode, notes, cash_tendered, created_by)
+  VALUES (p_shop_id, p_customer_id, v_summary_mode, p_notes, p_cash_tendered, p_user_id)
   RETURNING bills.id, bills.code INTO v_bill_id, v_code;
 
-  -- 01-Aug-2026 (Phase 4c): each line is EITHER a packet qty OR a loose
-  -- weight in grams. Loose lines cost `(loose_g / pack_g) × mrp` at the
-  -- product's snapshot MRP, and deduct CEIL(loose_g / pack_g) packets
-  -- from shop stock (opening a pack for the sale forfeits its remainder
-  -- until the shop physically fills the next open-pack container).
   DECLARE
     v_line_qty      int;
     v_line_loose_g  numeric(10,3);
     v_pack_g        numeric(10,3);
     v_line_total    numeric(12,2);
-    v_stock_units   int;
+    v_stock_units   numeric(12,3);
   BEGIN
     FOR v_line IN
       SELECT (x->>'productId')::uuid AS product_id,
@@ -223,6 +240,9 @@ BEGIN
       END IF;
       IF v_line_loose_g IS NOT NULL AND v_line_loose_g <= 0 THEN
         RAISE EXCEPTION 'Loose weight must be greater than zero.';
+      END IF;
+      IF v_line_loose_g IS NOT NULL AND v_line_loose_g > c_max_loose_g THEN
+        RAISE EXCEPTION 'Loose weight % g is too large — the limit is % kg per line.', trim_scale(v_line_loose_g), trim_scale(c_max_loose_g / 1000);
       END IF;
 
       SELECT p.id, p.name, p.mrp, p.sold_loose, p.weight_value, p.weight_unit
@@ -245,10 +265,11 @@ BEGIN
         IF v_pack_g IS NULL OR v_pack_g <= 0 THEN
           RAISE EXCEPTION 'Loose-sale product "%" needs weight_value + g/kg unit.', v_product.name;
         END IF;
-        -- Rate/kg × sold weight = (mrp / pack_kg) × (loose_g/1000)
-        --                       = (loose_g / pack_g) × mrp
         v_line_total  := ROUND((v_line_loose_g / v_pack_g) * v_product.mrp, 2);
-        v_stock_units := CEIL(v_line_loose_g / v_pack_g)::int;
+        -- Exact fraction of a pack (3 dp, never 0 — the ledger rejects a
+        -- zero delta). total_qty keeps counting packets touched (CEIL).
+        v_stock_units := GREATEST(ROUND(v_line_loose_g / v_pack_g, 3), 0.001);
+        v_total_qty   := v_total_qty + CEIL(v_line_loose_g / v_pack_g)::int;
         INSERT INTO bill_items (
           bill_id, product_id, qty, loose_weight_g, unit_price,
           pack_weight_g_snapshot, line_total
@@ -259,6 +280,7 @@ BEGIN
       ELSE
         v_line_total  := v_line_qty * v_product.mrp;
         v_stock_units := v_line_qty;
+        v_total_qty   := v_total_qty + v_line_qty;
         INSERT INTO bill_items (
           bill_id, product_id, qty, unit_price, line_total
         ) VALUES (
@@ -272,43 +294,84 @@ BEGIN
         p_shop_id, v_product.id, v_stock_units, v_bill_id, 'Bill ' || v_code, p_user_id);
 
       v_total_items := v_total_items + 1;
-      v_total_qty   := v_total_qty + v_stock_units;
       v_subtotal    := v_subtotal + v_line_total;
     END LOOP;
   END;
 
-  -- Apply the bill-level discount now that subtotal is known. Amount cap
-  -- prevents an "Amount" discount that exceeds subtotal from producing a
-  -- negative total_amount (would trip chk_bills_totals_nonneg).
+  -- Apply the bill-level discount now that subtotal is known.
   IF p_discount_kind = 'Percent' THEN
     v_discount_amount := ROUND(v_subtotal * p_discount_value / 100, 2);
   ELSIF p_discount_kind = 'Amount' THEN
     v_discount_amount := LEAST(p_discount_value, v_subtotal);
   END IF;
+
+  -- Discount cap (both kinds, measured as % of the bill).
+  IF v_discount_amount > 0 AND v_subtotal > 0 THEN
+    v_max_disc_pct := COALESCE(
+      (SELECT NULLIF(s.value, '')::numeric FROM app_settings s WHERE s.key = 'bill_max_discount_percent'),
+      100);
+    IF v_discount_amount * 100 > v_subtotal * v_max_disc_pct THEN
+      RAISE EXCEPTION 'Discount of ₹% (% %%) is more than the allowed % %% of the bill. Ask the admin if a bigger discount is needed.',
+        v_discount_amount, ROUND(v_discount_amount * 100 / v_subtotal, 1), v_max_disc_pct;
+    END IF;
+  END IF;
+
   v_total_amount := v_subtotal - v_discount_amount;
 
-  -- Tenders must settle the DISCOUNTED total exactly (UI computes cash
-  -- change against total_amount, not subtotal).
+  IF v_total_amount <= 0 THEN
+    RAISE EXCEPTION 'Bill total must be greater than zero.';
+  END IF;
+
+  -- A single tender means "the customer pays the whole bill", so the
+  -- server's rounded total is authoritative (FE float rounding could miss
+  -- by a paisa). Split tenders still must match exactly.
+  IF v_pay_count = 1 THEN
+    v_pay_sum    := v_total_amount;
+    v_credit_sum := CASE WHEN v_has_credit THEN v_total_amount ELSE 0 END;
+    v_cash_sum   := CASE WHEN (p_payments->0->>'mode') = 'Cash' THEN v_total_amount ELSE 0 END;
+  END IF;
+
   IF v_pay_sum <> v_total_amount THEN
     RAISE EXCEPTION 'Payments (%) must equal the bill total (%).', v_pay_sum, v_total_amount;
   END IF;
 
-  FOR v_pay IN
-    SELECT (x->>'mode')::varchar AS mode, (x->>'amount')::numeric AS amount
-    FROM jsonb_array_elements(p_payments) x
-  LOOP
-    INSERT INTO bill_payments (bill_id, mode, amount)
-    VALUES (v_bill_id, v_pay.mode, v_pay.amount);
-  END LOOP;
+  IF p_cash_tendered IS NOT NULL AND p_cash_tendered < v_cash_sum THEN
+    RAISE EXCEPTION 'Cash received (₹%) is less than the cash due (₹%).', p_cash_tendered, v_cash_sum;
+  END IF;
 
-  -- Post the credit portion to the customer's balance + ledger.
+  -- Credit limit — checked against the FINAL credit portion. Nested IF:
+  -- v_cust is only assigned when a customer is attached.
+  IF v_has_credit THEN
+    IF v_cust.credit_limit > 0
+       AND (v_cust.credit_balance + v_credit_sum) > v_cust.credit_limit THEN
+      RAISE EXCEPTION 'Credit limit exceeded: balance % + % is over the limit of %.',
+        v_cust.credit_balance, v_credit_sum, v_cust.credit_limit;
+    END IF;
+  END IF;
+
+  IF v_pay_count = 1 THEN
+    INSERT INTO bill_payments (bill_id, mode, amount)
+    VALUES (v_bill_id, (p_payments->0->>'mode'), v_total_amount);
+  ELSE
+    FOR v_pay IN
+      SELECT (x->>'mode')::varchar AS mode, (x->>'amount')::numeric AS amount
+      FROM jsonb_array_elements(p_payments) x
+    LOOP
+      INSERT INTO bill_payments (bill_id, mode, amount)
+      VALUES (v_bill_id, v_pay.mode, v_pay.amount);
+    END LOOP;
+  END IF;
+
+  -- Post the credit portion to the customer's balance + ledger. Columns
+  -- qualified: a bare `id` collides with this function's RETURNS TABLE.
   IF v_credit_sum > 0 THEN
-    UPDATE customers SET credit_balance = credit_balance + v_credit_sum, updated_by = p_user_id
-    WHERE id = p_customer_id;
+    UPDATE customers c
+    SET    credit_balance = c.credit_balance + v_credit_sum, updated_by = p_user_id
+    WHERE  c.id = p_customer_id;
 
     INSERT INTO customer_credit_ledger (customer_id, bill_id, entry_type, amount, balance_after, created_by)
     VALUES (p_customer_id, v_bill_id, 'Credit', v_credit_sum,
-            (SELECT credit_balance FROM customers WHERE id = p_customer_id), p_user_id);
+            (SELECT c.credit_balance FROM customers c WHERE c.id = p_customer_id), p_user_id);
   END IF;
 
   UPDATE bills b
@@ -351,28 +414,51 @@ $$;
 -- ------------------------------------------------------------
 -- 3. fn_bill_cancel — whole-bill reversal.
 --
--- p_shop_id scopes the lookup so a shop user can only cancel their own
--- shop's bills (service passes the JWT shop claim). Each line writes a
--- Refund movement putting goods back on the shelf.
+-- p_shop_id scopes the lookup (service passes the JWT shop claim, or the
+-- bill's own shop for an admin override). Each line writes a Refund
+-- movement putting goods back on the shelf.
+--
+-- Rules (25-Sep-2026 loophole fixes):
+--   • Blocked once a return exists (stock + cash would be reversed twice).
+--   • Credit tender is reversed on the customer's balance ('Reversal' row);
+--     blocked if part of it is already repaid (balance < credit portion).
+--   • Shop users (p_is_admin = false) may only cancel THEIR OWN bills and
+--     only while the day is still open — i.e. the bill was made after the
+--     shop's last day-end close. Anything older needs the admin. Stops
+--     "cancel yesterday's cash bill and pocket the cash".
+--   • Reason 'Other' needs a note.
+--   • Stock refund = exactly what the sale took out (read from the bill's
+--     Sale movements), so bills from before the loose-fraction change
+--     refund their whole packs correctly.
 -- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_bill_cancel(uuid, uuid, uuid, varchar, varchar);
+DROP FUNCTION IF EXISTS fn_bill_cancel(uuid, uuid, uuid, varchar, varchar, boolean);
+
 CREATE OR REPLACE FUNCTION fn_bill_cancel(
   p_bill_id      uuid,
   p_shop_id      uuid,
   p_user_id      uuid,
   p_reason_type  varchar,
-  p_reason_note  varchar DEFAULT NULL
+  p_reason_note  varchar DEFAULT NULL,
+  p_is_admin     boolean DEFAULT false
 )
 RETURNS void
 LANGUAGE plpgsql AS $$
 DECLARE
   v_bill        record;
   v_line        record;
+  v_credit_amt  numeric(12,2);
+  v_balance     numeric(12,2);
+  v_last_close  timestamptz;
 BEGIN
   IF p_reason_type NOT IN ('Mistake','Duplicate','CustomerRefused','Other') THEN
     RAISE EXCEPTION 'Please choose a valid cancellation reason.';
   END IF;
+  IF p_reason_type = 'Other' AND NULLIF(btrim(p_reason_note), '') IS NULL THEN
+    RAISE EXCEPTION 'Please write why the bill is being cancelled.';
+  END IF;
 
-  SELECT b.id, b.code, b.status
+  SELECT b.id, b.code, b.status, b.customer_id, b.created_by, b.created_at
   INTO v_bill
   FROM bills b
   WHERE b.id = p_bill_id AND b.shop_id = p_shop_id AND b.is_deleted = false
@@ -386,17 +472,64 @@ BEGIN
     RAISE EXCEPTION 'Bill % is already cancelled.', v_bill.code;
   END IF;
 
-  -- 01-Aug-2026: refund packet-equivalent for both modes. Packet lines
-  -- refund their `qty`; loose lines refund CEIL(loose_g / pack_g_snapshot)
-  -- (mirrors the packets consumed at sale time).
+  IF NOT COALESCE(p_is_admin, false) THEN
+    IF v_bill.created_by <> p_user_id THEN
+      RAISE EXCEPTION 'Bill % was made by another cashier — only they or the admin can cancel it.', v_bill.code;
+    END IF;
+    v_last_close := fn_eod_last_close(p_shop_id);
+    IF v_last_close IS NOT NULL AND v_bill.created_at <= v_last_close THEN
+      RAISE EXCEPTION 'Bill % is from a day that is already closed, so it can''t be cancelled here. Ask the admin.', v_bill.code;
+    END IF;
+  END IF;
+
+  IF EXISTS (SELECT 1 FROM bill_returns br
+             WHERE br.source_bill_id = p_bill_id AND br.is_deleted = false) THEN
+    RAISE EXCEPTION 'Bill % already has a return recorded, so it can''t be cancelled. Return the remaining items instead.',
+      v_bill.code;
+  END IF;
+
+  -- Reverse the credit portion (if any) before touching stock.
+  SELECT COALESCE(SUM(bp.amount), 0) INTO v_credit_amt
+  FROM bill_payments bp
+  WHERE bp.bill_id = p_bill_id AND bp.mode = 'Credit';
+
+  IF v_credit_amt > 0 THEN
+    SELECT c.credit_balance INTO v_balance
+    FROM customers c
+    WHERE c.id = v_bill.customer_id
+    FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'The credit customer on bill % no longer exists, so the credit can''t be reversed.', v_bill.code;
+    END IF;
+    IF v_balance < v_credit_amt THEN
+      RAISE EXCEPTION 'Bill % was ₹% on credit, but the customer''s outstanding balance is only ₹% (part is already paid). Settle the difference with the customer first.',
+        v_bill.code, v_credit_amt, v_balance;
+    END IF;
+
+    UPDATE customers
+    SET credit_balance = credit_balance - v_credit_amt, updated_by = p_user_id
+    WHERE id = v_bill.customer_id;
+
+    INSERT INTO customer_credit_ledger (customer_id, bill_id, entry_type, amount, mode, note, balance_after, created_by)
+    VALUES (v_bill.customer_id, p_bill_id, 'Reversal', v_credit_amt, NULL,
+            'Bill ' || v_bill.code || ' cancelled',
+            v_balance - v_credit_amt, p_user_id);
+  END IF;
+
+  -- Put back exactly what the sale took out.
   FOR v_line IN
-    SELECT bi.product_id,
-           COALESCE(bi.qty, CEIL(bi.loose_weight_g / bi.pack_weight_g_snapshot)::int) AS refund_qty
-    FROM bill_items bi WHERE bi.bill_id = p_bill_id
+    SELECT m.product_id, SUM(-m.qty_delta) AS refund_qty
+    FROM shop_inventory_movements m
+    WHERE m.ref_type = 'Bill' AND m.ref_id = p_bill_id
+      AND m.movement_type = 'Sale' AND m.shop_id = p_shop_id
+    GROUP BY m.product_id
+    HAVING SUM(-m.qty_delta) > 0
   LOOP
     PERFORM fn_shop_inventory_refund(
       p_shop_id, v_line.product_id, v_line.refund_qty, p_bill_id,
-      'Cancel ' || v_bill.code || ': ' || p_reason_type, p_user_id
+      'Cancel ' || v_bill.code || ': ' || p_reason_type
+        || CASE WHEN COALESCE(p_is_admin, false) THEN ' (admin)' ELSE '' END,
+      p_user_id
     );
   END LOOP;
 
@@ -533,7 +666,8 @@ LANGUAGE sql STABLE AS $$
   FROM   bills b
   LEFT   JOIN users cu ON cu.id = b.created_by
   LEFT   JOIN users xu ON xu.id = b.cancelled_by
-  LEFT   JOIN customers cust ON cust.id = b.customer_id
+  -- 25-Sep-2026: only this shop's customer (a bill could reference another shop's).
+  LEFT   JOIN customers cust ON cust.id = b.customer_id AND cust.shop_id = b.shop_id
   WHERE  b.id = p_bill_id
     AND  b.shop_id = p_shop_id
     AND  b.is_deleted = false;
@@ -585,32 +719,36 @@ $$;
 
 -- ------------------------------------------------------------
 -- 6. fn_bill_returnable_items — per-line returnable qty for a bill.
+--    25-Sep-2026: + refund_unit_price = MRP × (bill total / subtotal), i.e.
+--    the per-unit amount the customer actually paid after the bill discount.
+--    Loose-weight lines are still excluded (no partial loose returns).
 -- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_bill_returnable_items(uuid, uuid);
 CREATE OR REPLACE FUNCTION fn_bill_returnable_items(
   p_bill_id  uuid,
   p_shop_id  uuid
 )
 RETURNS TABLE (
-  product_id       uuid,
-  product_code     text,
-  product_name     varchar,
-  weight_value     numeric,
-  weight_unit      varchar,
-  unit_price       numeric,
-  billed_qty       int,
-  returned_qty     int,
-  returnable_qty   int
+  product_id         uuid,
+  product_code       text,
+  product_name       varchar,
+  weight_value       numeric,
+  weight_unit        varchar,
+  unit_price         numeric,
+  refund_unit_price  numeric,
+  billed_qty         int,
+  returned_qty       int,
+  returnable_qty     int
 )
 LANGUAGE sql STABLE AS $$
-  -- 01-Aug-2026: loose-weight lines (qty IS NULL) are excluded — v1 has
-  -- no partial-return path for loose sales. Customer wanting to reverse
-  -- a loose sale cancels the whole bill instead.
   SELECT bi.product_id,
          p.code AS product_code,
          p.name AS product_name,
          p.weight_value,
          p.weight_unit,
          bi.unit_price,
+         ROUND(bi.unit_price * CASE WHEN b.subtotal > 0 THEN b.total_amount / b.subtotal ELSE 1 END, 2)
+           AS refund_unit_price,
          bi.qty AS billed_qty,
          COALESCE(r.returned_qty, 0)::int AS returned_qty,
          (bi.qty - COALESCE(r.returned_qty, 0))::int AS returnable_qty
@@ -628,8 +766,45 @@ LANGUAGE sql STABLE AS $$
   WHERE  b.id = p_bill_id
     AND  b.shop_id = p_shop_id
     AND  b.is_deleted = false
-    AND  bi.qty IS NOT NULL           -- exclude loose lines (v1)
+    AND  bi.qty IS NOT NULL           -- exclude loose lines
   ORDER  BY p.name;
+$$;
+
+
+-- ------------------------------------------------------------
+-- 6b. fn_bill_refund_options — how a return on this bill can be refunded.
+--     One row per tender mode the bill was paid with: paid, already
+--     refunded in that mode, and what's left. A refund must go back the
+--     way the money came in (25-Sep-2026) — no cash out for a UPI or
+--     credit sale.
+-- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_bill_refund_options(uuid, uuid);
+CREATE OR REPLACE FUNCTION fn_bill_refund_options(
+  p_bill_id  uuid,
+  p_shop_id  uuid
+)
+RETURNS TABLE (
+  mode       varchar,
+  paid       numeric,
+  refunded   numeric,
+  remaining  numeric
+)
+LANGUAGE sql STABLE AS $$
+  SELECT bp.mode,
+         SUM(bp.amount)::numeric(12,2) AS paid,
+         COALESCE(MAX(r.refunded), 0)::numeric(12,2) AS refunded,
+         (SUM(bp.amount) - COALESCE(MAX(r.refunded), 0))::numeric(12,2) AS remaining
+  FROM   bills b
+  JOIN   bill_payments bp ON bp.bill_id = b.id
+  LEFT   JOIN (
+           SELECT br.refund_mode, SUM(br.total_amount) AS refunded
+           FROM   bill_returns br
+           WHERE  br.source_bill_id = p_bill_id AND br.is_deleted = false
+           GROUP  BY br.refund_mode
+         ) r ON r.refund_mode = bp.mode
+  WHERE  b.id = p_bill_id AND b.shop_id = p_shop_id AND b.is_deleted = false
+  GROUP  BY bp.mode
+  ORDER  BY bp.mode;
 $$;
 
 
@@ -637,7 +812,24 @@ $$;
 -- 7. fn_bill_return_create — atomic: validate vs source bill, insert
 --    header + lines, refund stock per line. p_items jsonb array of
 --    {"productId": uuid, "qty": int}.
+--
+-- 25-Sep-2026 loophole fixes:
+--   • Refund = what the customer PAID: gross × (bill total / subtotal),
+--     capped so all returns together never exceed the bill total. Used to
+--     refund full MRP on a discounted bill.
+--   • Refund mode must be one the bill was paid with, and can't exceed
+--     what was paid in that mode minus earlier refunds. 'Credit' reduces
+--     the customer's outstanding balance instead of paying out cash.
+--   • Shop users can only return within bill_return_window_days of the
+--     bill; older bills need the admin (p_is_admin).
+--   • 'Damaged' returns are written off straight after going back on the
+--     shelf (net stock unchanged) — damaged goods no longer inflate
+--     sellable stock.
+--   • Reason 'Other' needs a note. Loose-weight lines are rejected.
 -- ------------------------------------------------------------
+DROP FUNCTION IF EXISTS fn_bill_return_create(uuid, uuid, uuid, varchar, varchar, varchar, jsonb);
+DROP FUNCTION IF EXISTS fn_bill_return_create(uuid, uuid, uuid, varchar, varchar, varchar, jsonb, boolean);
+
 CREATE OR REPLACE FUNCTION fn_bill_return_create(
   p_bill_id      uuid,
   p_shop_id      uuid,
@@ -645,7 +837,8 @@ CREATE OR REPLACE FUNCTION fn_bill_return_create(
   p_refund_mode  varchar,
   p_reason_type  varchar,
   p_reason_note  varchar,
-  p_items        jsonb
+  p_items        jsonb,
+  p_is_admin     boolean DEFAULT false
 )
 RETURNS TABLE (
   id           uuid,
@@ -656,27 +849,37 @@ RETURNS TABLE (
 )
 LANGUAGE plpgsql AS $$
 DECLARE
-  v_bill         record;
-  v_return_id    uuid;
-  v_code         varchar(20);
-  v_line         record;
-  v_billed_qty   int;
-  v_returned_qty int;
-  v_unit_price   numeric(10,2);
-  v_total_items  int := 0;
-  v_total_qty    int := 0;
-  v_total_amount numeric(12,2) := 0;
+  v_bill          record;
+  v_return_id     uuid;
+  v_code          varchar(20);
+  v_line          record;
+  v_billed_qty    int;
+  v_returned_qty  int;
+  v_unit_price    numeric(10,2);
+  v_product_name  varchar;
+  v_total_items   int := 0;
+  v_total_qty     int := 0;
+  v_gross         numeric(12,2) := 0;
+  v_refund        numeric(12,2);
+  v_factor        numeric;
+  v_already       numeric(12,2);
+  v_mode_left     numeric(12,2);
+  v_window_days   int;
+  v_balance       numeric(12,2);
 BEGIN
   IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'A return must contain at least one item.';
   END IF;
 
-  IF p_refund_mode NOT IN ('Cash','UPI') THEN
-    RAISE EXCEPTION 'Invalid refund mode "%": must be Cash or UPI.', p_refund_mode;
+  IF p_refund_mode NOT IN ('Cash','UPI','Credit') THEN
+    RAISE EXCEPTION 'Invalid refund mode "%".', p_refund_mode;
   END IF;
 
   IF p_reason_type NOT IN ('Damaged','WrongItem','ChangedMind','Other') THEN
     RAISE EXCEPTION 'Invalid return reason.';
+  END IF;
+  IF p_reason_type = 'Other' AND NULLIF(btrim(p_reason_note), '') IS NULL THEN
+    RAISE EXCEPTION 'Please write why the items are being returned.';
   END IF;
 
   IF (SELECT COUNT(*) FROM jsonb_array_elements(p_items)) <>
@@ -684,7 +887,7 @@ BEGIN
     RAISE EXCEPTION 'The same product appears twice on the return — combine the quantity on one line.';
   END IF;
 
-  SELECT b.id, b.code, b.status
+  SELECT b.id, b.code, b.status, b.subtotal, b.total_amount, b.created_at, b.customer_id
   INTO v_bill
   FROM bills b
   WHERE b.id = p_bill_id AND b.shop_id = p_shop_id AND b.is_deleted = false
@@ -696,6 +899,20 @@ BEGIN
 
   IF v_bill.status <> 'Issued' THEN
     RAISE EXCEPTION 'Bill % is %, so it cannot be returned.', v_bill.code, lower(v_bill.status);
+  END IF;
+
+  IF NOT COALESCE(p_is_admin, false) THEN
+    v_window_days := COALESCE(
+      (SELECT NULLIF(s.value, '')::int FROM app_settings s WHERE s.key = 'bill_return_window_days'), 7);
+    IF v_bill.created_at < now() - make_interval(days => v_window_days) THEN
+      RAISE EXCEPTION 'Bill % is more than % days old, so it can''t be returned here. Ask the admin.',
+        v_bill.code, v_window_days;
+    END IF;
+  END IF;
+
+  -- The refund mode must be one the bill was paid with.
+  IF NOT EXISTS (SELECT 1 FROM bill_payments bp WHERE bp.bill_id = p_bill_id AND bp.mode = p_refund_mode) THEN
+    RAISE EXCEPTION 'Bill % was not paid by %, so it can''t be refunded that way.', v_bill.code, p_refund_mode;
   END IF;
 
   INSERT INTO bill_returns (source_bill_id, shop_id, refund_mode, reason_type, reason_note, created_by)
@@ -711,13 +928,21 @@ BEGIN
       RAISE EXCEPTION 'Return quantity must be a positive whole number.';
     END IF;
 
-    SELECT bi.qty, bi.unit_price
-    INTO v_billed_qty, v_unit_price
+    SELECT bi.qty, bi.unit_price, p.name
+    INTO v_billed_qty, v_unit_price, v_product_name
     FROM bill_items bi
+    JOIN products p ON p.id = bi.product_id
     WHERE bi.bill_id = p_bill_id AND bi.product_id = v_line.product_id;
 
     IF NOT FOUND THEN
       RAISE EXCEPTION 'A product on the return was not on bill %.', v_bill.code;
+    END IF;
+
+    -- Loose-weight lines have qty NULL; the over-return check below would
+    -- compare against NULL and silently pass.
+    IF v_billed_qty IS NULL THEN
+      RAISE EXCEPTION '"%" was sold loose by weight, so it can''t be returned here. Cancel the whole bill instead.',
+        v_product_name;
     END IF;
 
     SELECT COALESCE(SUM(bri.qty), 0)
@@ -741,15 +966,63 @@ BEGIN
       'Return ' || v_code || ' (bill ' || v_bill.code || ')', p_user_id
     );
 
-    v_total_items  := v_total_items + 1;
-    v_total_qty    := v_total_qty + v_line.qty;
-    v_total_amount := v_total_amount + (v_line.qty * v_unit_price);
+    -- Damaged goods are not sellable — write them straight back off.
+    IF p_reason_type = 'Damaged' THEN
+      PERFORM fn_shop_inventory_apply_movement(
+        p_shop_id, v_line.product_id, 'Adjustment', -v_line.qty, NULL,
+        'BillReturn', v_return_id, 'Damaged return ' || v_code || ' written off', p_user_id);
+    END IF;
+
+    v_total_items := v_total_items + 1;
+    v_total_qty   := v_total_qty + v_line.qty;
+    v_gross       := v_gross + (v_line.qty * v_unit_price);
   END LOOP;
+
+  -- What the customer actually paid for these units (bill discount shared
+  -- pro rata), never more than is left of the bill after earlier returns.
+  v_factor := CASE WHEN v_bill.subtotal > 0 THEN v_bill.total_amount / v_bill.subtotal ELSE 1 END;
+  v_refund := ROUND(v_gross * v_factor, 2);
+
+  SELECT COALESCE(SUM(br.total_amount), 0) INTO v_already
+  FROM bill_returns br
+  WHERE br.source_bill_id = p_bill_id AND br.is_deleted = false AND br.id <> v_return_id;
+  v_refund := LEAST(v_refund, v_bill.total_amount - v_already);
+
+  -- The refund can't exceed what was paid in this mode minus earlier
+  -- refunds in the same mode.
+  SELECT o.remaining INTO v_mode_left
+  FROM fn_bill_refund_options(p_bill_id, p_shop_id) o
+  WHERE o.mode = p_refund_mode;
+  -- fn_bill_refund_options already counts THIS return's header (total 0
+  -- so far), so remaining is exact.
+  IF v_refund > COALESCE(v_mode_left, 0) THEN
+    RAISE EXCEPTION 'Only ₹% of bill % can still be refunded by % — choose another refund mode or return fewer items.',
+      COALESCE(v_mode_left, 0), v_bill.code, p_refund_mode;
+  END IF;
+
+  -- Credit refund: reduce what the customer owes instead of paying out.
+  IF p_refund_mode = 'Credit' AND v_refund > 0 THEN
+    SELECT c.credit_balance INTO v_balance
+    FROM customers c WHERE c.id = v_bill.customer_id FOR UPDATE;
+    IF NOT FOUND THEN
+      RAISE EXCEPTION 'The credit customer on bill % no longer exists.', v_bill.code;
+    END IF;
+    IF v_balance < v_refund THEN
+      RAISE EXCEPTION 'The customer only owes ₹% now (part is already paid), less than this return of ₹%. Refund the difference by Cash or UPI in a separate return.',
+        v_balance, v_refund;
+    END IF;
+    UPDATE customers SET credit_balance = credit_balance - v_refund, updated_by = p_user_id
+    WHERE customers.id = v_bill.customer_id;
+    INSERT INTO customer_credit_ledger (customer_id, bill_id, entry_type, amount, mode, note, balance_after, created_by)
+    VALUES (v_bill.customer_id, p_bill_id, 'Reversal', v_refund, NULL,
+            'Return ' || v_code || ' on bill ' || v_bill.code, v_balance - v_refund, p_user_id);
+  END IF;
 
   UPDATE bill_returns br
   SET total_items  = v_total_items,
       total_qty    = v_total_qty,
-      total_amount = v_total_amount,
+      gross_amount = v_gross,
+      total_amount = v_refund,
       updated_by   = p_user_id
   WHERE br.id = v_return_id;
 
@@ -952,6 +1225,37 @@ BEGIN
 END;
 $$;
 
+-- 25-Sep-2026: credit limits are the ADMIN's call. Shop users create
+-- customers with the default limit only (the service drops any limit they
+-- send); the admin sets per-customer limits here. 0 = no limit, same as
+-- before. A limit below the current balance is allowed (it just blocks new
+-- credit until the customer pays down).
+CREATE OR REPLACE FUNCTION fn_customer_set_credit_limit(
+  p_customer_id  uuid,
+  p_limit        numeric,
+  p_user_id      uuid
+)
+RETURNS TABLE (
+  id uuid, code varchar, name varchar, phone varchar,
+  credit_limit numeric, credit_balance numeric
+)
+LANGUAGE plpgsql AS $$
+BEGIN
+  IF p_limit IS NULL OR p_limit < 0 THEN
+    RAISE EXCEPTION 'Credit limit cannot be negative.';
+  END IF;
+  UPDATE customers c
+  SET    credit_limit = ROUND(p_limit, 2), updated_by = p_user_id
+  WHERE  c.id = p_customer_id AND c.is_deleted = false;
+  IF NOT FOUND THEN
+    RAISE EXCEPTION 'Customer not found.';
+  END IF;
+  RETURN QUERY
+  SELECT c.id, c.code, c.name, c.phone, c.credit_limit, c.credit_balance
+  FROM customers c WHERE c.id = p_customer_id;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION fn_customer_list(
   p_shop_id    uuid,
   p_search     varchar DEFAULT NULL,
@@ -1044,9 +1348,20 @@ $$;
 
 
 -- ============================================================
--- HELD (DRAFT) BILLS (feature #3). See
--- DB/One shot scripts/phase4_bill_holds_migration.sql for design notes.
+-- HELD (DRAFT) BILLS (feature #3).
+-- 25-Sep-2026: loose-weight lines supported (qty XOR loose_weight_g), the
+-- customer must belong to the shop, and holds older than
+-- app_settings.held_bill_expiry_days are discarded (purged on the next
+-- hold, hidden from list/get meanwhile).
 -- ============================================================
+
+-- Expiry cut-off shared by the hold SPs.
+CREATE OR REPLACE FUNCTION fn_bill_hold_cutoff()
+RETURNS timestamptz
+LANGUAGE sql STABLE AS $$
+  SELECT now() - make_interval(days => COALESCE(
+    (SELECT NULLIF(s.value, '')::int FROM app_settings s WHERE s.key = 'held_bill_expiry_days'), 2));
+$$;
 
 CREATE OR REPLACE FUNCTION fn_bill_hold_create(
   p_shop_id      uuid,
@@ -1059,11 +1374,12 @@ CREATE OR REPLACE FUNCTION fn_bill_hold_create(
 RETURNS uuid
 LANGUAGE plpgsql AS $$
 DECLARE
-  v_id   uuid;
-  v_line record;
-  v_qty  int := 0;
-  v_amt  numeric(12,2) := 0;
-  v_mrp  numeric(10,2);
+  v_id      uuid;
+  v_line    record;
+  v_qty     int := 0;
+  v_amt     numeric(12,2) := 0;
+  v_prod    record;
+  v_pack_g  numeric;
 BEGIN
   IF p_items IS NULL OR jsonb_array_length(p_items) = 0 THEN
     RAISE EXCEPTION 'Nothing to hold — the bill is empty.';
@@ -1074,31 +1390,56 @@ BEGIN
     RAISE EXCEPTION 'The same product appears twice — adjust the quantity on one line instead.';
   END IF;
 
+  IF p_customer_id IS NOT NULL AND NOT EXISTS (
+       SELECT 1 FROM customers c
+       WHERE c.id = p_customer_id AND c.shop_id = p_shop_id AND c.is_deleted = false) THEN
+    RAISE EXCEPTION 'Customer not found.';
+  END IF;
+
+  -- Purge this shop's expired holds.
+  DELETE FROM held_bills h WHERE h.shop_id = p_shop_id AND h.created_at < fn_bill_hold_cutoff();
+
   INSERT INTO held_bills (shop_id, customer_id, label, note, created_by)
   VALUES (p_shop_id, p_customer_id, NULLIF(btrim(p_label), ''), NULLIF(btrim(p_note), ''), p_user_id)
-  RETURNING id INTO v_id;
+  RETURNING held_bills.id INTO v_id;
 
   FOR v_line IN
-    SELECT (x->>'productId')::uuid AS product_id, (x->>'qty')::int AS qty
+    SELECT (x->>'productId')::uuid AS product_id,
+           NULLIF(x->>'qty', '')::int AS qty,
+           NULLIF(x->>'looseWeightG', '')::numeric AS loose_g
     FROM jsonb_array_elements(p_items) x
   LOOP
-    IF v_line.qty IS NULL OR v_line.qty <= 0 THEN
+    IF (v_line.qty IS NULL) = (v_line.loose_g IS NULL) THEN
+      RAISE EXCEPTION 'Each line must be either a packet qty OR a loose weight (grams).';
+    END IF;
+    IF v_line.qty IS NOT NULL AND v_line.qty <= 0 THEN
       RAISE EXCEPTION 'Quantity must be a positive whole number.';
     END IF;
-    SELECT p.mrp INTO v_mrp FROM products p
-    WHERE p.id = v_line.product_id AND p.is_deleted = false;
+    IF v_line.loose_g IS NOT NULL AND v_line.loose_g <= 0 THEN
+      RAISE EXCEPTION 'Loose weight must be greater than zero.';
+    END IF;
+
+    SELECT p.mrp, p.weight_value, p.weight_unit INTO v_prod
+    FROM products p WHERE p.id = v_line.product_id AND p.is_deleted = false;
     IF NOT FOUND THEN
       RAISE EXCEPTION 'Product % not found.', v_line.product_id;
     END IF;
 
-    INSERT INTO held_bill_items (held_bill_id, product_id, qty)
-    VALUES (v_id, v_line.product_id, v_line.qty);
+    INSERT INTO held_bill_items (held_bill_id, product_id, qty, loose_weight_g)
+    VALUES (v_id, v_line.product_id, v_line.qty, v_line.loose_g);
 
-    v_qty := v_qty + v_line.qty;
-    v_amt := v_amt + (v_line.qty * COALESCE(v_mrp, 0));
+    IF v_line.qty IS NOT NULL THEN
+      v_qty := v_qty + v_line.qty;
+      v_amt := v_amt + (v_line.qty * COALESCE(v_prod.mrp, 0));
+    ELSE
+      v_pack_g := CASE v_prod.weight_unit WHEN 'kg' THEN v_prod.weight_value * 1000
+                                          WHEN 'g'  THEN v_prod.weight_value END;
+      v_qty := v_qty + CASE WHEN v_pack_g > 0 THEN CEIL(v_line.loose_g / v_pack_g)::int ELSE 1 END;
+      v_amt := v_amt + CASE WHEN v_pack_g > 0 THEN ROUND((v_line.loose_g / v_pack_g) * COALESCE(v_prod.mrp, 0), 2) ELSE 0 END;
+    END IF;
   END LOOP;
 
-  UPDATE held_bills SET total_qty = v_qty, total_amount = v_amt WHERE id = v_id;
+  UPDATE held_bills h SET total_qty = v_qty, total_amount = v_amt WHERE h.id = v_id;
   RETURN v_id;
 END;
 $$;
@@ -1115,8 +1456,9 @@ LANGUAGE sql STABLE AS $$
          (SELECT COUNT(*)::int FROM held_bill_items hi WHERE hi.held_bill_id = h.id) AS item_count,
          h.total_qty, h.total_amount, h.created_at
   FROM   held_bills h
-  LEFT   JOIN customers c ON c.id = h.customer_id
+  LEFT   JOIN customers c ON c.id = h.customer_id AND c.shop_id = h.shop_id
   WHERE  h.shop_id = p_shop_id
+    AND  h.created_at >= fn_bill_hold_cutoff()
   ORDER  BY h.created_at DESC;
 $$;
 
@@ -1130,25 +1472,30 @@ RETURNS TABLE (
 LANGUAGE sql STABLE AS $$
   SELECT h.id, h.customer_id, h.label, h.note
   FROM   held_bills h
-  WHERE  h.id = p_held_bill_id AND h.shop_id = p_shop_id;
+  WHERE  h.id = p_held_bill_id AND h.shop_id = p_shop_id
+    AND  h.created_at >= fn_bill_hold_cutoff();
 $$;
 
+-- Return shape grew loose_weight_g + sold_loose → DROP first.
+DROP FUNCTION IF EXISTS fn_bill_hold_get_items(uuid, uuid);
 CREATE OR REPLACE FUNCTION fn_bill_hold_get_items(
   p_held_bill_id  uuid,
   p_shop_id       uuid
 )
 RETURNS TABLE (
   id uuid, code text, barcode varchar, name varchar,
-  weight_value numeric, weight_unit varchar, mrp numeric, on_hand numeric, qty int
+  weight_value numeric, weight_unit varchar, mrp numeric, on_hand numeric,
+  sold_loose boolean, qty int, loose_weight_g numeric
 )
 LANGUAGE sql STABLE AS $$
   SELECT p.id, p.code, p.barcode, p.name, p.weight_value, p.weight_unit, p.mrp,
-         COALESCE(si.on_hand, 0) AS on_hand, hi.qty
+         COALESCE(si.on_hand, 0) AS on_hand, p.sold_loose, hi.qty, hi.loose_weight_g
   FROM   held_bill_items hi
   JOIN   held_bills h ON h.id = hi.held_bill_id AND h.shop_id = p_shop_id
   JOIN   products p   ON p.id = hi.product_id
   LEFT   JOIN shop_inventory si ON si.product_id = p.id AND si.shop_id = p_shop_id
   WHERE  hi.held_bill_id = p_held_bill_id
+    AND  h.created_at >= fn_bill_hold_cutoff()
   ORDER  BY p.name;
 $$;
 

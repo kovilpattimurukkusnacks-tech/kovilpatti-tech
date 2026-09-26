@@ -109,6 +109,19 @@ public class ShopInventoryRepository(IDbConnectionFactory factory) : IShopInvent
 
     // ─── Manual adjustment ──────────────────────────────
 
+    public async Task<List<OpeningImportRow>> ImportOpeningAsync(
+        Guid shopId, Guid userId, string rowsJson, bool dryRun, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql =
+            "SELECT * FROM fn_shop_inventory_import_opening(@p_shop_id, @p_user_id, @p_rows::jsonb, @p_dry_run)";
+        var rows = await conn.QueryAsync<OpeningImportRow>(new CommandDefinition(sql, new
+        {
+            p_shop_id = shopId, p_user_id = userId, p_rows = rowsJson, p_dry_run = dryRun,
+        }, cancellationToken: ct));
+        return rows.ToList();
+    }
+
     public async Task<Guid> ManualAdjustmentAsync(
         Guid shopId, Guid productId, decimal qtyDelta, string reason,
         Guid createdBy, CancellationToken ct = default)

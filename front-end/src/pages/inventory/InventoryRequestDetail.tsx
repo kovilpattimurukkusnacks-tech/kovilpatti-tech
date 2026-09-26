@@ -176,6 +176,10 @@ export default function InventoryRequestDetail() {
   const isReturn   = request?.requestType === 'Return'
   const canDispatch = !isReturn && (request?.status === 'Pending' || request?.status === 'Approved')
   const canAccept   =  isReturn && request?.status === 'Pending'
+  // 26-Sep-2026: drafts (auto-save, Save as Draft, Discard) cover Return
+  // accept too — the godown can count a return over several visits without
+  // losing the typed qtys. Same draft_dispatched_qty column underneath.
+  const canDraft    = canDispatch || canAccept
   // The qty-input table is editable in either pre-finalisation mode.
   const canEditQty  = canDispatch || canAccept
   const stats = useMemo(() => {
@@ -291,9 +295,9 @@ export default function InventoryRequestDetail() {
   // and the persisted server draft untouched. Now the timer runs and its
   // own hasAnyValue / hasDraftToClear guard decides whether to POST.
   useEffect(() => {
-    if (!canDispatch || !isDraftDirty) return
+    if (!canDraft || !isDraftDirty) return
     // request can be undefined on the very first render before the query
-    // resolves; canDispatch evaluates to false in that case so we're
+    // resolves; canDraft evaluates to false in that case so we're
     // already returning above, but the optional chain below is defensive.
     const requestId = request?.id
     if (!requestId) return
@@ -310,14 +314,7 @@ export default function InventoryRequestDetail() {
       // both. Erased-and-untouched lines send both null so the SP clears
       // any persisted draft (draft_dispatched_qty AND
       // draft_dispatched_weight_g) on the same call.
-      const itemsPayload = items.map(it => {
-        const parsed = inputToPayload(it.id, it)
-        return {
-          id: it.id,
-          dispatchedQty:     parsed?.dispatchedQty     ?? null,
-          dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
-        }
-      })
+      const itemsPayload = buildDraftPayload()
       // If NOTHING is set AND nothing to clear → skip the network round-trip
       // AND clear the dirty flag. Local state matches the server (both empty),
       // so leaving isDraftDirty=true would falsely trigger the unsaved-changes
@@ -353,7 +350,7 @@ export default function InventoryRequestDetail() {
     // shop-side auto-save effect for the rationale (re-renders would reset
     // the debounce on every keystroke).
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [canDispatch, isDraftDirty, dispatchQtys])
+  }, [canDraft, isDraftDirty, dispatchQtys])
 
   if (isLoading) return <Box><PageHeader title="Loading…" subtitle="" /></Box>
   if (error || !request) {
@@ -410,6 +407,25 @@ export default function InventoryRequestDetail() {
     if (grams <= 0) return null
     return { dispatchedQty: null, dispatchedWeightG: grams }
   }
+
+  // Full-manifest draft payload — every item; erased / untouched ones go
+  // with both fields null so the SP clears their persisted draft. Orders
+  // use inputToPayload (decimal = partial weight). Returns stay whole
+  // packets, parsed exactly like handleAccept, so the resumed draft is what
+  // Accept would have sent.
+  const buildDraftPayload = () => items.map(it => {
+    if (isReturn) {
+      const raw = dispatchQtys.get(it.id)
+      const n = raw != null && raw.trim() !== '' ? parseInt(raw, 10) : NaN
+      return { id: it.id, dispatchedQty: Number.isFinite(n) && n >= 0 ? n : null, dispatchedWeightG: null }
+    }
+    const parsed = inputToPayload(it.id, it)
+    return {
+      id: it.id,
+      dispatchedQty:     parsed?.dispatchedQty     ?? null,
+      dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
+    }
+  })
 
   const handleDispatch = async () => {
     // 25-Jul-2026: XOR payload — partial-weight rows send dispatchedWeightG
@@ -468,14 +484,7 @@ export default function InventoryRequestDetail() {
     // Same "full manifest" strategy as the auto-save effect: send every
     // item; erased ones go with both fields null so the SP clears their
     // persisted draft. 25-Jul-2026: XOR payload mirrors handleDispatch.
-    const itemsPayload = items.map(it => {
-      const parsed = inputToPayload(it.id, it)
-      return {
-        id: it.id,
-        dispatchedQty:     parsed?.dispatchedQty     ?? null,
-        dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
-      }
-    })
+    const itemsPayload = buildDraftPayload()
     const hasAnyValue    = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
     const hasDraftToClear = items.some(it =>
       (it.draftDispatchedQty != null || it.draftDispatchedWeightG != null) && !dispatchQtys.has(it.id)
@@ -1323,8 +1332,8 @@ export default function InventoryRequestDetail() {
                     ? `${stats.shortLines} line${stats.shortLines === 1 ? '' : 's'} short of requested`
                     : 'All lines at requested qty'}
               </Box>
-              {/* Quiet draft state hint — Order-only (Returns have no draft). */}
-              {canDispatch && (draftSavedAt || hasInitialDraft) && (
+              {/* Quiet draft state hint — Orders and Returns (26-Sep-2026). */}
+              {canDraft && (draftSavedAt || hasInitialDraft) && (
                 <Box sx={{ fontSize: 11, color: '#1F1F1F99', mt: 0.25 }}>
                   Draft {draftSavedAt
                     ? `saved at ${formatIstTime(draftSavedAt)}`
@@ -1338,9 +1347,9 @@ export default function InventoryRequestDetail() {
               Paper and 3 flex children (cart info / Discard / Save+Dispatch),
               Discard sits in the middle of the bar — well separated from
               the primary Save & Mark-as-Dispatched cluster so a stray
-              click on the right-side actions can't catch it. Order-only;
-              Returns have no draft. */}
-          {canDispatch && hasInitialDraft && (
+              click on the right-side actions can't catch it. Orders and
+              Returns (26-Sep-2026). */}
+          {canDraft && hasInitialDraft && (
             <Button
               variant="outlined"
               onClick={() => setDiscardConfirmOpen(true)}
@@ -1355,7 +1364,7 @@ export default function InventoryRequestDetail() {
             </Button>
           )}
           <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
-            {canDispatch && (
+            {canDraft && (
               <Button
                 variant="outlined"
                 onClick={handleSaveDraft}
@@ -1493,21 +1502,14 @@ export default function InventoryRequestDetail() {
           for any other status there's no draft concept to save into. */}
       <UnsavedChangesDialog
         open={guard.state === 'blocked'}
-        onSaveDraft={canDispatch
+        onSaveDraft={canDraft
           ? async () => {
               // Full-manifest payload (matches auto-save + handleSaveDraft)
               // so erased items clear their persisted draft on the DB side.
               // 25-Jul-2026 (v2): inputToPayload converts decimal packet
               // counts into dispatched_weight_g so partial rows survive
               // the "Save as Draft on nav-away" prompt too.
-              const itemsPayload = items.map(it => {
-                const parsed = inputToPayload(it.id, it)
-                return {
-                  id: it.id,
-                  dispatchedQty:     parsed?.dispatchedQty     ?? null,
-                  dispatchedWeightG: parsed?.dispatchedWeightG ?? null,
-                }
-              })
+              const itemsPayload = buildDraftPayload()
               const hasAnyValue = itemsPayload.some(p => p.dispatchedQty != null || p.dispatchedWeightG != null)
               if (!hasAnyValue) {
                 throw new Error('Enter at least one quantity before saving.')
@@ -1526,7 +1528,7 @@ export default function InventoryRequestDetail() {
           doesn't wipe minutes of typed-in dispatch qtys. */}
       <ConfirmDialog
         open={discardConfirmOpen}
-        title="Discard this dispatch draft?"
+        title={isReturn ? 'Discard this return draft?' : 'Discard this dispatch draft?'}
         message={`The saved per-line quantities for ${request.code} will be cleared and the form re-seeds to defaults. This can't be undone.`}
         confirmLabel="Yes, discard"
         cancelLabel="Keep editing"

@@ -41,7 +41,10 @@ public class CustomerService(
         try
         {
             var c = await customers.CreateAsync(
-                shopId, userId, request.Name.Trim(), request.Phone.Trim(), request.CreditLimit, ct);
+                shopId, userId, request.Name.Trim(), request.Phone.Trim(),
+                // 25-Sep-2026: credit limits are the admin's call — a shop user
+                // always gets the default limit (admin edits it in Credit customers).
+                creditLimit: null, ct);
             return Map(c);
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001")
@@ -54,6 +57,7 @@ public class CustomerService(
         string? search, int page, int pageSize, CancellationToken ct = default)
     {
         var shopId = RequireShopId();
+        (page, pageSize) = Paging(page, pageSize);
         var rows = await customers.ListAsync(shopId, Normalize(search), page, pageSize, ct);
         var total = rows.Count > 0 ? rows[0].Total_Count : 0;
         return new PagedResult<CustomerDto>(rows.Select(Map).ToList(), total, page, pageSize);
@@ -84,6 +88,7 @@ public class CustomerService(
         Guid customerId, int page, int pageSize, CancellationToken ct = default)
     {
         var shopId = RequireShopId();
+        (page, pageSize) = Paging(page, pageSize);
         var rows = await customers.LedgerAsync(customerId, shopId, page, pageSize, ct);
         var total = rows.Count > 0 ? rows[0].Total_Count : 0;
         var items = rows.Select(r => new CustomerLedgerEntryDto(
@@ -104,6 +109,9 @@ public class CustomerService(
         => currentUser.UserId ?? throw new UnauthorizedException("Authenticated user required.");
 
     private static string? Normalize(string? s) => string.IsNullOrWhiteSpace(s) ? null : s.Trim();
+
+    private static (int page, int pageSize) Paging(int page, int pageSize)
+        => (page < 1 ? 1 : page, pageSize < 1 ? 20 : Math.Min(pageSize, 200));
 }
 
 internal static class CustomerErrors

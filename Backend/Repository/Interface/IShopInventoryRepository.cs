@@ -40,4 +40,10 @@ public interface IShopInventoryRepository
         Guid shopId, Guid productId, decimal qtyDelta, string reason,
         Guid createdBy, CancellationToken ct = default);
 
+    /// Phase 4d — opening stock import (fn_shop_inventory_import_opening).
+    /// rowsJson: [{rowNo, code, qty, unitCost}]. dryRun = preview only;
+    /// otherwise all-or-nothing (the SP raises if any row is an error).
+    Task<List<OpeningImportRow>> ImportOpeningAsync(
+        Guid shopId, Guid userId, string rowsJson, bool dryRun, CancellationToken ct = default);
+
 }

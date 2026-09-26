@@ -22,7 +22,7 @@ public record SettleCreditRequest(
 
 public record CustomerLedgerEntryDto(
     Guid Id,
-    string EntryType,           // 'Credit' | 'Settlement'
+    string EntryType,           // 'Credit' | 'Settlement' | 'Reversal' (credit bill cancelled)
     decimal Amount,
     string? Mode,
     string? Note,

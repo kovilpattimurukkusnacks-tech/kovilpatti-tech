@@ -11,7 +11,12 @@ export interface EodExpectedDto {
   cashRefunds: number
   upiRefunds: number
   cancelCashBack: number
-  /** cashSales − cashRefunds − cancelCashBack (₹ that should be in the till). */
+  /** UPI handed back on cancelled bills (informational — not in the till). */
+  cancelUpiBack: number
+  /** Udhaar (credit) repaid in cash — this cash IS in the till. */
+  cashSettlements: number
+  upiSettlements: number
+  /** cashSales + cashSettlements − cashRefunds − cancelCashBack (₹ that should be in the till). */
   expectedCash: number
   billCount: number
   returnCount: number
@@ -23,9 +28,9 @@ export interface EodDenominationInput {
   count: number         // ≥ 0
 }
 
+/** The close window is decided by the server (previous close → now), so the
+ *  request carries only the count. */
 export interface EodCloseRequest {
-  windowFrom: IsoDateTime
-  windowTo: IsoDateTime
   denominations: EodDenominationInput[]
   notes?: string | null
 }
@@ -41,6 +46,9 @@ export interface EodSessionListItemDto {
   cashRefunds: number
   upiRefunds: number
   cancelCashBack: number
+  cancelUpiBack: number
+  cashSettlements: number
+  upiSettlements: number
   expectedCash: number
   physicalCash: number
   variance: number

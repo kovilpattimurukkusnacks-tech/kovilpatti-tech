@@ -13,15 +13,12 @@ namespace KovilpattiSnacks.API.Controllers;
 [Route("api/eod")]
 public class EodController(IEodService eod) : ControllerBase
 {
-    /// GET /api/eod/expected — the tender snapshot for a proposed window.
-    /// Both `from` and `to` are optional; when omitted, the service defaults
-    /// to [last close closed_at OR IST midnight, now].
+    /// GET /api/eod/expected — the tender snapshot for the next close window.
+    /// The window is server-decided: [previous close (or the shop's first
+    /// billing activity), now] — the same range POST /close records.
     [HttpGet("expected")]
-    public async Task<ActionResult<EodExpectedDto>> Expected(
-        [FromQuery] DateTimeOffset? from,
-        [FromQuery] DateTimeOffset? to,
-        CancellationToken ct)
-        => Ok(await eod.ExpectedAsync(from, to, ct));
+    public async Task<ActionResult<EodExpectedDto>> Expected(CancellationToken ct)
+        => Ok(await eod.ExpectedAsync(ct));
 
     /// POST /api/eod/close — persists the count + variance for the window.
     /// Returns { id } of the new cash_sessions row.

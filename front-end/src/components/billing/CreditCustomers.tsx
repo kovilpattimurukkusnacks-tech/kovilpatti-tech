@@ -198,7 +198,11 @@ function LedgerDialog({ customer, onClose }: { customer: CustomerDto | null; onC
                 <TableRow key={e.id}>
                   <TableCell sx={{ fontSize: 12 }}>{formatIstDateTime(e.createdAt)}</TableCell>
                   <TableCell>
-                    {e.entryType === 'Credit' ? 'Credit taken' : `Settled${e.mode ? ` (${e.mode})` : ''}`}
+                    {e.entryType === 'Credit'
+                      ? 'Credit taken'
+                      : e.entryType === 'Reversal'
+                        ? (e.note?.startsWith('Return') ? 'Items returned — credit reduced' : 'Bill cancelled — credit reversed')
+                        : `Settled${e.mode ? ` (${e.mode})` : ''}`}
                     {e.billCode ? ` · ${e.billCode}` : ''}
                   </TableCell>
                   <TableCell align="right" sx={{ fontWeight: 700, color: e.entryType === 'Credit' ? '#C62828' : '#2E7D32' }}>

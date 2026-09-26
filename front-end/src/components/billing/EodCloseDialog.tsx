@@ -21,7 +21,7 @@ const emptyCounts = (): Record<number, string> =>
   DENOMINATIONS.reduce((acc, d) => ({ ...acc, [d]: '' }), {} as Record<number, string>)
 
 export default function EodCloseDialog({ open, onClose, onClosed }: Props) {
-  const expected = useEodExpected(undefined, undefined, open)
+  const expected = useEodExpected(open)
   const closeEod = useCloseEod()
 
   const [counts, setCounts] = useState<Record<number, string>>(emptyCounts)
@@ -59,8 +59,6 @@ export default function EodCloseDialog({ open, onClose, onClosed }: Props) {
     setErr(null)
     try {
       await closeEod.mutateAsync({
-        windowFrom: expected.data.windowFrom,
-        windowTo:   expected.data.windowTo,
         denominations: DENOMINATIONS.map(d => ({
           denomination: d,
           count: parseInt(counts[d] || '0', 10) || 0,
@@ -109,7 +107,7 @@ export default function EodCloseDialog({ open, onClose, onClosed }: Props) {
 
         {exp && (
           <Box sx={{ fontSize: 12, color: '#1F1F1F99', mb: 2 }}>
-            Window: {formatIstDateTime(exp.windowFrom)} → {formatIstDateTime(exp.windowTo)}
+            Counting from {formatIstDateTime(exp.windowFrom)} → {formatIstDateTime(exp.windowTo)}
             {' · '}
             {exp.billCount} bill{exp.billCount === 1 ? '' : 's'}
             {exp.returnCount > 0 && ` · ${exp.returnCount} return${exp.returnCount === 1 ? '' : 's'}`}
@@ -127,9 +125,16 @@ export default function EodCloseDialog({ open, onClose, onClosed }: Props) {
               <TenderRow label="Cash sales"        value={exp?.cashSales ?? 0} />
               <TenderRow label="UPI sales"         value={exp?.upiSales ?? 0} muted />
               <TenderRow label="Credit sales"      value={exp?.creditSales ?? 0} muted />
+              <TenderRow label="Udhaar repaid (cash)" value={exp?.cashSettlements ?? 0} />
+              {(exp?.upiSettlements ?? 0) > 0 && (
+                <TenderRow label="Udhaar repaid (UPI)" value={exp?.upiSettlements ?? 0} muted />
+              )}
               <Box sx={{ my: 1, borderTop: '1px dashed #E0A800' }} />
               <TenderRow label="Cash refunds"      value={-(exp?.cashRefunds ?? 0)} />
               <TenderRow label="Cash cancels"      value={-(exp?.cancelCashBack ?? 0)} />
+              {(exp?.cancelUpiBack ?? 0) > 0 && (
+                <TenderRow label="UPI cancels (sent back)" value={-(exp?.cancelUpiBack ?? 0)} muted />
+              )}
               <Box sx={{ my: 1, borderTop: '1px solid #1F1F1F' }} />
               <Box sx={{ display: 'flex', justifyContent: 'space-between', fontSize: 15, fontWeight: 800 }}>
                 <span>Expected cash</span>
