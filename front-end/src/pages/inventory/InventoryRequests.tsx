@@ -483,7 +483,7 @@ export default function InventoryRequests() {
             <FileEdit className="w-5 h-5 text-[#1F1F1F]" />
             <Box sx={{ flex: 1, minWidth: 0 }}>
               <Box sx={{ fontWeight: 700, fontSize: 14 }}>
-                {dispatchDrafts.data!.length} dispatch draft{dispatchDrafts.data!.length === 1 ? '' : 's'} saved
+                {dispatchDrafts.data!.length} draft{dispatchDrafts.data!.length === 1 ? '' : 's'} saved
               </Box>
               <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
                 {draftsOpen ? 'Click to collapse' : 'Click to expand and resume any of them'}
@@ -1006,7 +1006,7 @@ function DraftRow({ draft, renameInFlight, pinInFlight, onResume, onRename, onTo
 
   const titleText = draft.draftName?.trim()
     ? draft.draftName
-    : `Resume dispatch draft — ${draft.code}`
+    : `Resume ${draft.requestType === 'Return' ? 'return' : 'dispatch'} draft — ${draft.code}`
 
   const commit = () => {
     const trimmed = value.trim()

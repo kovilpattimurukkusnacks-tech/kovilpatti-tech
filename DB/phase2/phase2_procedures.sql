@@ -560,10 +560,9 @@ $$;
 -- (27-May-2026); drop the 1-arg signature first since CREATE OR REPLACE
 -- can't change RETURNS TABLE.
 --
--- Naturally Order-only: the EXISTS filter on draft_dispatched_qty matches
--- only items on Orders (Returns don't carry a dispatch draft). The new
--- request_type / source_* / accepted_* columns are surfaced anyway for
--- entity-shape compatibility — they'll be 'Order' / NULL on every row here.
+-- 26-Sep-2026: Pending Returns can carry an accept draft too (the godown's
+-- auto-saved accept qtys, same draft_dispatched_qty column), so rows here
+-- may be request_type 'Return' — the FE labels them "return draft".
 DROP FUNCTION IF EXISTS fn_request_list_inventory_dispatch_drafts(uuid);
 
 CREATE OR REPLACE FUNCTION fn_request_list_inventory_dispatch_drafts(
@@ -2156,12 +2155,23 @@ BEGIN
     END LOOP;
   END IF;
 
+  -- 26-Sep-2026: returns can carry an accept draft (auto-save) in the same
+  -- draft_* columns as a dispatch draft — clear it now that the accept is
+  -- final, same as fn_request_dispatch does for Orders.
+  UPDATE stock_request_items
+  SET draft_dispatched_qty      = NULL,
+      draft_dispatched_weight_g = NULL
+  WHERE request_id = p_id;
+
   -- Flip status + audit. updated_at trigger refreshes itself.
+  -- draft_name / pinned_at only label a live draft — drop them too.
   UPDATE stock_requests
   SET status      = 'Accepted',
       accepted_at = now(),
       accepted_by = p_user_id,
-      updated_by  = p_user_id
+      updated_by  = p_user_id,
+      draft_name  = NULL,
+      pinned_at   = NULL
   WHERE id = p_id;
 
   -- 25-Sep-2026 (billing loophole): the returned goods leave the shop, so
