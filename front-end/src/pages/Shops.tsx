@@ -151,7 +151,7 @@ export default function Shops() {
 
       {!inventories.isLoading && inventoryList.length === 0 && (
         <Box sx={{ mb: 2, p: 2, borderRadius: 2, bgcolor: '#FFF8DC', border: '1px solid #1F1F1F', fontSize: 14, color: '#1F1F1F' }}>
-          You need to create at least one <b>Inventory</b> before adding a shop. Use the Create Account → Inventory menu.
+          You need to create at least one <b>Inventory</b> before adding a shop. Use the Shops &amp; Users → Inventory menu.
         </Box>
       )}
 
