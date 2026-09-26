@@ -119,6 +119,17 @@ public class BillReturnableItem
     public int      Billed_Qty     { get; set; }
     public int      Returned_Qty   { get; set; }
     public int      Returnable_Qty { get; set; }
+    /// Unit price after this bill's discount share — what one unit refunds.
+    public decimal  Refund_Unit_Price { get; set; }
+}
+
+/// Row from fn_bill_refund_options — one per tender mode on the bill.
+public class BillRefundOption
+{
+    public string  Mode      { get; set; } = default!;
+    public decimal Paid      { get; set; }
+    public decimal Refunded  { get; set; }
+    public decimal Remaining { get; set; }
 }
 
 /// Row returned by fn_bill_return_create — the created return's identity + totals.

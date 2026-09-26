@@ -69,6 +69,11 @@ const KEY_LABEL: Record<string, string> = {
   request_lock_cutoff: 'Cutoff Time',
   request_lock_enabled: 'Cutoff Enabled',
   gst_enabled: 'GST Tracking',
+  // 25-Sep-2026 billing controls.
+  bill_max_discount_percent: 'Max Bill Discount (%)',
+  bill_return_window_days: 'Return Window (days)',
+  held_bill_expiry_days: 'Held Bill Expiry (days)',
+  customer_credit_limit_default: 'Default Credit Limit (₹)',
 }
 
 function humanizeKey(key: string): string {

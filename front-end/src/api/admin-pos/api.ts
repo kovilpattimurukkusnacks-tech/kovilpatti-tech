@@ -7,6 +7,10 @@ import type {
   AdminSalesDayRowDto, AdminSalesProductRowDto, AdminSalesShopRowDto, AdminSalesSummaryDto,
   CustomerLedgerEntryDto,
 } from './types'
+import type {
+  BillReturnCreatedDto, CancelBillRequest, CreateBillReturnRequest, RefundOptionDto, ReturnableItemDto,
+} from '../bills/types'
+import type { CustomerDto } from '../customers/types'
 
 function q(params: object): string {
   const p = new URLSearchParams()
@@ -20,12 +24,24 @@ function q(params: object): string {
 
 const BASE = '/api/admin/pos'
 
-/** Phase 4d — admin POS views (Admin only, all shops, read-only). */
+/** Phase 4d — admin POS views (Admin only, all shops). 25-Sep-2026: plus the
+ *  overrides — cancel any bill, late returns, credit limits. */
 export const adminPosApi = {
   bills: (f: AdminBillFilters) =>
     apiClient.get<PagedResult<AdminBillListItemDto>>(`${BASE}/bills${q(f)}`),
   bill: (id: string) =>
     apiClient.get<AdminBillDetailDto>(`${BASE}/bills/${id}`),
+
+  cancelBill: (id: string, req: CancelBillRequest) =>
+    apiClient.post<void>(`${BASE}/bills/${id}/cancel`, req),
+  returnableItems: (billId: string) =>
+    apiClient.get<ReturnableItemDto[]>(`${BASE}/bills/${billId}/returnable`),
+  refundOptions: (billId: string) =>
+    apiClient.get<RefundOptionDto[]>(`${BASE}/bills/${billId}/refund-options`),
+  createReturn: (req: CreateBillReturnRequest) =>
+    apiClient.post<BillReturnCreatedDto>(`${BASE}/returns`, req),
+  setCreditLimit: (customerId: string, creditLimit: number) =>
+    apiClient.patch<CustomerDto>(`${BASE}/customers/${customerId}/credit-limit`, { creditLimit }),
 
   returns: (f: AdminReturnFilters) =>
     apiClient.get<PagedResult<AdminBillReturnListItemDto>>(`${BASE}/returns${q(f)}`),

@@ -12,6 +12,7 @@ export const billsKeys = {
   list: (f?: BillListFilters) => ['bills', 'list', f ?? {}] as const,
   detail: (id: string) => ['bills', 'detail', id] as const,
   returnable: (billId: string) => ['bills', 'returnable', billId] as const,
+  refundOptions: (billId: string) => ['bills', 'refund-options', billId] as const,
   returns: (f?: BillReturnListFilters) => ['bills', 'returns', f ?? {}] as const,
   returnDetail: (id: string) => ['bills', 'returns', 'detail', id] as const,
   holds: ['bills', 'holds'] as const,
@@ -77,6 +78,16 @@ export function useReturnableItems(billId: string | undefined) {
   })
 }
 
+/** Modes the bill was paid in + what is still refundable per mode. */
+export function useRefundOptions(billId: string | undefined) {
+  return useQuery({
+    queryKey: billsKeys.refundOptions(billId ?? ''),
+    queryFn: () => billsApi.refundOptions(billId!),
+    enabled: !!billId,
+    staleTime: 0,
+  })
+}
+
 export function useBillReturns(filters?: BillReturnListFilters) {
   return useQuery({
     queryKey: billsKeys.returns(filters),
@@ -98,8 +109,10 @@ export function useCreateBillReturn() {
     mutationFn: (req: CreateBillReturnRequest) => billsApi.createReturn(req),
     onSuccess: () => {
       // Return puts stock back and creates a return record — bills, returns,
-      // and product on-hand all changed.
+      // and product on-hand all changed. A Credit refund also moves the
+      // customer's balance.
       qc.invalidateQueries({ queryKey: billsKeys.all })
+      qc.invalidateQueries({ queryKey: customersKeys.all })
     },
   })
 }

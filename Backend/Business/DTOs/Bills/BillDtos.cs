@@ -31,7 +31,10 @@ public record CreateBillRequest(
     /// Bill-level discount. 'Percent' → DiscountValue is 0-100.
     /// 'Amount' → flat ₹ off. Both null → no discount.
     string? DiscountKind = null,
-    decimal? DiscountValue = null);
+    decimal? DiscountValue = null,
+    /// Cash the customer handed over (optional, change-due audit). When
+    /// set it must cover the Cash tender — the SP rejects less.
+    decimal? CashTendered = null);
 
 /// A recorded tender on a bill.
 public record BillPaymentDto(Guid Id, string Mode, decimal Amount);

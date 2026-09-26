@@ -201,7 +201,7 @@ function LedgerDialog({ customer, onClose }: { customer: CustomerDto | null; onC
                     {e.entryType === 'Credit'
                       ? 'Credit taken'
                       : e.entryType === 'Reversal'
-                        ? 'Bill cancelled — credit reversed'
+                        ? (e.note?.startsWith('Return') ? 'Items returned — credit reduced' : 'Bill cancelled — credit reversed')
                         : `Settled${e.mode ? ` (${e.mode})` : ''}`}
                     {e.billCode ? ` · ${e.billCode}` : ''}
                   </TableCell>

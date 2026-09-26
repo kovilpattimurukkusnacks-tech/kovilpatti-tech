@@ -1,3 +1,5 @@
+using System.Text.Json;
+using FluentValidation;
 using FluentValidation.Results;
 using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.DTOs;
@@ -8,20 +10,28 @@ using KovilpattiSnacks.Business.Exceptions;
 using KovilpattiSnacks.Business.Interface;
 using KovilpattiSnacks.Repository.Entities;
 using KovilpattiSnacks.Repository.Interface;
+using Npgsql;
 using ValidationException = KovilpattiSnacks.Business.Exceptions.ValidationException;
 
 namespace KovilpattiSnacks.Business.Implementation;
 
 /// <summary>
-/// Phase 4d — admin-side POS views (read-only, all shops). The controller is
-/// Admin-gated; the role is re-checked here as defence in depth, same as the
-/// other services. Bill items / tenders / return lines reuse the shop-side
-/// readers in IBillRepository (those SPs take only the bill / return id).
+/// Phase 4d — admin-side POS views (all shops). 25-Sep-2026: plus the admin
+/// overrides — cancel any bill, take a return past the shop's window, set a
+/// customer's credit limit. The controller is Admin-gated; the role is
+/// re-checked here as defence in depth, same as the other services. Bill
+/// items / tenders / return lines reuse the shop-side readers in
+/// IBillRepository (those SPs take only the bill / return id); the override
+/// writes reuse the shop-side SPs with p_is_admin = true, scoped to the
+/// bill's own shop.
 /// </summary>
 public class AdminPosService(
     IAdminPosRepository adminPos,
     IBillRepository bills,
-    ICurrentUser currentUser
+    ICustomerRepository customers,
+    ICurrentUser currentUser,
+    IValidator<CancelBillRequest> cancelValidator,
+    IValidator<CreateBillReturnRequest> returnValidator
 ) : IAdminPosService
 {
     private const int MaxPageSize   = 200;
@@ -67,6 +77,69 @@ public class AdminPosService(
             returns.Select(MapReturn).ToList());
     }
 
+    // ───────── Admin overrides (25-Sep-2026) ─────────
+    // Shop users may only cancel their own bills on a still-open day, and
+    // take returns within bill_return_window_days. Anything else comes here.
+
+    public async Task CancelBillAsync(Guid billId, CancelBillRequest request, CancellationToken ct = default)
+    {
+        RequireAdmin();
+        var validation = await cancelValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var shopId = await BillShopAsync(billId, ct);
+        await MapDbErrors(() => bills.CancelAsync(
+            billId, shopId, RequireUserId(), request.ReasonType, Normalize(request.ReasonNote), isAdmin: true, ct));
+    }
+
+    public async Task<IReadOnlyList<ReturnableItemDto>> ReturnableItemsAsync(Guid billId, CancellationToken ct = default)
+    {
+        RequireAdmin();
+        var shopId = await BillShopAsync(billId, ct);
+        var rows = await bills.ReturnableItemsAsync(billId, shopId, ct);
+        return rows.Select(r => new ReturnableItemDto(
+            r.Product_Id, r.Product_Code, r.Product_Name, r.Weight_Value, r.Weight_Unit,
+            r.Unit_Price, r.Billed_Qty, r.Returned_Qty, r.Returnable_Qty, r.Refund_Unit_Price)).ToList();
+    }
+
+    public async Task<IReadOnlyList<RefundOptionDto>> RefundOptionsAsync(Guid billId, CancellationToken ct = default)
+    {
+        RequireAdmin();
+        var shopId = await BillShopAsync(billId, ct);
+        var rows = await bills.RefundOptionsAsync(billId, shopId, ct);
+        return rows.Select(r => new RefundOptionDto(r.Mode, r.Paid, r.Refunded, r.Remaining)).ToList();
+    }
+
+    public async Task<BillReturnCreatedDto> CreateReturnAsync(
+        CreateBillReturnRequest request, CancellationToken ct = default)
+    {
+        RequireAdmin();
+        var validation = await returnValidator.ValidateAsync(request, ct);
+        if (!validation.IsValid) throw new ValidationException(validation.Errors);
+
+        var shopId = await BillShopAsync(request.SourceBillId, ct);
+        // Keys must match fn_bill_return_create's jsonb reads (x->>'productId' / 'qty').
+        var itemsJson = JsonSerializer.Serialize(
+            request.Items.Select(i => new { productId = i.ProductId, qty = i.Qty }));
+        var created = await MapDbErrors(() => bills.CreateReturnAsync(
+            request.SourceBillId, shopId, RequireUserId(), request.RefundMode,
+            request.ReasonType, Normalize(request.ReasonNote), itemsJson, isAdmin: true, ct));
+        return new BillReturnCreatedDto(
+            created.Id, created.Code, created.Total_Items, created.Total_Qty, created.Total_Amount);
+    }
+
+    public async Task<CustomerDto> SetCreditLimitAsync(
+        Guid customerId, SetCreditLimitRequest request, CancellationToken ct = default)
+    {
+        RequireAdmin();
+        if (request.CreditLimit < 0)
+            throw Validation("creditLimit", "Credit limit cannot be negative.");
+        if (request.CreditLimit > 10_000_000m)
+            throw Validation("creditLimit", "Credit limit is too large.");
+        var c = await MapDbErrors(() => customers.SetCreditLimitAsync(customerId, request.CreditLimit, RequireUserId(), ct));
+        return new CustomerDto(c.Id, c.Code, c.Name, c.Phone, c.Credit_Limit, c.Credit_Balance);
+    }
+
     // ───────── Returns ─────────
 
     public async Task<PagedResult<AdminBillReturnListItemDto>> ListReturnsAsync(
@@ -109,6 +182,7 @@ public class AdminPosService(
         var items = rows.Select(r => new AdminEodSessionDto(
             r.Id, r.Shop_Id, r.Shop_Code, r.Shop_Name, r.Window_From, r.Closed_At, r.Closed_By_Name,
             r.Cash_Sales, r.Upi_Sales, r.Credit_Sales, r.Cash_Refunds, r.Upi_Refunds, r.Cancel_Cash_Back,
+            r.Cancel_Upi_Back, r.Cash_Settlements, r.Upi_Settlements,
             r.Expected_Cash, r.Physical_Cash, r.Variance, r.Notes)).ToList();
         return new PagedResult<AdminEodSessionDto>(items, rows.Count > 0 ? rows[0].Total_Count : 0, p, size);
     }
@@ -209,6 +283,36 @@ public class AdminPosService(
         if (!string.Equals(currentUser.Role, RoleNames.Admin, StringComparison.OrdinalIgnoreCase))
             throw new ForbiddenException("Only administrators can view POS reports.");
     }
+
+    private Guid RequireUserId()
+        => currentUser.UserId ?? throw new UnauthorizedException("Authenticated user required.");
+
+    /// The bill's own shop — override writes are scoped to it inside the SPs.
+    private async Task<Guid> BillShopAsync(Guid billId, CancellationToken ct)
+    {
+        var h = await adminPos.GetBillAsync(billId, ct)
+            ?? throw new NotFoundException($"Bill '{billId}' not found.");
+        return h.Shop_Id;
+    }
+
+    /// RAISE EXCEPTION (P0001) → 400 / 404; stock going negative (23514) → 400.
+    private static async Task<T> MapDbErrors<T>(Func<Task<T>> call)
+    {
+        try { return await call(); }
+        catch (PostgresException ex) when (ex.SqlState == "23514")
+        {
+            throw Validation(string.Empty, "Not enough stock for one of the items — check the on-hand quantity and try again.");
+        }
+        catch (PostgresException ex) when (ex.SqlState == "P0001")
+        {
+            if (ex.MessageText.Contains("not found", StringComparison.OrdinalIgnoreCase))
+                throw new NotFoundException(ex.MessageText);
+            throw Validation(string.Empty, ex.MessageText);
+        }
+    }
+
+    private static Task MapDbErrors(Func<Task> call)
+        => MapDbErrors(async () => { await call(); return true; });
 
     private static (int page, int pageSize) Paging(int page, int pageSize)
         => (page < 1 ? 1 : page, pageSize < 1 ? 25 : Math.Min(pageSize, MaxPageSize));

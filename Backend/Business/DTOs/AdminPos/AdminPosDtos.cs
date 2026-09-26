@@ -109,11 +109,18 @@ public record AdminEodSessionDto(
     decimal CashRefunds,
     decimal UpiRefunds,
     decimal CancelCashBack,
+    decimal CancelUpiBack,
+    /// Udhaar repaid in cash — part of expected cash.
+    decimal CashSettlements,
+    decimal UpiSettlements,
     decimal ExpectedCash,
     decimal PhysicalCash,
     /// Physical − expected. Negative = shortage.
     decimal Variance,
     string? Notes);
+
+/// Admin sets a customer's credit limit. 0 = no limit.
+public record SetCreditLimitRequest(decimal CreditLimit);
 
 public record AdminEodDenominationDto(int Denomination, int Count, decimal Amount);
 

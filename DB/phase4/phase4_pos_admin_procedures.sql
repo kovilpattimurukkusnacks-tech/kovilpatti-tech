@@ -292,6 +292,9 @@ RETURNS TABLE (
   cash_refunds     numeric,
   upi_refunds      numeric,
   cancel_cash_back numeric,
+  cancel_upi_back  numeric,
+  cash_settlements numeric,
+  upi_settlements  numeric,
   expected_cash    numeric,
   physical_cash    numeric,
   variance         numeric,
@@ -304,6 +307,7 @@ LANGUAGE sql STABLE AS $$
          cs.window_from, cs.closed_at, u.full_name,
          cs.cash_sales, cs.upi_sales, cs.credit_sales,
          cs.cash_refunds, cs.upi_refunds, cs.cancel_cash_back,
+         cs.cancel_upi_back, cs.cash_settlements, cs.upi_settlements,
          cs.expected_cash, cs.physical_cash, cs.variance, cs.notes,
          COUNT(*) OVER() AS total_count
   FROM   cash_sessions cs

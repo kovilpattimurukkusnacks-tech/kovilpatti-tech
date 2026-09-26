@@ -14,6 +14,23 @@ public interface IAdminPosService
 
     Task<AdminBillDetailDto> GetBillAsync(Guid billId, CancellationToken ct = default);
 
+    // ── Admin overrides (25-Sep-2026) — scoped to the bill's own shop ──
+
+    /// Cancel any cashier's bill, including bills from an already-closed day.
+    Task CancelBillAsync(Guid billId, DTOs.Bills.CancelBillRequest request, CancellationToken ct = default);
+
+    Task<IReadOnlyList<DTOs.Bills.ReturnableItemDto>> ReturnableItemsAsync(Guid billId, CancellationToken ct = default);
+
+    Task<IReadOnlyList<DTOs.Bills.RefundOptionDto>> RefundOptionsAsync(Guid billId, CancellationToken ct = default);
+
+    /// Return past the shop's return window.
+    Task<DTOs.Bills.BillReturnCreatedDto> CreateReturnAsync(
+        DTOs.Bills.CreateBillReturnRequest request, CancellationToken ct = default);
+
+    /// Credit limits are admin-only. 0 = no limit.
+    Task<DTOs.Customers.CustomerDto> SetCreditLimitAsync(
+        Guid customerId, SetCreditLimitRequest request, CancellationToken ct = default);
+
     Task<PagedResult<AdminBillReturnListItemDto>> ListReturnsAsync(
         Guid? shopId, string? search, DateOnly? from, DateOnly? to,
         int page, int pageSize, CancellationToken ct = default);

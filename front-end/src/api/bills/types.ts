@@ -53,6 +53,9 @@ export interface CreateBillRequest {
   notes?: string | null
   discountKind?: DiscountKind | null
   discountValue?: number | null
+  /** Cash the customer handed over (optional, change-due audit). Must cover
+   *  the Cash tender — the server rejects less. */
+  cashTendered?: number | null
 }
 
 export interface BillPaymentDto {
@@ -147,9 +150,11 @@ export interface BillListFilters {
   pageSize?: number
 }
 
-// ───────── Bill returns (feature #1) — Cash/UPI refund, partial + full ─────────
+// ───────── Bill returns (feature #1) — partial + full ─────────
 
-export type RefundMode = 'Cash' | 'UPI'
+/** 25-Sep-2026: a refund goes back the way the bill was paid — Credit = the
+ *  customer's udhaar balance is reduced instead of handing out money. */
+export type RefundMode = 'Cash' | 'UPI' | 'Credit'
 export type ReturnReasonType = 'Damaged' | 'WrongItem' | 'ChangedMind' | 'Other'
 
 /** A source-bill line with how much of it can still be returned. */
@@ -163,6 +168,16 @@ export interface ReturnableItemDto {
   billedQty: number
   returnedQty: number
   returnableQty: number
+  /** unitPrice after the bill's discount share — what one unit refunds. */
+  refundUnitPrice: number
+}
+
+/** One tender mode the bill was paid with, and how much is still refundable in it. */
+export interface RefundOptionDto {
+  mode: RefundMode
+  paid: number
+  refunded: number
+  remaining: number
 }
 
 export interface ReturnLineRequest {
@@ -271,7 +286,10 @@ export interface HeldBillItemDto {
   weightUnit: string | null
   mrp: number
   onHand: number
-  qty: number
+  soldLoose: boolean
+  /** Packet lines carry qty; loose lines carry looseWeightG (grams). */
+  qty: number | null
+  looseWeightG: number | null
 }
 
 export interface HeldBillDetailDto {

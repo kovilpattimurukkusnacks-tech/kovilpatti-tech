@@ -84,6 +84,9 @@ public class AdminEodRow
     public decimal  Cash_Refunds     { get; set; }
     public decimal  Upi_Refunds      { get; set; }
     public decimal  Cancel_Cash_Back { get; set; }
+    public decimal  Cancel_Upi_Back  { get; set; }
+    public decimal  Cash_Settlements { get; set; }
+    public decimal  Upi_Settlements  { get; set; }
     public decimal  Expected_Cash    { get; set; }
     public decimal  Physical_Cash    { get; set; }
     public decimal  Variance         { get; set; }

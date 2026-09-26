@@ -55,6 +55,17 @@ public class CustomerRepository(IDbConnectionFactory factory) : ICustomerReposit
         }, cancellationToken: ct));
     }
 
+    public async Task<Customer> SetCreditLimitAsync(
+        Guid customerId, decimal creditLimit, Guid userId, CancellationToken ct = default)
+    {
+        using var conn = await factory.CreateOpenConnectionAsync(ct);
+        const string sql = "SELECT * FROM fn_customer_set_credit_limit(@p_customer_id, @p_limit, @p_user_id)";
+        return await conn.QuerySingleAsync<Customer>(new CommandDefinition(sql, new
+        {
+            p_customer_id = customerId, p_limit = creditLimit, p_user_id = userId,
+        }, cancellationToken: ct));
+    }
+
     public async Task<List<CustomerCreditLedgerRow>> LedgerAsync(
         Guid customerId, Guid shopId, int page, int pageSize, CancellationToken ct = default)
     {

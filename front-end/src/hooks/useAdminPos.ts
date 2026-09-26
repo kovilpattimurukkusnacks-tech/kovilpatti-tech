@@ -1,13 +1,16 @@
-import { keepPreviousData, useQuery } from '@tanstack/react-query'
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { adminPosApi } from '../api/admin-pos/api'
 import type {
   AdminBillFilters, AdminCustomerFilters, AdminDateRange, AdminEodFilters, AdminReturnFilters,
 } from '../api/admin-pos/types'
+import type { CancelBillRequest, CreateBillReturnRequest } from '../api/bills/types'
 
-// Phase 4d — admin POS views. All read-only, so no mutations here; the
-// admin sees shop-side writes after the default 30 s staleTime (main.tsx)
-// or on revisiting a tab. keepPreviousData stops the grids flashing empty
-// while the next page / filter loads.
+// Phase 4d — admin POS views. The admin sees shop-side writes after the
+// default 30 s staleTime (main.tsx) or on revisiting a tab. keepPreviousData
+// stops the grids flashing empty while the next page / filter loads.
+// 25-Sep-2026: the only writes are the overrides (cancel, late return,
+// credit limit) — each invalidates every admin-pos query, since one change
+// moves bills, returns, sales totals and credit balances together.
 
 export const adminPosKeys = {
   all:          ['admin-pos'] as const,
@@ -92,4 +95,49 @@ export function useAdminSalesDaily(r: AdminDateRange) {
 
 export function useAdminSalesTopProducts(r: AdminDateRange) {
   return useQuery({ queryKey: adminPosKeys.topProducts(r), queryFn: () => adminPosApi.salesTopProducts(r, 20) })
+}
+
+// ───────── Overrides (25-Sep-2026) ─────────
+
+export function useAdminReturnableItems(billId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin-pos', 'returnable', billId ?? ''],
+    queryFn: () => adminPosApi.returnableItems(billId!),
+    enabled: !!billId,
+    staleTime: 0,
+  })
+}
+
+export function useAdminRefundOptions(billId: string | undefined) {
+  return useQuery({
+    queryKey: ['admin-pos', 'refund-options', billId ?? ''],
+    queryFn: () => adminPosApi.refundOptions(billId!),
+    enabled: !!billId,
+    staleTime: 0,
+  })
+}
+
+export function useAdminCancelBill() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, req }: { id: string; req: CancelBillRequest }) => adminPosApi.cancelBill(id, req),
+    onSuccess: () => qc.invalidateQueries({ queryKey: adminPosKeys.all }),
+  })
+}
+
+export function useAdminCreateReturn() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (req: CreateBillReturnRequest) => adminPosApi.createReturn(req),
+    onSuccess: () => qc.invalidateQueries({ queryKey: adminPosKeys.all }),
+  })
+}
+
+export function useAdminSetCreditLimit() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ customerId, creditLimit }: { customerId: string; creditLimit: number }) =>
+      adminPosApi.setCreditLimit(customerId, creditLimit),
+    onSuccess: () => qc.invalidateQueries({ queryKey: adminPosKeys.all }),
+  })
 }

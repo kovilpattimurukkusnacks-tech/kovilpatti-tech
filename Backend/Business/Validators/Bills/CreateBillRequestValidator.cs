@@ -7,6 +7,9 @@ public class CreateBillRequestValidator : AbstractValidator<CreateBillRequest>
 {
     private static readonly string[] PaymentModes = ["Cash", "UPI", "Credit"];
 
+    /// Same cap as fn_bill_create (typo guard: 25000 kg instead of 250 g).
+    public const decimal MaxLooseWeightG = 50_000m;
+
     public CreateBillRequestValidator()
     {
         RuleFor(x => x.Payments)
@@ -49,7 +52,16 @@ public class CreateBillRequestValidator : AbstractValidator<CreateBillRequest>
                 .GreaterThan(0)
                 .When(i => i.LooseWeightG is not null)
                 .WithMessage("Loose weight must be greater than zero.");
+            item.RuleFor(i => i.LooseWeightG!.Value)
+                .LessThanOrEqualTo(MaxLooseWeightG)
+                .When(i => i.LooseWeightG is not null)
+                .WithMessage("Loose weight is too large — the limit is 50 kg per line.");
         });
+
+        RuleFor(x => x.CashTendered!.Value)
+            .GreaterThanOrEqualTo(0)
+            .When(x => x.CashTendered is not null)
+            .WithMessage("Cash received cannot be negative.");
 
         RuleFor(x => x.Notes)
             .MaximumLength(500).When(x => x.Notes is not null);
@@ -88,5 +100,8 @@ public class CancelBillRequestValidator : AbstractValidator<CancelBillRequest>
 
         RuleFor(x => x.ReasonNote)
             .MaximumLength(500).When(x => x.ReasonNote is not null);
+        RuleFor(x => x.ReasonNote)
+            .NotEmpty().When(x => x.ReasonType == "Other")
+            .WithMessage("Please write why the bill is being cancelled.");
     }
 }

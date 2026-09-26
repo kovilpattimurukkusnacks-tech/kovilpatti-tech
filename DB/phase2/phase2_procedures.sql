@@ -2133,6 +2133,7 @@ RETURNS boolean
 LANGUAGE plpgsql AS $$
 DECLARE
   v_item jsonb;
+  v_ret  record;
 BEGIN
   -- Guard: only Pending Returns are accept-able.
   IF NOT EXISTS (
@@ -2162,6 +2163,41 @@ BEGIN
       accepted_by = p_user_id,
       updated_by  = p_user_id
   WHERE id = p_id;
+
+  -- 25-Sep-2026 (billing loophole): the returned goods leave the shop, so
+  -- take them off the shop's on-hand. Before this, returned stock stayed
+  -- "in the shop" and could still be billed. Qty = the effective accepted
+  -- qty (partial-weight lines count as fractional packs), capped at what
+  -- the shop has on hand so a shop that never loaded opening stock doesn't
+  -- block the godown's accept. Zero rows are skipped (qty_delta <> 0).
+  FOR v_ret IN
+    SELECT sri.product_id,
+           LEAST(
+             fn_return_effective_qty(sri.dispatched_qty, sri.return_weight_g, sri.requested_qty,
+                                     sri.weight_value, sri.weight_unit),
+             COALESCE(si.on_hand, 0)
+           )::numeric AS qty,
+           sr.shop_id,
+           sr.code AS request_code
+    FROM stock_request_items sri
+    INNER JOIN stock_requests sr ON sr.id = sri.request_id
+    LEFT  JOIN shop_inventory si ON si.shop_id = sr.shop_id AND si.product_id = sri.product_id
+    WHERE sri.request_id = p_id
+  LOOP
+    IF COALESCE(v_ret.qty, 0) > 0 THEN
+      PERFORM fn_shop_inventory_apply_movement(
+        v_ret.shop_id,
+        v_ret.product_id,
+        'Return',
+        -v_ret.qty,
+        NULL,
+        'StockRequest',
+        p_id,
+        'Returned to godown via ' || v_ret.request_code,
+        p_user_id
+      );
+    END IF;
+  END LOOP;
 
   RETURN true;
 END

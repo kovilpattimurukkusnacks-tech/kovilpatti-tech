@@ -112,6 +112,10 @@ export interface AdminEodSessionDto {
   cashRefunds: number
   upiRefunds: number
   cancelCashBack: number
+  cancelUpiBack: number
+  /** Udhaar repaid in cash — counted in expected cash. */
+  cashSettlements: number
+  upiSettlements: number
   expectedCash: number
   physicalCash: number
   /** physical − expected. Negative = shortage. */

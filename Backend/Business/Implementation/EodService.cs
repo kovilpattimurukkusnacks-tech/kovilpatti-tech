@@ -15,30 +15,23 @@ public class EodService(
     IValidator<EodCloseRequest> closeValidator
 ) : IEodService
 {
-    // Default the close window to [last close closed_at OR IST midnight, now].
-    // IST is fixed UTC+5:30 — India doesn't observe DST, so the offset is safe
-    // to hard-code (same convention as BillService's ist_offset).
-    private static readonly TimeSpan IstOffset = TimeSpan.FromMinutes(330);
-
-    public async Task<EodExpectedDto> ExpectedAsync(
-        DateTimeOffset? from, DateTimeOffset? to, CancellationToken ct = default)
+    public async Task<EodExpectedDto> ExpectedAsync(CancellationToken ct = default)
     {
         var shopId = RequireShopId();
 
-        var now      = DateTimeOffset.UtcNow;
-        var windowTo = to ?? now;
-        var windowFrom = from ?? await ResolveDefaultFromAsync(shopId, windowTo, ct);
-        if (windowFrom >= windowTo)
-            throw new Exceptions.ValidationException(new[] {
-                new FluentValidation.Results.ValidationFailure("window",
-                    "Close window must span forward in time.")
-            });
+        // 25-Sep-2026: same window fn_eod_close will use — previous close (or
+        // first billing activity) → now. A client-chosen "from" could skip
+        // sales or overlap the previous close.
+        var windowFrom = await eod.WindowFromAsync(shopId, ct);
+        var windowTo   = DateTimeOffset.UtcNow;
+        if (windowFrom > windowTo) windowFrom = windowTo;
 
         var e = await eod.ExpectedAsync(shopId, windowFrom, windowTo, ct);
         return new EodExpectedDto(
             windowFrom, windowTo,
             e.Cash_Sales, e.Upi_Sales, e.Credit_Sales,
             e.Cash_Refunds, e.Upi_Refunds, e.Cancel_Cash_Back,
+            e.Cancel_Upi_Back, e.Cash_Settlements, e.Upi_Settlements,
             e.Expected_Cash, e.Bill_Count, e.Return_Count, e.Cancel_Count);
     }
 
@@ -55,9 +48,10 @@ public class EodService(
 
         try
         {
+            // request.WindowFrom / WindowTo are ignored — fn_eod_close decides.
             return await eod.CloseAsync(
-                shopId, userId, request.WindowFrom, request.WindowTo,
-                denomJson, string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(), ct);
+                shopId, userId, denomJson,
+                string.IsNullOrWhiteSpace(request.Notes) ? null : request.Notes.Trim(), ct);
         }
         catch (PostgresException ex) when (ex.SqlState == "P0001")
         {
@@ -75,23 +69,11 @@ public class EodService(
             r.Id, r.Window_From, r.Closed_At, r.Closed_By_Name,
             r.Cash_Sales, r.Upi_Sales, r.Credit_Sales,
             r.Cash_Refunds, r.Upi_Refunds, r.Cancel_Cash_Back,
+            r.Cancel_Upi_Back, r.Cash_Settlements, r.Upi_Settlements,
             r.Expected_Cash, r.Physical_Cash, r.Variance, r.Notes)).ToList();
     }
 
     // ── Helpers ───────────────────────────────────────────────────────
-
-    private async Task<DateTimeOffset> ResolveDefaultFromAsync(
-        Guid shopId, DateTimeOffset windowTo, CancellationToken ct)
-    {
-        // Prefer "since last close" so a mid-day EOD only counts new bills.
-        var lastClose = await eod.LastCloseAtAsync(shopId, ct);
-        // IST midnight of the same calendar day as windowTo (so a next-morning
-        // close correctly folds yesterday's late-night bills together).
-        var istNow  = windowTo.ToOffset(IstOffset);
-        var midnight = new DateTimeOffset(
-            istNow.Year, istNow.Month, istNow.Day, 0, 0, 0, IstOffset);
-        return lastClose.HasValue && lastClose.Value > midnight ? lastClose.Value : midnight;
-    }
 
     private Guid RequireShopId()
         => currentUser.ShopId ?? throw new ForbiddenException("Only shop users can run EOD.");

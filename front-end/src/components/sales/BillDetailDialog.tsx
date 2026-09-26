@@ -1,24 +1,35 @@
-import { Alert, Box, CircularProgress, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { useState } from 'react'
+import { Alert, Box, Button, CircularProgress, Table, TableBody, TableCell, TableHead, TableRow, Typography } from '@mui/material'
+import { Undo2, XCircle } from 'lucide-react'
 import { useAdminBill } from '../../hooks/useAdminPos'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
 import { formatWeightG } from '../../utils/formatDispatched'
 import { BillStatusChip, DetailDialog, Field } from './salesUi'
 import { LOSS_RED } from './salesTheme'
+import AdminCancelBillDialog from './AdminCancelBillDialog'
+import ReturnBillDialog from '../billing/ReturnBillDialog'
 
 const CANCEL_REASON: Record<string, string> = {
   Mistake: 'Billing mistake', Duplicate: 'Duplicate bill', CustomerRefused: 'Customer refused', Other: 'Other',
 }
 
-/** Admin bill detail — read-only. Opened from the Bills / Cancellations tabs. */
+/** Admin bill detail. Opened from the Bills / Cancellations tabs.
+ *  25-Sep-2026: Issued bills get the admin overrides — cancel (any cashier,
+ *  closed days) and return items (past the shop's return window). */
 export default function BillDetailDialog({ billId, onClose }: { billId: string | null; onClose: () => void }) {
   const q = useAdminBill(billId)
   const b = q.data
+  const [cancelOpen, setCancelOpen] = useState(false)
+  const [returnOpen, setReturnOpen] = useState(false)
+  const [returnedCode, setReturnedCode] = useState<string | null>(null)
+
+  const close = () => { setReturnedCode(null); onClose() }
 
   return (
     <DetailDialog
       open={!!billId}
-      onClose={onClose}
+      onClose={close}
       title={b ? <Box sx={{ display: 'flex', gap: 1.5, alignItems: 'center' }}>{b.code} <BillStatusChip status={b.status} /></Box> : 'Bill'}
     >
       {q.isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', py: 4 }}><CircularProgress size={28} /></Box>}
@@ -33,6 +44,38 @@ export default function BillDetailDialog({ billId, onClose }: { billId: string |
               {b.customerName ? `${b.customerName} (${b.customerPhone})` : 'Walk-in'}
             </Field>
           </Box>
+
+          {returnedCode && (
+            <Alert severity="success" onClose={() => setReturnedCode(null)}>
+              Return <strong>{returnedCode}</strong> saved.
+            </Alert>
+          )}
+
+          {b.status === 'Issued' && (
+            <Box sx={{ display: 'flex', gap: 1, flexWrap: 'wrap' }}>
+              <Button
+                size="small" variant="outlined"
+                startIcon={<Undo2 className="w-3.5 h-3.5" />}
+                onClick={() => { setReturnedCode(null); setReturnOpen(true) }}
+                sx={{ textTransform: 'none', fontWeight: 700, color: '#1F1F1F', borderColor: '#1F1F1F' }}
+              >
+                Return items
+              </Button>
+              <Button
+                size="small" variant="outlined" color="error"
+                startIcon={<XCircle className="w-3.5 h-3.5" />}
+                disabled={b.returns.length > 0}
+                title={b.returns.length > 0 ? 'This bill has a return — return the remaining items instead.' : undefined}
+                onClick={() => setCancelOpen(true)}
+                sx={{ textTransform: 'none', fontWeight: 700 }}
+              >
+                Cancel bill
+              </Button>
+              <Box sx={{ fontSize: 12, color: '#1F1F1F99', alignSelf: 'center' }}>
+                Admin override — for bills the shop can no longer cancel or return itself.
+              </Box>
+            </Box>
+          )}
 
           {b.status === 'Cancelled' && (
             <Alert severity="warning" sx={{ '& .MuiAlert-message': { width: '100%' } }}>
@@ -112,6 +155,18 @@ export default function BillDetailDialog({ billId, onClose }: { billId: string |
           {b.notes && <Field label="Notes">{b.notes}</Field>}
         </Box>
       )}
+
+      <AdminCancelBillDialog
+        bill={cancelOpen && b ? { id: b.id, code: b.code } : null}
+        onClose={() => setCancelOpen(false)}
+      />
+      <ReturnBillDialog
+        admin
+        billId={returnOpen && b ? b.id : null}
+        billCode={b?.code ?? null}
+        onClose={() => setReturnOpen(false)}
+        onDone={code => { setReturnOpen(false); setReturnedCode(code) }}
+      />
     </DetailDialog>
   )
 }

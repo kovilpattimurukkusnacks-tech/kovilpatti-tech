@@ -17,6 +17,10 @@ public interface ICustomerRepository
         Guid customerId, Guid shopId, Guid userId, decimal amount, string mode, string? note,
         CancellationToken ct = default);
 
+    /// Admin only (service-gated). 0 = no limit. Returns the updated customer.
+    Task<Customer> SetCreditLimitAsync(
+        Guid customerId, decimal creditLimit, Guid userId, CancellationToken ct = default);
+
     Task<List<CustomerCreditLedgerRow>> LedgerAsync(
         Guid customerId, Guid shopId, int page, int pageSize, CancellationToken ct = default);
 }

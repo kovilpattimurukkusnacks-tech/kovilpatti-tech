@@ -109,6 +109,7 @@ function EodDetailDialog({ session, onClose }: { session: AdminEodSessionDto | n
           <Table size="small">
             <TableBody>
               <Line label="Cash sales" value={s.cashSales} />
+              <Line label="Udhaar repaid in cash" value={s.cashSettlements} />
               <Line label="Cash refunds (returns)" value={-s.cashRefunds} />
               <Line label="Cash given back (cancelled bills)" value={-s.cancelCashBack} />
               <Line label="Expected cash in till" value={s.expectedCash} bold />
@@ -116,6 +117,8 @@ function EodDetailDialog({ session, onClose }: { session: AdminEodSessionDto | n
               <TableRow><TableCell colSpan={2} sx={{ pt: 2, fontWeight: 800, fontSize: 12, textTransform: 'uppercase' }}>Not in the till</TableCell></TableRow>
               <Line label="UPI sales" value={s.upiSales} />
               <Line label="UPI refunds" value={-s.upiRefunds} />
+              {s.cancelUpiBack > 0 && <Line label="UPI given back (cancelled bills)" value={-s.cancelUpiBack} />}
+              {s.upiSettlements > 0 && <Line label="Udhaar repaid by UPI" value={s.upiSettlements} />}
               <Line label="Credit (udhaar) sales" value={s.creditSales} />
             </TableBody>
           </Table>

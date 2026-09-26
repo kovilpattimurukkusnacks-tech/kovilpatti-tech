@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Alert, Box, Chip, CircularProgress, InputAdornment, Pagination, Table, TableBody, TableCell,
+  Alert, Box, Button, Chip, CircularProgress, InputAdornment, Pagination, Table, TableBody, TableCell,
   TableHead, TableRow, TextField, Typography,
 } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Search } from 'lucide-react'
-import { useAdminCustomerLedger, useAdminCustomers } from '../../hooks/useAdminPos'
+import { useAdminCustomerLedger, useAdminCustomers, useAdminSetCreditLimit } from '../../hooks/useAdminPos'
 import type { AdminCustomerDto } from '../../api/admin-pos/types'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime } from '../../utils/formatDate'
@@ -108,11 +108,35 @@ export default function SalesCustomersTab({ shopId }: { shopId: string }) {
 function LedgerDialog({ customer, onClose }: { customer: AdminCustomerDto | null; onClose: () => void }) {
   const [page, setPage] = useState(1)
   const [shownFor, setShownFor] = useState<string | null>(null)
-  if ((customer?.id ?? null) !== shownFor) { setShownFor(customer?.id ?? null); setPage(1) }
+  // 25-Sep-2026: credit limits are admin-only — edited here. savedLimit
+  // holds the new value until the list row (customer prop) refetches.
+  const [limitInput, setLimitInput] = useState<string | null>(null)
+  const [savedLimit, setSavedLimit] = useState<number | null>(null)
+  const [limitError, setLimitError] = useState<string | null>(null)
+  const setLimit = useAdminSetCreditLimit()
+  if ((customer?.id ?? null) !== shownFor) {
+    setShownFor(customer?.id ?? null); setPage(1)
+    setLimitInput(null); setSavedLimit(null); setLimitError(null)
+  }
 
   const ledger = useAdminCustomerLedger(customer?.id ?? null, page)
   const c = customer
   const pages = ledger.data ? Math.max(1, Math.ceil(ledger.data.total / ledger.data.pageSize)) : 1
+  const limit = savedLimit ?? c?.creditLimit ?? 0
+
+  const saveLimit = () => {
+    if (!c || limitInput == null) return
+    const v = Number(limitInput)
+    if (limitInput.trim() === '' || !Number.isFinite(v) || v < 0) { setLimitError('Enter 0 or more (0 = no limit).'); return }
+    setLimitError(null)
+    setLimit.mutate(
+      { customerId: c.id, creditLimit: Math.round(v * 100) / 100 },
+      {
+        onSuccess: updated => { setSavedLimit(updated.creditLimit); setLimitInput(null) },
+        onError: e => setLimitError(e instanceof Error ? e.message : 'Failed to save the limit.'),
+      },
+    )
+  }
 
   return (
     <DetailDialog open={!!c} onClose={onClose} title={c ? `${c.name} — credit history` : 'Credit history'}>
@@ -122,8 +146,41 @@ function LedgerDialog({ customer, onClose }: { customer: AdminCustomerDto | null
             <Field label="Shop">{c.shopName}</Field>
             <Field label="Phone">{c.phone}</Field>
             <Field label="Outstanding"><span style={{ color: LOSS_RED, fontWeight: 800 }}>{formatINR(c.creditBalance)}</span></Field>
-            <Field label="Limit">{c.creditLimit > 0 ? formatINR(c.creditLimit) : 'No limit'}</Field>
+            <Field label="Limit">
+              {limitInput == null ? (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
+                  {limit > 0 ? formatINR(limit) : 'No limit'}
+                  <Button size="small" onClick={() => { setLimitInput(String(limit)); setLimitError(null) }}
+                    sx={{ textTransform: 'none', fontWeight: 700, minWidth: 0, p: 0.25 }}>
+                    Edit
+                  </Button>
+                </Box>
+              ) : (
+                <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
+                  <TextField
+                    size="small" autoFocus value={limitInput}
+                    onChange={e => { setLimitInput(e.target.value.replace(/[^d.]/g, '')); setLimitError(null) }}
+                    sx={{ width: 110, bgcolor: CREAM }}
+                    slotProps={{ htmlInput: { inputMode: 'decimal' } }}
+                  />
+                  <Button size="small" variant="contained" disabled={setLimit.isPending} onClick={saveLimit}
+                    sx={{ textTransform: 'none', fontWeight: 700, minWidth: 0 }}>
+                    {setLimit.isPending ? '…' : 'Save'}
+                  </Button>
+                  <Button size="small" disabled={setLimit.isPending} onClick={() => { setLimitInput(null); setLimitError(null) }}
+                    sx={{ textTransform: 'none', minWidth: 0 }}>
+                    Cancel
+                  </Button>
+                </Box>
+              )}
+            </Field>
           </Box>
+          {limitError && <Alert severity="error">{limitError}</Alert>}
+          {limitInput != null && (
+            <Box sx={{ fontSize: 12, color: '#1F1F1F99' }}>
+              0 = no limit. A limit below what they owe is allowed — it just blocks new credit until they pay down.
+            </Box>
+          )}
           {ledger.isLoading && <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}><CircularProgress size={24} /></Box>}
           {ledger.data && (
             <>
@@ -148,7 +205,8 @@ function LedgerDialog({ customer, onClose }: { customer: AdminCustomerDto | null
                         <TableCell sx={{ fontSize: 12 }}>{formatIstDateTime(e.createdAt)}</TableCell>
                         <TableCell>
                           {e.entryType === 'Credit' ? 'Credit taken'
-                            : e.entryType === 'Reversal' ? 'Bill cancelled — credit reversed'
+                            : e.entryType === 'Reversal'
+                              ? (e.note?.startsWith('Return') ? 'Items returned — credit reduced' : 'Bill cancelled — credit reversed')
                             : `Repaid${e.mode ? ` (${e.mode})` : ''}`}
                           {e.billCode ? ` · ${e.billCode}` : ''}
                           {e.note && e.entryType !== 'Reversal' ? ` — ${e.note}` : ''}

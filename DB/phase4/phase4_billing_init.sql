@@ -104,6 +104,9 @@ CREATE TABLE IF NOT EXISTS bills (
   discount_amount   numeric(12,2) NOT NULL DEFAULT 0,
   total_amount   numeric(12,2) NOT NULL DEFAULT 0,
   notes          varchar(500)  NULL,
+  -- 25-Sep-2026: cash the customer handed over (optional; only when the
+  -- cashier typed it). Change given = cash_tendered − Cash tender amount.
+  cash_tendered  numeric(12,2) NULL,
   -- Cancellation trail — set together by fn_bill_cancel.
   cancelled_at       timestamptz NULL,
   cancelled_by       uuid        NULL REFERENCES users(id) ON DELETE SET NULL,
@@ -137,7 +140,9 @@ CREATE TABLE IF NOT EXISTS bills (
   CONSTRAINT chk_bills_subtotal_nonneg
     CHECK (subtotal >= 0 AND discount_amount >= 0),
   CONSTRAINT chk_bills_total_math
-    CHECK (total_amount = subtotal - discount_amount)
+    CHECK (total_amount = subtotal - discount_amount),
+  CONSTRAINT chk_bills_cash_tendered_nonneg
+    CHECK (cash_tendered IS NULL OR cash_tendered >= 0)
 );
 
 CREATE INDEX IF NOT EXISTS idx_bills_shop_time   ON bills(shop_id, created_at DESC);
@@ -257,13 +262,18 @@ CREATE TABLE IF NOT EXISTS held_bills (
 
 CREATE INDEX IF NOT EXISTS idx_held_bills_shop ON held_bills(shop_id, created_at DESC);
 
+-- 25-Sep-2026: a held line is EITHER a packet qty OR a loose weight (grams),
+-- same XOR as bill_items. Loose carts used to fail to hold.
 CREATE TABLE IF NOT EXISTS held_bill_items (
-  id            uuid  PRIMARY KEY DEFAULT gen_random_uuid(),
-  held_bill_id  uuid  NOT NULL REFERENCES held_bills(id) ON DELETE CASCADE,
-  product_id    uuid  NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
-  qty           int   NOT NULL,
+  id              uuid  PRIMARY KEY DEFAULT gen_random_uuid(),
+  held_bill_id    uuid  NOT NULL REFERENCES held_bills(id) ON DELETE CASCADE,
+  product_id      uuid  NOT NULL REFERENCES products(id) ON DELETE RESTRICT,
+  qty             int   NULL,
+  loose_weight_g  numeric(10,3) NULL,
   CONSTRAINT uq_held_bill_items_bill_product UNIQUE (held_bill_id, product_id),
-  CONSTRAINT chk_held_bill_items_qty_pos CHECK (qty > 0)
+  CONSTRAINT chk_held_bill_items_qty_pos CHECK (qty IS NULL OR qty > 0),
+  CONSTRAINT chk_held_bill_items_loose_pos CHECK (loose_weight_g IS NULL OR loose_weight_g > 0),
+  CONSTRAINT chk_held_bill_items_mode CHECK ((qty IS NOT NULL) <> (loose_weight_g IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS idx_held_bill_items_bill ON held_bill_items(held_bill_id);
@@ -297,14 +307,19 @@ CREATE TABLE IF NOT EXISTS bill_returns (
   reason_note      varchar(500)  NULL,
   total_items      int           NOT NULL DEFAULT 0,
   total_qty        int           NOT NULL DEFAULT 0,
+  -- 25-Sep-2026: total_amount = what was actually refunded (after the source
+  -- bill's discount share); gross_amount = Σ qty × MRP before that share.
   total_amount     numeric(12,2) NOT NULL DEFAULT 0,
+  gross_amount     numeric(12,2) NOT NULL DEFAULT 0,
   is_deleted       boolean       NOT NULL DEFAULT false,
   created_at       timestamptz   NOT NULL DEFAULT now(),
   created_by       uuid          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,
   updated_at       timestamptz   NOT NULL DEFAULT now(),
   updated_by       uuid          REFERENCES users(id) ON DELETE SET NULL,
   CONSTRAINT uq_bill_returns_code UNIQUE (code),
-  CONSTRAINT chk_bill_returns_refund_mode CHECK (refund_mode IN ('Cash','UPI')),
+  -- 'Credit' (25-Sep-2026) = returned against a credit bill: the customer's
+  -- outstanding balance is reduced instead of handing out cash.
+  CONSTRAINT chk_bill_returns_refund_mode CHECK (refund_mode IN ('Cash','UPI','Credit')),
   CONSTRAINT chk_bill_returns_reason_type
     CHECK (reason_type IN ('Damaged','WrongItem','ChangedMind','Other')),
   CONSTRAINT chk_bill_returns_totals_nonneg
@@ -342,7 +357,14 @@ CREATE TRIGGER trg_bill_returns_updated BEFORE UPDATE ON bill_returns
 -- ------------------------------------------------------------
 INSERT INTO app_settings (key, value, description) VALUES
   ('customer_credit_limit_default', '5000',
-   'Default per-customer credit limit (₹) applied to new customers. 0 = no limit.')
+   'Default per-customer credit limit (₹) applied to new customers. 0 = no limit.'),
+  -- 25-Sep-2026 billing controls. Admin-editable in Settings.
+  ('bill_max_discount_percent', '20',
+   'Largest discount a cashier can give on one bill, as % of the bill (0–100). 100 = no limit.'),
+  ('bill_return_window_days', '7',
+   'Days after a bill during which the shop can take a return. Older bills: admin only.'),
+  ('held_bill_expiry_days', '2',
+   'Held (parked) bills older than this many days are discarded.')
 ON CONFLICT (key) DO NOTHING;
 
 COMMIT;

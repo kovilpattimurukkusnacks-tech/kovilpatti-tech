@@ -30,7 +30,10 @@ public record HeldBillItemDto(
     string? WeightUnit,
     decimal Mrp,
     decimal OnHand,
-    int Qty);
+    bool SoldLoose,
+    /// Packet lines carry Qty; loose lines carry LooseWeightG (grams).
+    int? Qty,
+    decimal? LooseWeightG);
 
 public record HeldBillDetailDto(
     Guid Id,

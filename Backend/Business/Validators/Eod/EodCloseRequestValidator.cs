@@ -10,10 +10,6 @@ public class EodCloseRequestValidator : AbstractValidator<EodCloseRequest>
 
     public EodCloseRequestValidator()
     {
-        RuleFor(x => x)
-            .Must(x => x.WindowFrom < x.WindowTo)
-            .WithMessage("Close window must span forward in time.");
-
         RuleFor(x => x.Denominations)
             .NotNull()
             .Must(d => d.Count > 0)

@@ -66,6 +66,19 @@ function linePacketsConsumed(l: BillLine): number {
   return 0
 }
 
+/** Stock a line takes off on_hand. 25-Sep-2026: loose lines deduct the exact
+ *  fraction of a pack (3 dp, min 0.001), same as fn_bill_create — 300 g of a
+ *  1 kg pack takes 0.3, not a whole packet. The packet count above still
+ *  drives the "items" total shown on the bill. */
+function lineStockUse(l: BillLine): number {
+  if (l.qty != null) return l.qty
+  if (l.looseWeightG != null) {
+    const pack = packSizeGrams(l.product)
+    if (pack) return Math.max(Math.round((l.looseWeightG / pack) * 1000) / 1000, 0.001)
+  }
+  return 0
+}
+
 /** Round to the paisa, half away from zero — same as PostgreSQL ROUND(x, 2)
  *  for the positive amounts billing deals with. */
 function roundMoney(n: number): number {
@@ -139,7 +152,7 @@ export default function ShopBilling() {
 
   const qtyInCart = (productId: string) => {
     const line = lines.find(l => l.product.id === productId)
-    return line ? linePacketsConsumed(line) : 0
+    return line ? lineStockUse(line) : 0
   }
 
   const addProduct = (p: BillingProductDto) => {
@@ -274,6 +287,14 @@ export default function ShopBilling() {
 
   const handleSave = (opts?: { print?: boolean }) => {
     setInlineError(null)
+    // 25-Sep-2026: "Cash received" is saved on the bill (change-due audit) when
+    // the single tender is Cash. Less than the total can't be right.
+    const received = parseFloat(cashReceived)
+    const cashTendered = !isSplit && payments[0]?.mode === 'Cash' && received > 0 ? roundMoney(received) : null
+    if (cashTendered != null && cashTendered < total) {
+      setInlineError(`Cash received (${formatINR(cashTendered)}) is less than the bill total (${formatINR(total)}).`)
+      return
+    }
     const reqPayments = isSplit
       ? payments.map(p => ({ mode: p.mode, amount: round2(p.amount) }))
       : [{ mode: payments[0].mode, amount: total }]
@@ -290,6 +311,7 @@ export default function ShopBilling() {
         // computes the ₹ actually taken off and stores it on the bill row.
         discountKind: discount?.kind ?? null,
         discountValue: discount?.value ?? null,
+        cashTendered,
       },
       {
         onSuccess: created => {
@@ -332,8 +354,8 @@ export default function ShopBilling() {
   }
 
   // Resume a draft — replaces the current cart with the draft's lines
-  // (rebuilt from fresh product data). Customer is re-attached by the
-  // cashier if a credit sale is intended.
+  // (rebuilt from fresh product data; loose lines keep their weight).
+  // Customer is re-attached by the cashier if a credit sale is intended.
   const handleResume = (resumed: ResumeLine[]) => {
     setSavedBillCode(null); setInlineError(null)
     setLines(resumed)
@@ -850,8 +872,11 @@ function RecentBills() {
     setCancelTarget(null); setCancelReasonType('Mistake'); setCancelNote(''); setCancelError(null)
   }
 
+  const cancelNoteMissing = cancelReasonType === 'Other' && !cancelNote.trim()
+
   const handleConfirmCancel = () => {
     if (!cancelTarget) return
+    if (cancelNoteMissing) { setCancelError('Please write why the bill is being cancelled.'); return }
     setCancelError(null)
     cancelBill.mutate(
       {
@@ -872,7 +897,7 @@ function RecentBills() {
     <Box>
       {returnedMsg && (
         <Alert severity="success" sx={{ mb: 2 }} onClose={() => setReturnedMsg(null)}>
-          Return <strong>{returnedMsg}</strong> saved — items back in stock, refund recorded.
+          Return <strong>{returnedMsg}</strong> saved — refund recorded, stock updated.
         </Alert>
       )}
       <Paper elevation={0} sx={{ borderRadius: 2, border: '2px solid #1F1F1F', bgcolor: '#FFFFFF', overflow: 'hidden' }}>
@@ -967,12 +992,21 @@ function RecentBills() {
         onDone={code => { setReturnTarget(null); setReturnedMsg(code) }}
       />
 
-      {/* Cancel dialog — reason category + optional note. */}
-      <Dialog open={!!cancelTarget} onClose={closeCancel} maxWidth="xs" fullWidth>
+      {/* Cancel dialog — reason category + note (required for Other). */}
+      <Dialog
+        open={!!cancelTarget}
+        onClose={(_e, reason) => {
+          if (reason === 'backdropClick' || reason === 'escapeKeyDown' || cancelBill.isPending) return
+          closeCancel()
+        }}
+        maxWidth="xs"
+        fullWidth
+      >
         <DialogTitle sx={{ fontWeight: 700 }}>Cancel bill {cancelTarget?.code}?</DialogTitle>
         <DialogContent>
           <Box sx={{ fontSize: 13, color: '#1F1F1F99', mb: 2 }}>
             The sold items go back into your shop stock. This cannot be undone.
+            You can cancel only your own bills, and only until the day is closed — after that, ask the admin.
           </Box>
           {cancelError && <Alert severity="error" sx={{ mb: 2 }}>{cancelError}</Alert>}
           <TextField
@@ -989,9 +1023,10 @@ function RecentBills() {
             fullWidth
             multiline
             minRows={2}
-            label="Note (optional)"
+            label={cancelReasonType === 'Other' ? 'Note (required)' : 'Note (optional)'}
+            required={cancelReasonType === 'Other'}
             value={cancelNote}
-            onChange={e => setCancelNote(e.target.value)}
+            onChange={e => { setCancelNote(e.target.value); setCancelError(null) }}
             slotProps={{ htmlInput: { maxLength: 500 } }}
           />
         </DialogContent>
@@ -1002,7 +1037,7 @@ function RecentBills() {
           <Button
             variant="contained"
             color="error"
-            disabled={cancelBill.isPending}
+            disabled={cancelBill.isPending || cancelNoteMissing}
             onClick={handleConfirmCancel}
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >

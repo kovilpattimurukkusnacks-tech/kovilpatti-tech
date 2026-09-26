@@ -1,6 +1,7 @@
 using KovilpattiSnacks.Business.Constants;
 using KovilpattiSnacks.Business.DTOs;
 using KovilpattiSnacks.Business.DTOs.AdminPos;
+using KovilpattiSnacks.Business.DTOs.Bills;
 using KovilpattiSnacks.Business.DTOs.Customers;
 using KovilpattiSnacks.Business.Interface;
 using Microsoft.AspNetCore.Authorization;
@@ -10,8 +11,9 @@ namespace KovilpattiSnacks.API.Controllers;
 
 /// <summary>
 /// Phase 4d — admin-side POS views across all shops: bills, returns, day-end
-/// closes, credit customers and sales reports. Read-only; shop-side writes
-/// stay on BillsController / EodController / CustomersController.
+/// closes, credit customers and sales reports. Everyday shop-side writes stay
+/// on BillsController / EodController / CustomersController; the only admin
+/// writes are the overrides below (cancel, late return, credit limit).
 /// shopId omitted = all shops. Dates are IST yyyy-MM-dd, inclusive.
 /// </summary>
 [ApiController]
@@ -31,6 +33,39 @@ public class AdminPosController(IAdminPosService pos) : ControllerBase
     [HttpGet("bills/{id:guid}")]
     public async Task<ActionResult<AdminBillDetailDto>> Bill(Guid id, CancellationToken ct)
         => Ok(await pos.GetBillAsync(id, ct));
+
+    // ───────── Overrides (25-Sep-2026) ─────────
+    // Cancels / returns the shop can no longer do itself (another cashier's
+    // bill, a closed day, past the return window).
+
+    [HttpPost("bills/{id:guid}/cancel")]
+    public async Task<IActionResult> CancelBill(
+        Guid id, [FromBody] CancelBillRequest request, CancellationToken ct)
+    {
+        await pos.CancelBillAsync(id, request, ct);
+        return NoContent();
+    }
+
+    [HttpGet("bills/{id:guid}/returnable")]
+    public async Task<ActionResult<IReadOnlyList<ReturnableItemDto>>> Returnable(Guid id, CancellationToken ct)
+        => Ok(await pos.ReturnableItemsAsync(id, ct));
+
+    [HttpGet("bills/{id:guid}/refund-options")]
+    public async Task<ActionResult<IReadOnlyList<RefundOptionDto>>> RefundOptions(Guid id, CancellationToken ct)
+        => Ok(await pos.RefundOptionsAsync(id, ct));
+
+    [HttpPost("returns")]
+    public async Task<ActionResult<BillReturnCreatedDto>> CreateReturn(
+        [FromBody] CreateBillReturnRequest request, CancellationToken ct)
+    {
+        var created = await pos.CreateReturnAsync(request, ct);
+        return CreatedAtAction(nameof(Return), new { id = created.Id }, created);
+    }
+
+    [HttpPatch("customers/{id:guid}/credit-limit")]
+    public async Task<ActionResult<CustomerDto>> SetCreditLimit(
+        Guid id, [FromBody] SetCreditLimitRequest request, CancellationToken ct)
+        => Ok(await pos.SetCreditLimitAsync(id, request, ct));
 
     // ───────── Returns ─────────
 
