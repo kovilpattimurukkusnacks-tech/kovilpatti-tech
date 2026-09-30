@@ -1,5 +1,6 @@
 import { Chip, Tooltip } from '@mui/material'
 import StarIcon from '@mui/icons-material/Star'
+import { formatSpecialLabel } from '../utils/formatSpecialLabel'
 
 /** Uniform chip for shop-declared Special Requests (06-Jul-2026).
  *  Replaces the retired BackorderChip. Rendered on:
@@ -24,10 +25,11 @@ export function SpecialRequestChip({
    *  → chip stands on its own with the generic "Special" text. */
   label?: string | null
 }) {
+  const text = formatSpecialLabel(label)
   const chip = (
     <Chip
       icon={<StarIcon fontSize="small" />}
-      label={compact ? 'SP' : (label?.trim() || 'Special')}
+      label={compact ? 'SP' : (text || 'Special')}
       size={size}
       sx={{
         bgcolor: '#FFE0B2',
@@ -47,8 +49,8 @@ export function SpecialRequestChip({
 
   // When compact + a label exists, show it on hover so the sender still
   // gets to see "Diwali stock 2026" without stealing horizontal space.
-  if (compact && label?.trim()) {
-    return <Tooltip title={label.trim()}>{chip}</Tooltip>
+  if (compact && text) {
+    return <Tooltip title={text}>{chip}</Tooltip>
   }
   return chip
 }

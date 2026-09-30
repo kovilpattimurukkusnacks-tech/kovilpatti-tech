@@ -1,4 +1,5 @@
 import { useMemo, useState, useRef, useEffect } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { FileEdit, Search, Printer, ChevronDown, ChevronUp, Pencil, X as XIcon, Pin, PinOff } from 'lucide-react'
 import { SpecialRequestChip } from '../../components/SpecialRequestChip'
@@ -890,7 +891,7 @@ export default function InventoryRequests() {
                           {r.isSpecial && (
                             <Box
                               component="span"
-                              title={r.specialLabel?.trim() || 'Special Request'}
+                              title={formatSpecialLabel(r.specialLabel) || 'Special Request'}
                               sx={{
                                 display: 'inline-flex', alignItems: 'center', gap: 0.4,
                                 px: 0.75, py: 0.15, borderRadius: 0.75,
@@ -902,9 +903,9 @@ export default function InventoryRequests() {
                               }}
                             >
                               ★ Special
-                              {r.specialLabel?.trim() && (
+                              {formatSpecialLabel(r.specialLabel) && (
                                 <Box component="span" sx={{ fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
-                                  · {r.specialLabel.trim()}
+                                  · {formatSpecialLabel(r.specialLabel)}
                                 </Box>
                               )}
                             </Box>

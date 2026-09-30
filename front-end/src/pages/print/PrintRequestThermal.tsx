@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
@@ -180,7 +181,7 @@ export default function PrintRequestThermal() {
           {request.isSpecial && (
             <>
               <span className="label">Special:</span>
-              <span className="value">{request.specialLabel?.trim() || 'Yes'}</span>
+              <span className="value">{formatSpecialLabel(request.specialLabel) || 'Yes'}</span>
             </>
           )}
         </div>
