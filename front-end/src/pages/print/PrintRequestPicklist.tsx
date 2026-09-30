@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useParams } from 'react-router-dom'
 import { useStockRequest } from '../../hooks/useStockRequests'
 import { formatINR } from '../../utils/format'
@@ -276,9 +277,9 @@ export default function PrintRequestPicklist() {
       {request.isSpecial && (
         <div className="print-special-banner">
           <span className="print-special-banner-badge">SPECIAL REQUEST</span>
-          {request.specialLabel?.trim() && (
+          {formatSpecialLabel(request.specialLabel) && (
             <span className="print-special-banner-label">
-              {request.specialLabel.trim()}
+              {formatSpecialLabel(request.specialLabel)}
             </span>
           )}
           <span className="print-special-banner-sub">

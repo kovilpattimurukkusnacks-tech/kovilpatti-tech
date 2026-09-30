@@ -1,4 +1,5 @@
 import { Fragment, useMemo, useState } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useLocation, useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, Ban, Pencil, Printer, Undo2, Star, Edit2, Check, X as XIcon, PauseCircle } from 'lucide-react'
 import {
@@ -516,7 +517,7 @@ export default function AdminRequestDetail() {
                 fontWeight: 700, color: '#3E2500', fontSize: 13,
                 maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
               }}>
-                {request.specialLabel?.trim() || 'Unnamed special'}
+                {formatSpecialLabel(request.specialLabel) || 'Unnamed special'}
               </Box>
               {request.status === 'Pending' && (
                 <Tooltip title="Edit label">

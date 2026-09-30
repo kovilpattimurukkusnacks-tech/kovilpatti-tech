@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useNavigate, useSearchParams } from 'react-router-dom'
 import { Search, Printer, Plus, X as XIcon } from 'lucide-react'
 import { Alert, Box, Button, Chip, Dialog, DialogActions, DialogContent, DialogTitle, IconButton, InputAdornment, MenuItem, Paper, TextField, Tooltip } from '@mui/material'
@@ -800,7 +801,7 @@ export default function AdminRequests() {
                           {r.isSpecial && (
                             <Box
                               component="span"
-                              title={r.specialLabel?.trim() || 'Special Request'}
+                              title={formatSpecialLabel(r.specialLabel) || 'Special Request'}
                               sx={{
                                 display: 'inline-flex', alignItems: 'center', gap: 0.4,
                                 px: 0.75, py: 0.15, borderRadius: 0.75,
@@ -812,9 +813,9 @@ export default function AdminRequests() {
                               }}
                             >
                               ★ Special
-                              {r.specialLabel?.trim() && (
+                              {formatSpecialLabel(r.specialLabel) && (
                                 <Box component="span" sx={{ fontWeight: 700, textTransform: 'none', letterSpacing: 0 }}>
-                                  · {r.specialLabel.trim()}
+                                  · {formatSpecialLabel(r.specialLabel)}
                                 </Box>
                               )}
                             </Box>

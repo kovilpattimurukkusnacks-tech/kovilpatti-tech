@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { Box, Button, Card, CardContent, Chip, CircularProgress, Link as MuiLink, Typography } from '@mui/material'
 import { DataGrid, type GridColDef } from '@mui/x-data-grid'
 import { Download } from 'lucide-react'
@@ -106,11 +107,11 @@ export default function AdjustmentsLogTable({ rows, loading, filters, summary }:
               shows up to 24 chars inline; full label on hover. */}
           {params.row.isSpecial && (
             <Chip
-              label={params.row.specialLabel?.trim()
-                ? `★ ${params.row.specialLabel.trim()}`
+              label={formatSpecialLabel(params.row.specialLabel)
+                ? `★ ${formatSpecialLabel(params.row.specialLabel)}`
                 : '★ Special'}
               size="small"
-              title={params.row.specialLabel?.trim() || 'Special Request'}
+              title={formatSpecialLabel(params.row.specialLabel) || 'Special Request'}
               sx={{
                 bgcolor: '#FFB74D',
                 border: '1px solid #E65100',
