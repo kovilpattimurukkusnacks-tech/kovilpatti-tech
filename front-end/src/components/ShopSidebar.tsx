@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { ClipboardList, LayoutDashboard, LogOut, ReceiptText, Store, Wallet } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useApp } from '../context/AppContext'
 import { useShop } from '../hooks/useShops'
 import { featureFlags } from '../featureFlags'
@@ -12,18 +13,24 @@ import './Sidebar.css'
 // the `billing` feature flag. On UAT/prod the item is hidden until the
 // client signs off; the underlying route + component are intact so direct
 // URL access still works for internal testing.
-const navItems = [
-  { to: '/shop/dashboard',    label: 'Dashboard',      icon: LayoutDashboard },
-  { to: '/shop/requests',     label: 'Stock Requests', icon: ClipboardList },
+//
+// 30-Sep-2026: grouped under small headings like the admin menu
+// (Sidebar.tsx) instead of one flat list. Routes unchanged.
+type NavItem = { to: string; label: string; icon: LucideIcon }
+type NavSection = { heading?: string; links: NavItem[] }
+
+const sections: NavSection[] = [
+  { links: [{ to: '/shop/dashboard', label: 'Dashboard', icon: LayoutDashboard }] },
+  { heading: 'Stock', links: [{ to: '/shop/requests', label: 'Stock Requests', icon: ClipboardList }] },
   ...(featureFlags.billing
-    ? [{ to: '/shop/billing', label: 'Billing', icon: ReceiptText }]
+    ? [{ heading: 'Sales', links: [{ to: '/shop/billing', label: 'Billing', icon: ReceiptText }] }]
     : []),
   // Shop Expenses — this shop's operating expenses (electricity, rent,
   // staff, etc.). Renamed from "Utilities" on 15-Jul-2026 — the earlier
   // name was inaccurate (rent/salary aren't utilities in an accounting
   // sense). Internal identifiers (component, DB table `shop_utility_expenses`,
   // API path) kept as-is to avoid a churn-only rename.
-  { to: '/shop/expenses',     label: 'Shop Expenses',  icon: Wallet },
+  { heading: 'Accounts', links: [{ to: '/shop/expenses', label: 'Shop Expenses', icon: Wallet }] },
 ]
 
 type Props = { onNavigate?: () => void }
@@ -49,23 +56,32 @@ export default function ShopSidebar({ onNavigate }: Props) {
         <div className="text-xs text-[#1F1F1F]/75 font-bold uppercase tracking-widest">Shop Console</div>
       </div>
 
-      <nav className="relative z-10 flex-1 px-3 py-4 space-y-1.5 overflow-y-auto">
-        {navItems.map(({ to, label, icon: Icon }) => (
-          <NavLink
-            key={to}
-            to={to}
-            onClick={() => onNavigate?.()}
-            className={({ isActive }) =>
-              `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
-                isActive
-                  ? 'gold-gradient shadow-lg shadow-black/30'
-                  : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
-              }`
-            }
-          >
-            <Icon className="w-4 h-4" />
-            <span>{label}</span>
-          </NavLink>
+      <nav className="relative z-10 flex-1 px-3 py-4 overflow-y-auto">
+        {sections.map((s, i) => (
+          <div key={s.heading ?? `section-${i}`} className={i === 0 ? 'space-y-1.5' : 'mt-4 space-y-1.5'}>
+            {s.heading && (
+              <div className="px-3 pb-0.5 text-[11px] font-bold uppercase tracking-widest text-[#1F1F1F]/55">
+                {s.heading}
+              </div>
+            )}
+            {s.links.map(({ to, label, icon: Icon }) => (
+              <NavLink
+                key={to}
+                to={to}
+                onClick={() => onNavigate?.()}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-bold transition-all ${
+                    isActive
+                      ? 'gold-gradient shadow-lg shadow-black/30'
+                      : 'text-[#1F1F1F] hover:bg-[#1F1F1F]/10'
+                  }`
+                }
+              >
+                <Icon className="w-4 h-4" />
+                <span>{label}</span>
+              </NavLink>
+            ))}
+          </div>
         ))}
       </nav>
 
