@@ -4,6 +4,7 @@ import { Box } from '@mui/material'
 import StarIcon from '@mui/icons-material/Star'
 import { useActiveSpecials } from '../hooks/useStockRequests'
 import { useApp } from '../context/AppContext'
+import { formatSpecialLabel } from '../utils/formatSpecialLabel'
 
 /**
  * Sticky banner listing every un-received Special Request in scope.
@@ -109,10 +110,15 @@ export function ActiveSpecialsBanner() {
                     overflow: 'hidden',
                     textOverflow: 'ellipsis',
                     whiteSpace: 'nowrap',
+                    // Italic glyphs lean past their advance width; with
+                    // overflow:hidden the last letter's slant gets clipped
+                    // ("GURU" → "GURL"). A little right padding gives the
+                    // overhang room inside the clip box.
+                    pr: '3px',
                   }}
-                  title={s.specialLabel}
+                  title={formatSpecialLabel(s.specialLabel)}
                 >
-                  · {s.specialLabel}
+                  · {formatSpecialLabel(s.specialLabel)}
                 </Box>
               )}
               <Box

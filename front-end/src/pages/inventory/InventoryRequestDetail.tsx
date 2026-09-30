@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react'
+import { formatSpecialLabel } from '../../utils/formatSpecialLabel'
 import { useNavigate, useParams } from 'react-router-dom'
 import { ArrowLeft, PackageCheck, Check, Printer, X, Undo2, Plus, Trash2, ChevronUp, ChevronDown, Star, PauseCircle } from 'lucide-react'
 import {
@@ -1061,7 +1062,7 @@ export default function InventoryRequestDetail() {
             fontWeight: 700, color: '#3E2500', fontSize: 13,
             maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap',
           }}>
-            {request.specialLabel?.trim() || 'Unnamed special'}
+            {formatSpecialLabel(request.specialLabel) || 'Unnamed special'}
           </Box>
           <Box sx={{
             fontSize: 11.5, fontWeight: 700, color: '#3E2500',
