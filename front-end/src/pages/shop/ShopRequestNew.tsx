@@ -19,7 +19,7 @@ import {
 } from '../../hooks/useStockRequests'
 import { useUnsavedChangesGuard } from '../../hooks/useUnsavedChangesGuard'
 import { BASE_URL } from '../../api/config'
-import { tokenStore } from '../../api/tokenStore'
+import { tokenForThisTab } from '../../api/tokenStore'
 import { UnsavedChangesDialog } from '../../components/UnsavedChangesDialog'
 import ConfirmDialog from '../../components/ConfirmDialog'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
@@ -824,7 +824,11 @@ export default function ShopRequestNew() {
         productId: l.product.id,
         requestedQty: l.qty,
       }))
-      const token = tokenStore.get()
+      // 17-Oct-2026: tokenForThisTab, not tokenStore.get() — if another user
+      // signed in on a second tab, the shared token is THEIRS and this flush
+      // would save this tab's cart as their draft (how an Alappakkam cart
+      // ended up submitted under Avadi). Null → skip the save.
+      const token = tokenForThisTab()
       if (!token) return
       try {
         fetch(`${BASE_URL}/api/stock-requests/draft`, {
