@@ -1,6 +1,7 @@
 import { apiClient } from '../client'
 import { BASE_URL } from '../config'
-import { tokenStore } from '../tokenStore'
+import { tokenForThisTab } from '../tokenStore'
+import { SessionChangedError } from '../errors'
 import type {
   AccountsAdjustmentRowDto,
   AccountsCategoryRowDto,
@@ -60,7 +61,9 @@ export const accountsApi = {
 // well under a few megabytes.
 
 async function streamDownload(path: string, filename: string): Promise<void> {
-  const token = tokenStore.get()
+  // Multi-tab guard (17-Oct-2026) — never download as a different user.
+  const token = tokenForThisTab()
+  if (!token) throw new SessionChangedError()
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : undefined,
   })

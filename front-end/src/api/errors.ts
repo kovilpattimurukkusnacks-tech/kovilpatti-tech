@@ -37,6 +37,18 @@ export class NotFoundError extends ApiError {
 }
 
 /**
+ * Not an HTTP response — the API client blocked the request because the
+ * stored token belongs to a different user than this tab (someone signed in
+ * or out in another tab). Status 0 = never sent. 17-Oct-2026.
+ */
+export class SessionChangedError extends ApiError {
+  constructor() {
+    super(0, 'You signed in as a different user in another tab. Reload this page to continue.')
+    this.name = 'SessionChangedError'
+  }
+}
+
+/**
  * 400 — request validation failed.
  * BE shape: { error: 'Validation failed', errors: { fieldName: ['msg', ...] } }
  */

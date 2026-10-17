@@ -15,9 +15,9 @@
 
 import * as Sentry from '@sentry/react'
 import { BASE_URL } from './config'
-import { tokenStore, UNAUTHORIZED_EVENT } from './tokenStore'
+import { tokenStore, userIdFromToken, SESSION_CHANGED_EVENT, UNAUTHORIZED_EVENT } from './tokenStore'
 import {
-  ApiError, UnauthorizedError, ForbiddenError, NotFoundError, ValidationError,
+  ApiError, UnauthorizedError, ForbiddenError, NotFoundError, ValidationError, SessionChangedError,
 } from './errors'
 
 type HttpMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
@@ -140,6 +140,16 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown, opts
       headers['Content-Type'] = 'application/json'
     }
     const token = tokenStore.get()
+    // Multi-tab guard (17-Oct-2026): localStorage is shared by every tab, so
+    // a sign-in on another tab swaps the token under this one. Never send a
+    // request as a different user than the one this tab shows — block it and
+    // let AppContext prompt a reload. Auth endpoints are exempt (login sets
+    // the new identity itself).
+    const tabUser = tokenStore.getTabUser()
+    if (tabUser && !isAuthPath(path) && userIdFromToken(token) !== tabUser) {
+      window.dispatchEvent(new CustomEvent(SESSION_CHANGED_EVENT))
+      throw tagError(new SessionChangedError(), info)
+    }
     if (token) headers.Authorization = `Bearer ${token}`
 
     // Correlation ID (30-Jun-2026). One UUID flows FE → BE → DB. Grep the
@@ -201,6 +211,7 @@ async function request<T>(method: HttpMethod, path: string, body?: unknown, opts
       throw tagError(new ValidationError(parsed), info)
     case 401:
       tokenStore.clear()
+      tokenStore.setTabUser(null)
       window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
       throw tagError(new UnauthorizedError(parsed), info)
     case 403:
