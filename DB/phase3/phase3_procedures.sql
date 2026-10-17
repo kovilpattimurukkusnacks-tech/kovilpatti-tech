@@ -278,10 +278,21 @@ LANGUAGE sql STABLE AS $$
   -- All matching finalised rows tagged with their IST bucket-start date.
   -- p_grouping is one of 'day','week','month' — caller-validated at the BE.
   finalised AS (
-    SELECT r.id, r.request_type, r.total_amount,
+    SELECT r.id, r.request_type,
            (date_trunc(p_grouping,
               (COALESCE(r.received_at, r.accepted_at) AT TIME ZONE 'Asia/Kolkata')
            ))::date AS bucket_start,
+           -- 17-Oct-2026: live MRP value at the effective qty (same chains
+           -- as fn_accounts_summary). Replaces r.total_amount, which is
+           -- frozen at submit (requested qty × MRP) and so ignored partial-
+           -- weight / short dispatches — the chart disagreed with the KPIs.
+           (SELECT COALESCE(SUM(
+              CASE WHEN r.request_type = 'Order'
+                   THEN fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
+                   ELSE fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit)
+              END * it.unit_price), 0)
+            FROM stock_request_items it
+            WHERE it.request_id = r.id) AS total_amount,
            -- Per-request cost at the line's frozen purchase_price_snapshot,
            -- same qty COALESCE chains as fn_accounts_summary (Orders use the
            -- received→dispatched→requested chain; Returns reuse
@@ -376,8 +387,10 @@ RETURNS TABLE (
   order_request_count   bigint,
   return_request_count  bigint,
   requested_qty         bigint,
-  dispatched_qty        bigint,
-  returned_qty          bigint,
+  -- 17-Oct-2026: numeric(14,3) (was bigint) — partial-weight lines keep
+  -- their fractional packs (2.5, not 3). Requested stays whole packs.
+  dispatched_qty        numeric,
+  returned_qty          numeric,
   requested_amount      numeric,
   dispatched_amount     numeric,
   returns_amount        numeric,
@@ -471,7 +484,7 @@ LANGUAGE sql STABLE AS $$
            SUM(it.requested_qty)::bigint                                                                    AS requested_qty,
            -- received_qty first (shop's reported count), then dispatched, then requested.
            -- 03-Jul-2026: keeps the shop's declared receipt discrepancy in the ledger.
-           SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit))::bigint                      AS dispatched_qty,
+           SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit))                              AS dispatched_qty,
            SUM(it.requested_qty * it.unit_price)                                                            AS requested_amount,
            SUM(fn_order_effective_qty(it.received_qty, it.received_weight_g, it.dispatched_qty, it.dispatched_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price)              AS dispatched_amount,
            -- Cost side of dispatched goods at the line's frozen
@@ -492,7 +505,7 @@ LANGUAGE sql STABLE AS $$
   -- dispatched_qty is reused as accepted-qty on Returns (Phase 2 convention).
   return_sums AS (
     SELECT rr.shop_id,
-           SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit))::bigint                         AS returned_qty,
+           SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit))                                 AS returned_qty,
            SUM(fn_return_effective_qty(it.dispatched_qty, it.return_weight_g, it.requested_qty, it.weight_value, it.weight_unit) * it.unit_price)                 AS returns_amount,
            -- Cost recovered when stock comes back via a Return — subtracted
            -- from dispatched_cost in the final SELECT to get net cost.
@@ -535,8 +548,8 @@ LANGUAGE sql STABLE AS $$
     COALESCE((SELECT COUNT(*) FROM order_rows  o WHERE o.shop_id = s.id), 0)::bigint                  AS order_request_count,
     COALESCE((SELECT COUNT(*) FROM return_rows rr WHERE rr.shop_id = s.id), 0)::bigint                AS return_request_count,
     COALESCE((SELECT os.requested_qty      FROM order_sums  os WHERE os.shop_id = s.id), 0)::bigint   AS requested_qty,
-    COALESCE((SELECT os.dispatched_qty     FROM order_sums  os WHERE os.shop_id = s.id), 0)::bigint   AS dispatched_qty,
-    COALESCE((SELECT rs.returned_qty       FROM return_sums rs WHERE rs.shop_id = s.id), 0)::bigint   AS returned_qty,
+    ROUND(COALESCE((SELECT os.dispatched_qty FROM order_sums  os WHERE os.shop_id = s.id), 0), 3)::numeric(14,3) AS dispatched_qty,
+    ROUND(COALESCE((SELECT rs.returned_qty   FROM return_sums rs WHERE rs.shop_id = s.id), 0), 3)::numeric(14,3) AS returned_qty,
     COALESCE((SELECT os.requested_amount   FROM order_sums  os WHERE os.shop_id = s.id), 0)::numeric(14,2) AS requested_amount,
     COALESCE((SELECT os.dispatched_amount  FROM order_sums  os WHERE os.shop_id = s.id), 0)::numeric(14,2) AS dispatched_amount,
     COALESCE((SELECT rs.returns_amount     FROM return_sums rs WHERE rs.shop_id = s.id), 0)::numeric(14,2) AS returns_amount,
@@ -606,7 +619,9 @@ RETURNS TABLE (
   category_id    int,
   category_path  varchar,
   -- Net (Orders − Returns) — kept for the default "All" view.
-  quantity       bigint,
+  -- 17-Oct-2026: qty columns (except requested) numeric(14,3), were bigint —
+  -- partial-weight lines keep their fractional packs.
+  quantity       numeric,
   amount         numeric,
   purchase_amount numeric,
   profit          numeric,
@@ -615,8 +630,8 @@ RETURNS TABLE (
   -- (Requested / Dispatched / Returns) can render single-dim breakdowns
   -- without a refetch. All values are positive (no signed-amount tricks).
   requested_qty       bigint,
-  dispatched_qty      bigint,
-  returns_qty         bigint,
+  dispatched_qty      numeric,
+  returns_qty         numeric,
   requested_amount    numeric,
   dispatched_amount   numeric,
   returns_amount      numeric
@@ -706,7 +721,7 @@ LANGUAGE sql STABLE AS $$
   SELECT
     c.category_id                                              AS category_id,
     t.path                                                     AS category_path,
-    SUM(c.signed_qty)::bigint                                  AS quantity,
+    ROUND(SUM(c.signed_qty), 3)::numeric(14,3)                 AS quantity,
     SUM(c.signed_amount)::numeric(14,2)                        AS amount,
     SUM(c.signed_cost)::numeric(14,2)                          AS purchase_amount,
     -- P&L pair — exactly one is non-zero per row.
@@ -714,8 +729,8 @@ LANGUAGE sql STABLE AS $$
     GREATEST(0, SUM(c.signed_cost)   - SUM(c.signed_amount))::numeric(14,2) AS loss,
     -- Per-dimension positive aggregates.
     SUM(c.req_qty)::bigint                                     AS requested_qty,
-    SUM(c.disp_qty)::bigint                                    AS dispatched_qty,
-    SUM(c.ret_qty)::bigint                                     AS returns_qty,
+    ROUND(SUM(c.disp_qty), 3)::numeric(14,3)                   AS dispatched_qty,
+    ROUND(SUM(c.ret_qty), 3)::numeric(14,3)                    AS returns_qty,
     SUM(c.req_amt)::numeric(14,2)                              AS requested_amount,
     SUM(c.disp_amt)::numeric(14,2)                             AS dispatched_amount,
     SUM(c.ret_amt)::numeric(14,2)                              AS returns_amount
@@ -749,12 +764,13 @@ RETURNS TABLE (
   weight_value  numeric,
   weight_unit   varchar,
   -- Net (Orders − Returns) — used by 'All' view ranking.
-  quantity      bigint,
+  -- 17-Oct-2026: qty columns (except requested) numeric(14,3), were bigint.
+  quantity      numeric,
   amount        numeric,
   -- Per-dimension positive aggregates (added 19-Jun-2026 client #13).
   requested_qty       bigint,
-  dispatched_qty      bigint,
-  returns_qty         bigint,
+  dispatched_qty      numeric,
+  returns_qty         numeric,
   requested_amount    numeric,
   dispatched_amount   numeric,
   returns_amount      numeric
@@ -828,11 +844,11 @@ LANGUAGE sql STABLE AS $$
   )
   SELECT
     product_id, product_code, product_name, weight_value, weight_unit,
-    SUM(signed_qty)::bigint           AS quantity,
+    ROUND(SUM(signed_qty), 3)::numeric(14,3) AS quantity,
     SUM(signed_amount)::numeric(14,2) AS amount,
     SUM(req_qty)::bigint              AS requested_qty,
-    SUM(disp_qty)::bigint             AS dispatched_qty,
-    SUM(ret_qty)::bigint              AS returns_qty,
+    ROUND(SUM(disp_qty), 3)::numeric(14,3) AS dispatched_qty,
+    ROUND(SUM(ret_qty), 3)::numeric(14,3)  AS returns_qty,
     SUM(req_amt)::numeric(14,2)       AS requested_amount,
     SUM(disp_amt)::numeric(14,2)      AS dispatched_amount,
     SUM(ret_amt)::numeric(14,2)       AS returns_amount
@@ -884,9 +900,11 @@ RETURNS TABLE (
   product_name    varchar,
   weight_value    numeric,
   weight_unit     varchar,
-  old_qty         int,
-  new_qty         int,
-  delta_qty       int,
+  -- 17-Oct-2026: numeric (was int) — tracks stock_request_qty_audits'
+  -- numeric(12,3) columns so a 2.5 → 2.3 receipt shows −0.2, not −1.
+  old_qty         numeric,
+  new_qty         numeric,
+  delta_qty       numeric,
   unit_price      numeric,
   delta_amount    numeric,
   reason          varchar,
@@ -933,9 +951,9 @@ LANGUAGE sql STABLE AS $$
     p.name                                                         AS product_name,
     it.weight_value,
     it.weight_unit,
-    a.old_qty,
-    a.new_qty,
-    (COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0))                AS delta_qty,
+    a.old_qty::numeric(12,3)                                       AS old_qty,
+    a.new_qty::numeric(12,3)                                       AS new_qty,
+    (COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0))::numeric(12,3) AS delta_qty,
     it.unit_price,
     ((COALESCE(a.new_qty,0) - COALESCE(a.old_qty,0)) * it.unit_price)::numeric(14,2) AS delta_amount,
     a.reason,
@@ -986,13 +1004,24 @@ RETURNS TABLE (
   special_amount       numeric
 )
 LANGUAGE sql STABLE AS $$
+  -- 17-Oct-2026: value = what was actually dispatched (effective packs ×
+  -- MRP snapshot), not r.total_amount (requested qty frozen at submit) —
+  -- partial-weight / short dispatches were overstated.
   SELECT
     COUNT(*)::bigint                                                       AS request_count,
-    COALESCE(SUM(r.total_amount), 0)::numeric(14,2)                        AS total_amount,
+    COALESCE(SUM(v.dispatched_amount), 0)::numeric(14,2)                   AS total_amount,
     MIN(r.dispatched_at)                                                   AS oldest_dispatched_at,
     COUNT(*) FILTER (WHERE r.is_special)::bigint                           AS special_count,
-    COALESCE(SUM(r.total_amount) FILTER (WHERE r.is_special), 0)::numeric(14,2) AS special_amount
+    COALESCE(SUM(v.dispatched_amount) FILTER (WHERE r.is_special), 0)::numeric(14,2) AS special_amount
   FROM stock_requests r
+  CROSS JOIN LATERAL (
+    SELECT COALESCE(SUM(
+             COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
+             * it.unit_price
+           ), 0) AS dispatched_amount
+    FROM stock_request_items it
+    WHERE it.request_id = r.id
+  ) v
   WHERE r.is_deleted   = false
     AND r.request_type = 'Order'
     AND r.status       = 'Dispatched'

@@ -13,6 +13,7 @@ import type {
 } from '../../api/shop-inventory/types'
 import type { CategoryDto } from '../../api/categories/types'
 import { formatINR } from '../../utils/format'
+import { formatQty } from '../../utils/formatDispatched'
 
 /**
  * Shop user's post-login landing page (see project_kovilpatti_shop_landing
@@ -706,7 +707,7 @@ function TreeRow({ node, depth }: { node: TreeNode; depth: number }) {
               minWidth: 60, textAlign: 'right',
             }}
           >
-            {node.totalQty}
+            {formatQty(node.totalQty)}
           </Box>
         </Box>
       </Box>

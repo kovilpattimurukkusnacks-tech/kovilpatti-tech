@@ -9,8 +9,8 @@ public class AccountsShopRow
     public long    Order_Request_Count  { get; set; }
     public long    Return_Request_Count { get; set; }
     public long    Requested_Qty        { get; set; }
-    public long    Dispatched_Qty       { get; set; }
-    public long    Returned_Qty         { get; set; }
+    public decimal Dispatched_Qty       { get; set; }   // 17-Oct-2026: numeric (was long)
+    public decimal Returned_Qty         { get; set; }
     public decimal Requested_Amount     { get; set; }
     public decimal Dispatched_Amount    { get; set; }
     public decimal Returns_Amount       { get; set; }

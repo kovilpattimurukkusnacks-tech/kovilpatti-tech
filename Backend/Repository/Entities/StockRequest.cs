@@ -37,12 +37,12 @@ public class StockRequest
     public int Total_Items { get; set; }
     public int Total_Qty { get; set; }
     // Sum of dispatched_qty across items — NULL until inventory dispatches.
-    public int? Total_Dispatched_Qty { get; set; }
+    public decimal? Total_Dispatched_Qty { get; set; }   // 17-Oct-2026: numeric (was int) — partial-weight packs
     /// Signed aggregate of (received_qty − dispatched_qty) across items
     /// where the shop reported a value. NULL = no receipt discrepancies
     /// at all; 0 = reported but net-zero; ±N = short (−) or over (+).
     /// 03-Jul-2026. Populated by fn_request_get + fn_request_list_paged.
-    public int? Total_Adjustment_Qty { get; set; }
+    public decimal? Total_Adjustment_Qty { get; set; }
     public decimal Total_Amount { get; set; }
     // Sum of (dispatched_qty × unit_price) across items — NULL until dispatch.
     public decimal? Total_Dispatched_Amount { get; set; }

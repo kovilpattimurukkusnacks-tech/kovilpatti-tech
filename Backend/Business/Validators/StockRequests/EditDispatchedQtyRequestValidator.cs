@@ -19,6 +19,13 @@ public class EditDispatchedQtyRequestValidator : AbstractValidator<EditDispatche
             .When(x => x.NewQty.HasValue)
             .WithMessage("New qty must be 0 or greater.");
 
+        // 17-Oct-2026: decimal packs — capped at 3 dp to match the
+        // numeric(12,3) audit columns / grams precision.
+        RuleFor(x => x.NewQty)
+            .Must(v => decimal.Round(v!.Value, 3) == v.Value)
+            .When(x => x.NewQty.HasValue)
+            .WithMessage("New qty can have at most 3 decimal places.");
+
         RuleFor(x => x.Reason)
             .MaximumLength(500)
             .WithMessage("Reason must be 500 characters or fewer.");

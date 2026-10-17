@@ -291,7 +291,7 @@ public class StockRequestRepository(IDbConnectionFactory factory) : IStockReques
     }
 
     public async Task<bool> EditDispatchedQtyAsync(
-        Guid itemId, int? newQty, string? reason, Guid userId, CancellationToken ct = default)
+        Guid itemId, decimal? newQty, string? reason, Guid userId, CancellationToken ct = default)
     {
         using var conn = await factory.CreateOpenConnectionAsync(ct);
         // SP guards status IN ('Received','Accepted') + bounds + no-op; the

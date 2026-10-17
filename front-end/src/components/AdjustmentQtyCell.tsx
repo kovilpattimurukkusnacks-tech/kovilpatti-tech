@@ -1,3 +1,5 @@
+import { formatQty } from '../utils/formatDispatched'
+
 /**
  * Renders the shop-declared receipt-discrepancy total for a request row.
  * Value semantics (from fn_request_list_paged.total_adjustment_qty):
@@ -17,6 +19,6 @@ export function AdjustmentQtyCell({ value }: { value: number | null | undefined 
     return <span className="text-[#1F1F1F]/40">—</span>
   }
   if (value === 0) return <span>0</span>
-  if (value < 0) return <span style={{ color: '#C62828', fontWeight: 700 }}>{value}</span>
-  return <span style={{ color: '#E65100', fontWeight: 700 }}>+{value}</span>
+  if (value < 0) return <span style={{ color: '#C62828', fontWeight: 700 }}>{formatQty(value)}</span>
+  return <span style={{ color: '#E65100', fontWeight: 700 }}>+{formatQty(value)}</span>
 }
