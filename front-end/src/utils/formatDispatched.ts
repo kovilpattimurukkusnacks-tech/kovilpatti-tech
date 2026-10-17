@@ -32,6 +32,13 @@ export function formatWeightG(weightG: number): string {
   return `${kgFormatter.format(weightG)} g`
 }
 
+/** Format a (possibly fractional) pack count: up to 3 decimals, no trailing
+ *  zeros — 3 → "3", 2.5 → "2.5", 0.125 → "0.125". 17-Oct-2026: used for
+ *  every qty total so partial-weight lines don't round to whole packs. */
+export function formatQty(qty: number): string {
+  return kgFormatter.format(qty)
+}
+
 /** Format a packet count with pluralised unit: "3 packets", "1 packet". */
 export function formatPackets(qty: number): string {
   return `${qty} ${qty === 1 ? 'packet' : 'packets'}`
@@ -102,4 +109,37 @@ export function packSizeInGrams(
     return null
   }
   return weightUnit === 'kg' ? weightValue * 1000 : weightValue
+}
+
+type PackLine = {
+  weightValue: number | null
+  weightUnit:  string | null
+  dispatchedQty:      number | null
+  dispatchedWeightG?: number | null
+  receivedQty?:       number | null
+  receivedWeightG?:   number | null
+}
+
+/** Dispatched qty in packs, fractional for partial-weight lines (2500 g on
+ *  a 1 kg pack → 2.5). Null when the line hasn't been dispatched. Mirrors
+ *  the DB's fn_effective_pack_qty. 17-Oct-2026. */
+export function effectiveDispatchedPacks(line: PackLine): number | null {
+  const packG = packSizeInGrams(line.weightValue, line.weightUnit)
+  if (line.dispatchedWeightG != null && packG != null) return line.dispatchedWeightG / packG
+  return line.dispatchedQty
+}
+
+/** Received qty in packs — the shop's reported leg when present, else the
+ *  dispatched leg ("no discrepancy noted"). Null when neither is set. */
+export function effectiveReceivedPacks(line: PackLine): number | null {
+  const packG = packSizeInGrams(line.weightValue, line.weightUnit)
+  if (line.receivedWeightG != null && packG != null) return line.receivedWeightG / packG
+  if (line.receivedQty != null) return line.receivedQty
+  return effectiveDispatchedPacks(line)
+}
+
+/** True when the shop reported a receive-time correction on this line
+ *  (packet leg OR partial-weight leg). */
+export function hasReceivedReport(line: PackLine): boolean {
+  return line.receivedQty != null || line.receivedWeightG != null
 }

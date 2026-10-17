@@ -8,7 +8,7 @@ import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategory
 import { paginateOrderedColumns } from '../../utils/balancedColumns'
 import { useCategories } from '../../hooks/useCategories'
 import { formatIstDateTime } from '../../utils/formatDate'
-import { packSizeInGrams } from '../../utils/formatDispatched'
+import { formatQty, packSizeInGrams } from '../../utils/formatDispatched'
 import './print.css'
 
 // Effective dispatch packs for a line — prefers finalised dispatch, then
@@ -393,15 +393,13 @@ export default function PrintRequestPicklist() {
                   <td className="muted print-dense-weight-col">{it.weightLabel}</td>
                   <td style={{ textAlign: 'right' }}>{it.requestedQty}</td>
                   {/* Disp col — null (untouched) → "—", integer → number,
-                      fractional (partial-weight) → up to 2 decimals so
-                      "10.75" doesn't overflow the 34px column. */}
+                      fractional (partial-weight) → up to 3 decimals, no
+                      trailing zeros (17-Oct-2026 — was toFixed(2)). */}
                   <td style={{ textAlign: 'right' }}>
                     {dispPacks == null ? (
                       <span className="muted">—</span>
-                    ) : Number.isInteger(dispPacks) ? (
-                      dispPacks
                     ) : (
-                      dispPacks.toFixed(2)
+                      formatQty(dispPacks)
                     )}
                   </td>
                   <td style={{ textAlign: 'right', whiteSpace: 'nowrap' }} className="strong">
@@ -427,14 +425,14 @@ export default function PrintRequestPicklist() {
   const deliveredQty = (request.items ?? []).reduce(
     (s, it) => s + (effectiveDispatchPacks(it) ?? it.requestedQty), 0)
   const showReqParens =
-    Math.round(deliveredQty) !== request.totalQty ||
+    Math.abs(deliveredQty - request.totalQty) >= 0.0005 ||
     Math.abs(deliveredAmount - request.totalAmount) >= 0.5
   const summary = (
     <div key="summary" className="print-column-summary">
       <div>
         {hasDispatch ? 'Dispatched' : 'Requested'}
         <span className="muted"> · </span>
-        <strong>{Math.round(deliveredQty)}</strong> units
+        <strong>{formatQty(deliveredQty)}</strong> units
         <span className="muted"> · {rootGroups.length} {rootGroups.length === 1 ? 'category' : 'categories'} ({sections.length} sub)</span>
       </div>
       <div className={isShort ? 'danger' : ''}>

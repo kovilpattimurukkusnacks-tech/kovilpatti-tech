@@ -14,7 +14,10 @@ import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
 import { formatIstDateTime, formatIstTime } from '../../utils/formatDate'
-import { isWeightUnit, packSizeInGrams } from '../../utils/formatDispatched'
+import {
+  effectiveDispatchedPacks, effectiveReceivedPacks, formatQty,
+  hasReceivedReport, isWeightUnit, packSizeInGrams,
+} from '../../utils/formatDispatched'
 import {
   useStockRequest, useDispatchStockRequest,
   useApproveStockRequest, useRejectStockRequest, useRevokeStockRequest,
@@ -672,9 +675,13 @@ export default function InventoryRequestDetail() {
                   // both the running total AND the short/over row tint.
                   const rawInput = dispatchQtys.get(item.id)
                   const typedNum = rawInput != null && rawInput !== '' ? parseFloat(rawInput) : NaN
+                  // 17-Oct-2026: after dispatch the input map is empty, so fall
+                  // back to effective packs (partial weight → 2.5), not to
+                  // requested qty.
+                  const dispatched = effectiveDispatchedPacks(item)
                   const currentDispatch = Number.isFinite(typedNum)
                     ? typedNum
-                    : (item.dispatchedQty ?? item.requestedQty)
+                    : (dispatched ?? item.requestedQty)
                   const lineTotal = currentDispatch * item.unitPrice
                   // Short / over flags drive both the qty input chrome and
                   // the row-level tint + line-total colour. The `canEditQty`
@@ -688,7 +695,6 @@ export default function InventoryRequestDetail() {
                   const isInvLine = item.addedBy === 'Inventory'
                   const isShort = !isInvLine && canEditQty && currentDispatch < item.requestedQty
                   const isOver  = !isInvLine && canEditQty && currentDispatch > item.requestedQty
-                  const dispatched = item.dispatchedQty
                   const persistedShort = !isInvLine && dispatched != null && dispatched < item.requestedQty
                   const persistedOver  = !isInvLine && dispatched != null && dispatched > item.requestedQty
                   const rowShort = isShort || persistedShort
@@ -1102,22 +1108,24 @@ export default function InventoryRequestDetail() {
           match dispatched. */}
       {(() => {
         let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        // 17-Oct-2026: effective packs so partial-weight receipts count too.
         for (const it of items) {
-          if (it.receivedQty == null) continue
-          const disp = it.dispatchedQty ?? 0
-          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
-          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+          if (!hasReceivedReport(it)) continue
+          const disp = effectiveDispatchedPacks(it) ?? 0
+          const rec  = effectiveReceivedPacks(it) ?? 0
+          if (rec < disp) { shortLines++; shortUnits += (disp - rec) }
+          if (rec > disp) { overLines++;  overUnits  += (rec - disp) }
         }
         if (shortLines === 0 && overLines === 0) return null
         return (
           <Alert severity={shortLines > 0 ? 'error' : 'warning'} sx={{ mb: 2 }}>
             <strong>Shop reported a receipt discrepancy.</strong>{' '}
             {shortLines > 0 && (
-              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {formatQty(shortUnits)} unit{shortUnits === 1 ? '' : 's'} missing</>
             )}
             {shortLines > 0 && overLines > 0 && ' · '}
             {overLines > 0 && (
-              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {formatQty(overUnits)} extra unit{overUnits === 1 ? '' : 's'}</>
             )}
           </Alert>
         )
@@ -1171,7 +1179,7 @@ export default function InventoryRequestDetail() {
           dispatched. Only renders when at least one line has
           receivedQty set. */}
       {(() => {
-        const changed = items.filter(it => it.receivedQty != null)
+        const changed = items.filter(hasReceivedReport)
         if (changed.length === 0) return null
         return (
           <Paper
@@ -1196,18 +1204,18 @@ export default function InventoryRequestDetail() {
               </TableHead>
               <TableBody>
                 {changed.map(it => {
-                  const disp  = it.dispatchedQty ?? 0
-                  const rec   = it.receivedQty!
+                  const disp  = effectiveDispatchedPacks(it) ?? 0
+                  const rec   = effectiveReceivedPacks(it) ?? 0
                   const delta = rec - disp
                   const short = delta < 0
                   const over  = delta > 0
                   return (
                     <TableRow key={it.id}>
                       <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>{it.productName}</TableCell>
-                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{disp}</TableCell>
-                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{rec}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{formatQty(disp)}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{formatQty(rec)}</TableCell>
                       <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
-                        {short ? delta : over ? `+${delta}` : '—'}
+                        {short ? formatQty(delta) : over ? `+${formatQty(delta)}` : '—'}
                       </TableCell>
                     </TableRow>
                   )

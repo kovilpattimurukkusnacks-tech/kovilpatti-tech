@@ -31,6 +31,11 @@ public static class AccountsXlsxWriter
         Text,
         /// <summary>Integer with thousands separator (e.g. 1,234).</summary>
         Integer,
+        /// <summary>Pack quantity that may be fractional (partial-weight
+        /// dispatch, e.g. 2.5). Whole values render like <see cref="Integer"/>;
+        /// fractional values keep up to 3 decimals (17-Oct-2026 — the
+        /// Integer format was hiding the .5).</summary>
+        Quantity,
         /// <summary>Indian rupee, two-decimal places, thousands separator
         /// (e.g. ₹1,23,456.78). Excel honours the locale-specific "₹" symbol.</summary>
         Currency,
@@ -69,7 +74,7 @@ public static class AccountsXlsxWriter
                 var value = col.ValueSelector(row);
 
                 AssignValue(cell, value);
-                ApplyFormat(cell, col.Format);
+                ApplyFormat(cell, col.Format, value);
             }
             rowIdx++;
         }
@@ -103,7 +108,7 @@ public static class AccountsXlsxWriter
         }
     }
 
-    private static void ApplyFormat(IXLCell cell, ColumnFormat format)
+    private static void ApplyFormat(IXLCell cell, ColumnFormat format, object? value)
     {
         switch (format)
         {
@@ -111,6 +116,15 @@ public static class AccountsXlsxWriter
                 // Indian grouping — three digits then groups of two
                 // (1,00,000 not 100,000). Matches the FE's formatINR utility.
                 cell.Style.NumberFormat.Format = "#,##,##0";
+                break;
+            case ColumnFormat.Quantity:
+                // Per-cell: a single "#,##,##0.###" format leaves a dangling
+                // "3." on whole numbers, so whole values reuse the Integer
+                // mask and only fractional ones get decimals (2.5, 0.125).
+                cell.Style.NumberFormat.Format =
+                    value is decimal d && d != decimal.Truncate(d)
+                        ? "#,##,##0.0##"
+                        : "#,##,##0";
                 break;
             case ColumnFormat.Currency:
                 // Indian rupee with lakh/crore grouping. Literal-quoted "₹"

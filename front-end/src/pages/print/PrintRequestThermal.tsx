@@ -7,7 +7,7 @@ import { formatIstDateTime } from '../../utils/formatDate'
 import { groupByCategoryWeight } from '../../utils/groupByCategoryWeight'
 import { buildRootLookup, sortRootCategoryNames } from '../../utils/rootCategoryPriority'
 import { useCategories } from '../../hooks/useCategories'
-import { packSizeInGrams } from '../../utils/formatDispatched'
+import { formatQty, packSizeInGrams } from '../../utils/formatDispatched'
 import './thermal.css'
 
 // See PrintRequestPicklist for the full comment — same rule here: use the
@@ -129,7 +129,8 @@ export default function PrintRequestThermal() {
     (sum, it) => sum + (effectiveDispatchPacks(it) ?? it.requestedQty),
     0,
   )
-  const qtyShown     = Math.round(deliveredQty)
+  // 17-Oct-2026: keep fractional packs (3 dp) — Math.round printed 2.5 as 3.
+  const qtyShown     = Math.round(deliveredQty * 1000) / 1000
 
   return (
     <div className="thermal-preview">
@@ -252,11 +253,11 @@ export default function PrintRequestThermal() {
                           const amt       = effQty * it.unitPrice
                           // Display: "req/disp" — if disp is null we show
                           // "1/—"; if disp is fractional (partial weight)
-                          // trim to 2 decimals so "10.75" fits the 50px
-                          // column without wrap.
+                          // print up to 3 decimals, no trailing zeros
+                          // (17-Oct-2026 — was toFixed(2)).
                           const dispStr = dispPacks == null
                             ? '—'
-                            : Number.isInteger(dispPacks) ? String(dispPacks) : dispPacks.toFixed(2)
+                            : formatQty(dispPacks)
                           return (
                             <tr key={it.id}>
                               <td>
@@ -294,7 +295,7 @@ export default function PrintRequestThermal() {
           <span className="v">{request.totalItems}</span>
 
           <span>Total Qty:</span>
-          <span className="v">{qtyShown}</span>
+          <span className="v">{formatQty(qtyShown)}</span>
 
           {/* Always show requested when it differs from the effective dispatched
               total (draft OR actual). Client can then see the gap regardless

@@ -13,6 +13,10 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
+import {
+  effectiveDispatchedPacks, effectiveReceivedPacks, formatQty, formatWeightG,
+  hasReceivedReport, packSizeInGrams,
+} from '../../utils/formatDispatched'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useReceiveStockRequest, useSetSpecial,
@@ -83,6 +87,8 @@ export default function ShopRequestDetail() {
   // 25-Jul-2026: partial-weight receive companion. Only relevant for lines
   // where the godown dispatched via dispatchedWeightG (partial). Raw string
   // so mid-typing "3." doesn't lose the trailing dot; payload parses.
+  // Raw text typed per partial-weight line, in PACKS (converted to grams on
+  // submit — see handleReceive). Name kept for diff hygiene. 17-Oct-2026.
   const [receivedWeightsG, setReceivedWeightsG] = useState<Map<string, string>>(new Map())
 
   // Split into out-of-stock (dispatched_qty === 0) vs the rest. Godown
@@ -229,17 +235,25 @@ export default function ShopRequestDetail() {
         return typed != null && typed !== (it.dispatchedQty ?? 0)
       })
       .map(it => ({ id: it.id, receivedQty: receivedQtys.get(it.id)!, receivedWeightG: null as number | null }))
+    // 17-Oct-2026: the shop types the partial line in PACKS (same as the
+    // godown's dispatch input — "4.5" on a 1 kg pack = 4.5 kg). It used to
+    // be a raw grams box, so "4.5" was saved as 4.5 g. Converted to grams
+    // here, rounded to 3 dp like the dispatch side.
     const weightDiffs = (request.items ?? [])
       .filter(it => it.dispatchedWeightG != null)
       .map(it => {
         const raw = receivedWeightsG.get(it.id) ?? ''
-        const parsed = raw.trim() === '' ? null : parseFloat(raw)
-        return { it, parsed }
+        const packs = raw.trim() === '' ? null : parseFloat(raw)
+        const packG = packSizeInGrams(it.weightValue, it.weightUnit)
+        const grams = packs != null && Number.isFinite(packs) && packG != null
+          ? Math.round(packs * packG * 1000) / 1000
+          : null
+        return { it, grams }
       })
-      .filter(({ it, parsed }) =>
-        parsed != null && Number.isFinite(parsed) && parsed > 0 && parsed !== (it.dispatchedWeightG ?? 0)
+      .filter(({ it, grams }) =>
+        grams != null && grams > 0 && grams !== (it.dispatchedWeightG ?? 0)
       )
-      .map(({ it, parsed }) => ({ id: it.id, receivedQty: null as number | null, receivedWeightG: parsed! }))
+      .map(({ it, grams }) => ({ id: it.id, receivedQty: null as number | null, receivedWeightG: grams! }))
     const diffItems = [...packetDiffs, ...weightDiffs]
     const payload = diffItems.length > 0 ? { items: diffItems } : undefined
     try {
@@ -331,13 +345,16 @@ export default function ShopRequestDetail() {
                   // Subtotal reflects effective qty × price. Post-dispatch
                   // that's dispatched_qty; pre-dispatch falls back to
                   // requested_qty so the column stays meaningful.
-                  const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                  // 17-Oct-2026: effective packs so a partial-weight line
+                  // (2.5 kg of a 1 kg pack) is priced at 2.5, not requested.
+                  const dispPacks = effectiveDispatchedPacks(item)
+                  const effectiveQty = dispPacks ?? item.requestedQty
                   const effectiveSubtotal = effectiveQty * item.unitPrice
-                  const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  const short = dispPacks != null && dispPacks < item.requestedQty
                   // Over-dispatch — godown sent more than the shop requested.
                   // Tinted amber (vs red for short) so the shop user can scan
                   // and tell under/over apart at a glance. 29-Jun-2026.
-                  const over  = item.dispatchedQty != null && item.dispatchedQty > item.requestedQty
+                  const over  = dispPacks != null && dispPacks > item.requestedQty
                   // Row tint pairs with the qty + total colour so a row
                   // reads as one signal — not just one coloured cell.
                   const rowBg = short ? 'rgba(198,40,40,0.06)'
@@ -586,22 +603,24 @@ export default function ShopRequestDetail() {
       {(() => {
         const items = request.items ?? []
         let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        // 17-Oct-2026: effective packs so partial-weight receipts count too.
         for (const it of items) {
-          if (it.receivedQty == null) continue
-          const disp = it.dispatchedQty ?? 0
-          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
-          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+          if (!hasReceivedReport(it)) continue
+          const disp = effectiveDispatchedPacks(it) ?? 0
+          const rec  = effectiveReceivedPacks(it) ?? 0
+          if (rec < disp) { shortLines++; shortUnits += (disp - rec) }
+          if (rec > disp) { overLines++;  overUnits  += (rec - disp) }
         }
         if (shortLines === 0 && overLines === 0) return null
         return (
           <Alert severity={shortLines > 0 ? 'error' : 'warning'} sx={{ mb: 2 }}>
             <strong>You reported a discrepancy at receipt.</strong>{' '}
             {shortLines > 0 && (
-              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {formatQty(shortUnits)} unit{shortUnits === 1 ? '' : 's'} missing</>
             )}
             {shortLines > 0 && overLines > 0 && ' · '}
             {overLines > 0 && (
-              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {formatQty(overUnits)} extra unit{overUnits === 1 ? '' : 's'}</>
             )}
           </Alert>
         )
@@ -729,7 +748,7 @@ export default function ShopRequestDetail() {
           above the fixed footer so the shop can scroll to it as a quick
           "what did I change?" reference. */}
       {(() => {
-        const changed = (request.items ?? []).filter(it => it.receivedQty != null)
+        const changed = (request.items ?? []).filter(hasReceivedReport)
         if (changed.length === 0) return null
         return (
           <Paper
@@ -760,8 +779,8 @@ export default function ShopRequestDetail() {
               </TableHead>
               <TableBody>
                 {changed.map(it => {
-                  const disp  = it.dispatchedQty ?? 0
-                  const rec   = it.receivedQty!
+                  const disp  = effectiveDispatchedPacks(it) ?? 0
+                  const rec   = effectiveReceivedPacks(it) ?? 0
                   const delta = rec - disp
                   const short = delta < 0
                   const over  = delta > 0
@@ -771,13 +790,13 @@ export default function ShopRequestDetail() {
                         {it.productName}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>
-                        {disp}
+                        {formatQty(disp)}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
-                        {rec}
+                        {formatQty(rec)}
                       </TableCell>
                       <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
-                        {short ? delta : over ? `+${delta}` : '—'}
+                        {short ? formatQty(delta) : over ? `+${formatQty(delta)}` : '—'}
                       </TableCell>
                     </TableRow>
                   )
@@ -1003,7 +1022,7 @@ export default function ShopRequestDetail() {
                           <Box sx={{ fontSize: 11, color: '#1F1F1F99' }}>
                             {it.productCode}
                             {isPartial
-                              ? ` · dispatched ${it.dispatchedWeightG} g (partial)`
+                              ? ` · dispatched ${formatQty(effectiveDispatchedPacks(it) ?? 0)} (${formatWeightG(it.dispatchedWeightG!)}, partial)`
                               : ` · dispatched ${disp}`}
                             {it.weightValue != null ? ` · ${it.weightValue} ${it.weightUnit ?? ''}` : ''}
                           </Box>
@@ -1030,10 +1049,14 @@ export default function ShopRequestDetail() {
                           />
                         )}
                         {isPartial ? (
+                          // 17-Oct-2026: packs, not grams — placeholder is the
+                          // dispatched pack count (e.g. 2.5), helper below
+                          // shows the weight the typed value means.
+                          <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 0.25 }}>
                           <TextField
                             type="text"
                             size="small"
-                            placeholder={String(it.dispatchedWeightG ?? '')}
+                            placeholder={formatQty(effectiveDispatchedPacks(it) ?? 0)}
                             value={receivedWeightsG.get(it.id) ?? ''}
                             onChange={e => {
                               const v = e.target.value
@@ -1050,7 +1073,7 @@ export default function ShopRequestDetail() {
                               },
                               input: {
                                 endAdornment: (
-                                  <Box component="span" sx={{ ml: 0.5, fontSize: 10, fontWeight: 700, color: '#7C4A00' }}>g</Box>
+                                  <Box component="span" sx={{ ml: 0.5, fontSize: 10, fontWeight: 700, color: '#7C4A00' }}>pk</Box>
                                 ),
                               },
                             }}
@@ -1062,6 +1085,18 @@ export default function ShopRequestDetail() {
                               },
                             }}
                           />
+                          {(() => {
+                            const raw = receivedWeightsG.get(it.id) ?? ''
+                            const packs = raw.trim() === '' ? NaN : parseFloat(raw)
+                            const packG = packSizeInGrams(it.weightValue, it.weightUnit)
+                            if (!Number.isFinite(packs) || packG == null) return null
+                            return (
+                              <Box sx={{ fontSize: 10, color: '#7C4A00', fontWeight: 700, lineHeight: 1.1 }}>
+                                = {formatWeightG(packs * packG)}
+                              </Box>
+                            )
+                          })()}
+                          </Box>
                         ) : (
                         <TextField
                           type="text"

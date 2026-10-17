@@ -1,5 +1,5 @@
 import { Box, Chip } from '@mui/material'
-import { formatWeightG } from '../utils/formatDispatched'
+import { formatQty, formatWeightG } from '../utils/formatDispatched'
 
 /**
  * Renders a dispatched-qty cell consistently across request views.
@@ -69,13 +69,13 @@ export function DispatchedCell({ qty, requested, received, dispatchedWeightG, re
     return (
       <Box sx={{ display: 'inline-flex', flexDirection: 'column', alignItems: 'flex-end', lineHeight: 1.15 }}>
         <Box sx={{ fontSize: 12, color, fontWeight: 700 }}>
-          {received}
+          {formatQty(received)}
           <Box component="span" sx={{ ml: 0.5, fontSize: 9, fontWeight: 600, letterSpacing: 0.3, textTransform: 'uppercase' }}>
             received
           </Box>
         </Box>
         <Box sx={{ fontSize: 10, color: '#1F1F1F77', fontWeight: 500 }}>
-          dispatched {qty}
+          dispatched {formatQty(qty)}
         </Box>
       </Box>
     )
@@ -106,10 +106,10 @@ export function DispatchedCell({ qty, requested, received, dispatchedWeightG, re
     )
   }
   if (qty < requested) {
-    return <span style={{ color: '#C62828', fontWeight: 600 }}>{qty}</span>
+    return <span style={{ color: '#C62828', fontWeight: 600 }}>{formatQty(qty)}</span>
   }
   if (qty > requested) {
-    return <span style={{ color: '#E65100', fontWeight: 600 }}>{qty}</span>
+    return <span style={{ color: '#E65100', fontWeight: 600 }}>{formatQty(qty)}</span>
   }
-  return <>{qty}</>
+  return <>{formatQty(qty)}</>
 }

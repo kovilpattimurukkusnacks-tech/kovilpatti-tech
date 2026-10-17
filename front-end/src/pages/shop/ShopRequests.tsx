@@ -7,6 +7,7 @@ import {
 } from '@mui/material'
 import PageHeader from '../../components/PageHeader'
 import { DispatchedCell } from '../../components/DispatchedCell'
+import { formatQty } from '../../utils/formatDispatched'
 import { useMyStockRequests, useShopDraft } from '../../hooks/useStockRequests'
 import { useApp } from '../../context/AppContext'
 import { SpecialRequestChip } from '../../components/SpecialRequestChip'
@@ -567,7 +568,7 @@ function ExpansionPanel({ row, onViewDetail }: { row: StockRequestDto; onViewDet
             value={
               row.totalDispatchedQty == null
                 ? '—'
-                : `${row.totalDispatchedQty} ${row.totalDispatchedQty === 1 ? 'unit' : 'units'}`
+                : `${formatQty(row.totalDispatchedQty)} ${row.totalDispatchedQty === 1 ? 'unit' : 'units'}`
             }
             danger={short}
             chip={<DispatchedCell qty={row.totalDispatchedQty} requested={row.totalQty} />}
@@ -579,7 +580,7 @@ function ExpansionPanel({ row, onViewDetail }: { row: StockRequestDto; onViewDet
           {row.totalAdjustmentQty != null && row.totalAdjustmentQty !== 0 && (
             <Row
               label="Adjustment qty"
-              value={row.totalAdjustmentQty > 0 ? `+${row.totalAdjustmentQty}` : `${row.totalAdjustmentQty}`}
+              value={row.totalAdjustmentQty > 0 ? `+${formatQty(row.totalAdjustmentQty)}` : formatQty(row.totalAdjustmentQty)}
               danger={row.totalAdjustmentQty < 0}
             />
           )}
