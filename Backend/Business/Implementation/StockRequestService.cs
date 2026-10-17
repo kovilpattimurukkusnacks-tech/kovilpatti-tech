@@ -909,7 +909,8 @@ public class StockRequestService(
         if (!ok) throw new ValidationException(new[]
         {
             new ValidationFailure("newQty",
-                "Could not save — qty is out of range, or the request is no longer editable.")
+                "Could not save — qty is out of range, decimals aren't allowed on this product, " +
+                "or the request is no longer editable.")
         });
 
         return await GetAsync(requestId, ct);

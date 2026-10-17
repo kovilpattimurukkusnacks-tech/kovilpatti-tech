@@ -232,6 +232,11 @@ DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varcha
 -- caller passes their user id are draft rows created by that user
 -- included. Shape unchanged → CREATE OR REPLACE handles both branches.
 DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type);
+-- 17-Oct-2026: total_dispatched_qty / total_adjustment_qty switched int →
+-- numeric(12,3) so partial-weight dispatches (2.5 packs) stop rounding to 3.
+-- Return-shape change → drop the current 11/12-arg overloads first.
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type, boolean, uuid);
+DROP FUNCTION IF EXISTS fn_request_list_paged(uuid, uuid, request_status, varchar, int, int, date, date, request_type, boolean, uuid, boolean);
 
 CREATE OR REPLACE FUNCTION fn_request_list_paged(
   p_shop_id      uuid           DEFAULT NULL,
@@ -277,14 +282,16 @@ RETURNS TABLE (
   request_type            varchar,
   total_items             int,
   total_qty               int,
-  total_dispatched_qty    int,
+  -- 17-Oct-2026: numeric(12,3) (was int) — partial-weight lines contribute
+  -- fractional packs, e.g. 2.5, instead of rounding to 3.
+  total_dispatched_qty    numeric,
   -- Signed adjustment total: Σ(received_qty − dispatched_qty) across
   -- items where the shop reported a value. NULL when no items have
   -- received_qty set (no discrepancies at all — request confirmed as
   -- dispatched). 0 when reported but the +/− across lines nets to zero.
   -- Powers the "Adjustment Qty" column on the request list tables.
   -- 03-Jul-2026.
-  total_adjustment_qty    int,
+  total_adjustment_qty    numeric,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -330,11 +337,12 @@ LANGUAGE sql STABLE AS $$
          -- Explicit casts pin the column type so Npgsql doesn't see a NULL
          -- with DataTypeName '-' (causes InvalidCastException on the BE).
          -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
-         -- contribute their fractional-equivalent, rounded to int for
-         -- BE-side backward compat (audit table + entity still int-typed).
+         -- contribute their fractional-equivalent.
+         -- 17-Oct-2026: kept fractional (3 dp) — the old ::int cast showed
+         -- 2.5 packs as 3 on every list screen.
          (SELECT ROUND(COALESCE(SUM(
             fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
-          ), 0))::int
+          ), 0), 3)::numeric(12,3)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          -- Signed adjustment total. Σ(received − dispatched) across items
@@ -343,12 +351,12 @@ LANGUAGE sql STABLE AS $$
          -- 03-Jul-2026.
          -- 25-Jul-2026: adjustment aggregate honours partial-weight rows —
          -- effective received-pack minus effective dispatched-pack, per row
-         -- where the shop actually reported (qty OR weight). Rounded int
-         -- (audit column stays int-typed).
+         -- where the shop actually reported (qty OR weight).
+         -- 17-Oct-2026: fractional (3 dp) — was ::int.
          (SELECT ROUND(SUM(
             COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), 0)
           - COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
-          ))::int
+          ), 3)::numeric(12,3)
           FROM stock_request_items it
           WHERE it.request_id = r.id
             AND (it.received_qty IS NOT NULL OR it.received_weight_g IS NOT NULL)) AS total_adjustment_qty,
@@ -586,7 +594,7 @@ RETURNS TABLE (
   request_type            varchar,
   total_items             int,
   total_qty               int,
-  total_dispatched_qty    int,
+  total_dispatched_qty    numeric,   -- 17-Oct-2026: was int (rounded partials)
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -621,11 +629,12 @@ LANGUAGE sql STABLE AS $$
          r.request_type::varchar AS request_type,
          r.total_items, r.total_qty,
          -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
-         -- contribute their fractional-equivalent, rounded to int for
-         -- BE-side backward compat (audit table + entity still int-typed).
+         -- contribute their fractional-equivalent.
+         -- 17-Oct-2026: kept fractional (3 dp) — the old ::int cast showed
+         -- 2.5 packs as 3 on every list screen.
          (SELECT ROUND(COALESCE(SUM(
             fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
-          ), 0))::int
+          ), 0), 3)::numeric(12,3)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          r.total_amount,
@@ -660,9 +669,13 @@ LANGUAGE sql STABLE AS $$
   LEFT  JOIN stock_requests src ON src.id = r.source_request_id
   WHERE r.is_deleted = false
     AND r.status IN ('Pending', 'Approved')
+    -- 17-Oct-2026: also match partial-weight draft lines — a draft whose
+    -- lines are all decimal (draft_dispatched_weight_g only) used to vanish
+    -- from the Resume strip. idx_stock_request_items_active_draft covers both.
     AND EXISTS (
       SELECT 1 FROM stock_request_items it
-      WHERE it.request_id = r.id AND it.draft_dispatched_qty IS NOT NULL
+      WHERE it.request_id = r.id
+        AND (it.draft_dispatched_qty IS NOT NULL OR it.draft_dispatched_weight_g IS NOT NULL)
     )
     AND (p_inventory_id IS NULL OR r.inventory_id = p_inventory_id)
   -- Pinned drafts first (pinned_at IS NULL sorts AFTER timestamps because
@@ -757,11 +770,13 @@ RETURNS TABLE (
   request_type            varchar,
   total_items             int,
   total_qty               int,
-  total_dispatched_qty    int,
+  -- 17-Oct-2026: both totals numeric(12,3) (were int) so partial-weight
+  -- lines keep their fractional packs.
+  total_dispatched_qty    numeric,
   -- Signed adjustment total: Σ(received − dispatched) across items where
   -- the shop reported a value. NULL when no receipt discrepancies at all,
   -- 0 when net-zero, ±N otherwise. 03-Jul-2026.
-  total_adjustment_qty    int,
+  total_adjustment_qty    numeric,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -805,23 +820,24 @@ LANGUAGE sql STABLE AS $$
          -- even when SUM returns NULL (no dispatched items). Without these,
          -- Npgsql throws InvalidCastException reading DataTypeName '-'.
          -- 25-Jul-2026: sums effective-pack qty so partial-weight rows
-         -- contribute their fractional-equivalent, rounded to int for
-         -- BE-side backward compat (audit table + entity still int-typed).
+         -- contribute their fractional-equivalent.
+         -- 17-Oct-2026: kept fractional (3 dp) — the old ::int cast showed
+         -- 2.5 packs as 3 on every list screen.
          (SELECT ROUND(COALESCE(SUM(
             fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit)
-          ), 0))::int
+          ), 0), 3)::numeric(12,3)
           FROM stock_request_items it
           WHERE it.request_id = r.id) AS total_dispatched_qty,
          -- Signed adjustment aggregate (03-Jul-2026). Matches
          -- fn_request_list_paged so both list + detail expose it.
          -- 25-Jul-2026: adjustment aggregate honours partial-weight rows —
          -- effective received-pack minus effective dispatched-pack, per row
-         -- where the shop actually reported (qty OR weight). Rounded int
-         -- (audit column stays int-typed).
+         -- where the shop actually reported (qty OR weight).
+         -- 17-Oct-2026: fractional (3 dp) — was ::int.
          (SELECT ROUND(SUM(
             COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), 0)
           - COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
-          ))::int
+          ), 3)::numeric(12,3)
           FROM stock_request_items it
           WHERE it.request_id = r.id
             AND (it.received_qty IS NOT NULL OR it.received_weight_g IS NOT NULL)) AS total_adjustment_qty,
@@ -1166,8 +1182,8 @@ RETURNS TABLE (
   request_type            varchar,
   total_items             int,
   total_qty               int,
-  total_dispatched_qty    int,
-  total_adjustment_qty    int,
+  total_dispatched_qty    numeric,   -- 17-Oct-2026: tracks fn_request_get (was int)
+  total_adjustment_qty    numeric,
   total_amount            numeric,
   total_dispatched_amount numeric,
   notes                   varchar,
@@ -1871,9 +1887,11 @@ BEGIN
 
     -- Audit trail (03-Jul-2026, expanded 25-Jul-2026 for partial-weight):
     -- one row per shop-reported mismatch. old_qty = effective dispatched
-    -- pack qty (rounded int — audit table schema pre-dates partial mode),
-    -- new_qty = effective received pack qty. Accounts SPs use the numeric
-    -- formula directly for MRP math; this table is display-only.
+    -- pack qty, new_qty = effective received pack qty.
+    -- 17-Oct-2026: stored as numeric(12,3) (was ROUND()::int). The int
+    -- rounding logged 2.5 → 2.3 as 3 → 2 (−1 pack in Accounts), and 2.4 →
+    -- 2.3 as 2 → 2, which tripped chk_qty_audit_change and failed the
+    -- whole confirm-receipt.
     INSERT INTO stock_request_qty_audits (
       request_item_id, request_id, old_qty, new_qty, reason, edited_by
     )
@@ -1882,11 +1900,11 @@ BEGIN
            ROUND(COALESCE(
              fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit),
              0
-           ))::int,
+           ), 3),
            ROUND(COALESCE(
              fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit),
              0
-           ))::int,
+           ), 3),
            CASE
              WHEN COALESCE(fn_effective_pack_qty(it.received_qty, it.received_weight_g, it.weight_value, it.weight_unit), 0)
                 < COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0)
@@ -1905,10 +1923,11 @@ BEGIN
             OR (e.value->>'received_weight_g') IS NOT NULL)
       -- Only audit when the received leg actually differs from dispatched
       -- (effective-pack terms). Prevents a "no change" confirm from
-      -- spamming the audit log.
-      AND  COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), -1)
+      -- spamming the audit log. Compared at the same 3-dp precision the
+      -- row is stored at, so the CHECK (old <> new) can never trip.
+      AND  ROUND(COALESCE(fn_effective_pack_qty(it.received_qty,   it.received_weight_g,   it.weight_value, it.weight_unit), 0), 3)
         IS DISTINCT FROM
-           COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), -1);
+           ROUND(COALESCE(fn_effective_pack_qty(it.dispatched_qty, it.dispatched_weight_g, it.weight_value, it.weight_unit), 0), 3);
   END IF;
 
   -- Phase 4 wiring (10-Jul-2026): every confirmed receipt updates the
@@ -2230,10 +2249,20 @@ $$;
 --   • Insert a NEW audit row regardless of whether old/new differ on the
 --     surface — the table CHECK guards against no-op rows so callers don't
 --     pollute the trail. Returns false when guards fail.
+--
+-- 17-Oct-2026: p_new_qty is numeric packs (was int). A whole number writes
+-- dispatched_qty (packet mode); a fraction (e.g. 2.5) writes
+-- dispatched_weight_g = value × pack_g (partial-weight mode), same rule as
+-- the godown's dispatch screen. Fractions are only valid on Order lines of
+-- g/kg products. old_qty is now the effective pack qty, so editing a
+-- partial line logs 2.5 → 3 instead of NULL → 3. Signature change → drop
+-- the int overload.
 -- ============================================================
+DROP FUNCTION IF EXISTS fn_request_item_edit_dispatched_qty(uuid, int, varchar, uuid);
+
 CREATE OR REPLACE FUNCTION fn_request_item_edit_dispatched_qty(
   p_item_id   uuid,
-  p_new_qty   int,
+  p_new_qty   numeric,
   p_reason    varchar,
   p_user_id   uuid
 )
@@ -2242,17 +2271,24 @@ LANGUAGE plpgsql AS $$
 DECLARE
   v_request_id   uuid;
   v_status       request_status;
-  v_old_qty      int;
+  v_type         request_type;
+  v_old_qty      numeric;
+  v_new_qty      numeric := ROUND(p_new_qty, 3);
+  v_pack_g       numeric;
 BEGIN
-  -- Bound check first — accept NULL (clear) or non-negative ints.
-  IF p_new_qty IS NOT NULL AND p_new_qty < 0 THEN
+  -- Bound check first — accept NULL (clear) or non-negative values.
+  IF v_new_qty IS NOT NULL AND v_new_qty < 0 THEN
     RETURN false;
   END IF;
 
-  -- Resolve the parent request + current qty in one shot so we can validate
-  -- status and capture the "before" value for the audit row.
-  SELECT i.request_id, r.status, i.dispatched_qty
-    INTO v_request_id, v_status, v_old_qty
+  -- Resolve the parent request + current effective qty in one shot so we
+  -- can validate status and capture the "before" value for the audit row.
+  SELECT i.request_id, r.status, r.request_type,
+         ROUND(fn_effective_pack_qty(i.dispatched_qty, i.dispatched_weight_g, i.weight_value, i.weight_unit), 3),
+         CASE WHEN i.weight_value > 0 AND i.weight_unit IN ('g', 'kg')
+              THEN i.weight_value * CASE i.weight_unit WHEN 'kg' THEN 1000 ELSE 1 END
+         END
+    INTO v_request_id, v_status, v_type, v_old_qty, v_pack_g
   FROM stock_request_items i
   JOIN stock_requests      r ON r.id = i.request_id
   WHERE i.id = p_item_id
@@ -2266,26 +2302,31 @@ BEGIN
     RETURN false;  -- only post-completion edits allowed
   END IF;
 
+  -- Fractions need a weight-based pack (g/kg) and an Order line — Returns
+  -- stay whole packets (accept flow is integer-only).
+  IF v_new_qty IS NOT NULL AND v_new_qty <> trunc(v_new_qty)
+     AND (v_pack_g IS NULL OR v_type <> 'Order') THEN
+    RETURN false;
+  END IF;
+
   -- No-op guard — don't write an audit row when nothing changed. The table
   -- CHECK would reject it anyway, but failing silently here is friendlier.
-  IF v_old_qty IS NOT DISTINCT FROM p_new_qty THEN
+  IF v_old_qty IS NOT DISTINCT FROM v_new_qty THEN
     RETURN true;
   END IF;
 
-  -- 25-Jul-2026: admin post-completion edits stay packet-count-only —
-  -- explicitly clear any partial-weight dispatch that was on the row so
-  -- the XOR CHECK (chk_dispatched_qty_xor_weight) doesn't fail. Semantics:
-  -- admin's edit REPLACES whatever the godown originally recorded, in
-  -- packet-count terms.
+  -- Admin's edit REPLACES whatever the godown originally recorded. Exactly
+  -- one of the two legs is set so the XOR CHECK holds.
   UPDATE stock_request_items
-  SET dispatched_qty      = p_new_qty,
-      dispatched_weight_g = NULL
+  SET dispatched_qty      = CASE WHEN v_new_qty = trunc(v_new_qty) THEN v_new_qty::int END,
+      dispatched_weight_g = CASE WHEN v_new_qty <> trunc(v_new_qty)
+                                 THEN ROUND(v_new_qty * v_pack_g, 3) END
   WHERE id = p_item_id;
 
   INSERT INTO stock_request_qty_audits
     (request_item_id, request_id, old_qty, new_qty, reason, edited_by)
   VALUES
-    (p_item_id, v_request_id, v_old_qty, p_new_qty,
+    (p_item_id, v_request_id, v_old_qty, v_new_qty,
      NULLIF(btrim(COALESCE(p_reason, '')), ''),
      p_user_id);
 

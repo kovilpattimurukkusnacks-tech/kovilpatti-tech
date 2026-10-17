@@ -119,9 +119,9 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         if (view is "all" or "requested")
             cols.Add(new("Requested Qty",    r => r.RequestedQty,       AccountsXlsxWriter.ColumnFormat.Integer));
         if (view is "all" or "dispatched")
-            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,      AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,      AccountsXlsxWriter.ColumnFormat.Quantity));
         if (view is "all" or "returns")
-            cols.Add(new("Returned Qty",     r => r.ReturnedQty,        AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Returned Qty",     r => r.ReturnedQty,        AccountsXlsxWriter.ColumnFormat.Quantity));
         if (view is "all" or "requested")
             cols.Add(new("Requested (MRP)",  r => r.RequestedAmount,    AccountsXlsxWriter.ColumnFormat.Currency));
         if (view is "all" or "dispatched")
@@ -155,7 +155,7 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         // the exported file looks like the active lens.
         if (view == "all")
         {
-            cols.Add(new("Quantity (Net)",    r => r.Quantity,        AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Quantity (Net)",    r => r.Quantity,        AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Amount (MRP Net)",  r => r.Amount,          AccountsXlsxWriter.ColumnFormat.Currency));
             cols.Add(new("Purchase Amount",   r => r.PurchaseAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
             cols.Add(new("Profit",            r => r.Profit,          AccountsXlsxWriter.ColumnFormat.Currency));
@@ -168,7 +168,7 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         }
         else if (view == "dispatched")
         {
-            cols.Add(new("Dispatched Qty",    r => r.DispatchedQty,   AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Dispatched Qty",    r => r.DispatchedQty,   AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Dispatched (MRP)",  r => r.DispatchedAmount,AccountsXlsxWriter.ColumnFormat.Currency));
             cols.Add(new("Purchase Amount",   r => r.PurchaseAmount,  AccountsXlsxWriter.ColumnFormat.Currency));
             cols.Add(new("Profit",            r => r.Profit,          AccountsXlsxWriter.ColumnFormat.Currency));
@@ -176,7 +176,7 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         }
         else // returns
         {
-            cols.Add(new("Returns Qty",       r => r.ReturnsQty,      AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Returns Qty",       r => r.ReturnsQty,      AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Returns (MRP)",     r => r.ReturnsAmount,   AccountsXlsxWriter.ColumnFormat.Currency));
         }
         return XlsxResult("by-category", filters, rows, cols);
@@ -198,7 +198,7 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         };
         if (view == "all")
         {
-            cols.Add(new("Quantity (Net)",   r => r.Quantity,         AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Quantity (Net)",   r => r.Quantity,         AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Amount (MRP Net)", r => r.Amount,           AccountsXlsxWriter.ColumnFormat.Currency));
         }
         else if (view == "requested")
@@ -208,12 +208,12 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
         }
         else if (view == "dispatched")
         {
-            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,    AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Dispatched Qty",   r => r.DispatchedQty,    AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Dispatched (MRP)", r => r.DispatchedAmount, AccountsXlsxWriter.ColumnFormat.Currency));
         }
         else // returns
         {
-            cols.Add(new("Returns Qty",      r => r.ReturnsQty,       AccountsXlsxWriter.ColumnFormat.Integer));
+            cols.Add(new("Returns Qty",      r => r.ReturnsQty,       AccountsXlsxWriter.ColumnFormat.Quantity));
             cols.Add(new("Returns (MRP)",    r => r.ReturnsAmount,    AccountsXlsxWriter.ColumnFormat.Currency));
         }
         return XlsxResult("top-products", filters, rows, cols);
@@ -248,9 +248,9 @@ public class AccountsController(IAccountsService accounts) : ControllerBase
             new("Weight",               r => r.WeightValue.HasValue
                                             ? $"{r.WeightValue.Value.ToString("0.###", CultureInfo.InvariantCulture)} {r.WeightUnit}"
                                             : null),
-            new("Old Qty",              r => r.OldQty.HasValue ? (object)r.OldQty.Value : null, AccountsXlsxWriter.ColumnFormat.Integer),
-            new("New Qty",              r => r.NewQty.HasValue ? (object)r.NewQty.Value : null, AccountsXlsxWriter.ColumnFormat.Integer),
-            new("Qty",                  r => r.DeltaQty,      AccountsXlsxWriter.ColumnFormat.Integer),
+            new("Old Qty",              r => r.OldQty.HasValue ? (object)r.OldQty.Value : null, AccountsXlsxWriter.ColumnFormat.Quantity),
+            new("New Qty",              r => r.NewQty.HasValue ? (object)r.NewQty.Value : null, AccountsXlsxWriter.ColumnFormat.Quantity),
+            new("Qty",                  r => r.DeltaQty,      AccountsXlsxWriter.ColumnFormat.Quantity),
             new("Unit Price (MRP)",     r => r.UnitPrice,     AccountsXlsxWriter.ColumnFormat.Currency),
             new("Amount (MRP)",         r => r.DeltaAmount,   AccountsXlsxWriter.ColumnFormat.Currency),
             new("Reason",               r => r.Reason),

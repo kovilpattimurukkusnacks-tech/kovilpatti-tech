@@ -24,9 +24,9 @@ public class AccountsAdjustmentRow
     public string         Product_Name    { get; set; } = default!;
     public decimal?       Weight_Value    { get; set; }
     public string?        Weight_Unit     { get; set; }
-    public int?           Old_Qty         { get; set; }
-    public int?           New_Qty         { get; set; }
-    public int            Delta_Qty       { get; set; }
+    public decimal?       Old_Qty         { get; set; }   // 17-Oct-2026: numeric (was int)
+    public decimal?       New_Qty         { get; set; }
+    public decimal        Delta_Qty       { get; set; }
     public decimal        Unit_Price      { get; set; }
     public decimal        Delta_Amount    { get; set; }
     public string?        Reason          { get; set; }

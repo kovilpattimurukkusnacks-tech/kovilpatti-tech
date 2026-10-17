@@ -396,8 +396,10 @@ CREATE TABLE IF NOT EXISTS stock_request_qty_audits (
   -- Denormalised request_id so Phase 3 accounts can find every audit for a
   -- request without joining through items. Also used by the FE history view.
   request_id      uuid          NOT NULL REFERENCES stock_requests(id)      ON DELETE CASCADE,
-  old_qty         int,
-  new_qty         int,
+  -- 17-Oct-2026: numeric(12,3) packs (was int) so partial-weight lines log
+  -- 2.5 → 2.3, not a rounded 3 → 2.
+  old_qty         numeric(12,3),
+  new_qty         numeric(12,3),
   -- Optional admin-supplied justification. Free-text up to 500 chars.
   reason          varchar(500),
   edited_by       uuid          NOT NULL REFERENCES users(id) ON DELETE RESTRICT,

@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { Box, Divider, Paper } from '@mui/material'
 import type { StockRequestDto } from '../api/stock-requests/types'
 import { formatINR } from '../utils/format'
+import { effectiveDispatchedPacks, formatQty } from '../utils/formatDispatched'
 
 type Variant =
   /** Default — right-aligned paper card with vertical rows. Used by the
@@ -40,7 +41,9 @@ export function RequestSummary({ request, variant = 'card', actionSlot }: {
   const oosCount = hasDispatch ? items.filter(it => it.dispatchedQty === 0).length : 0
 
   const dispatchedAmount = items.reduce(
-    (s, it) => s + (it.dispatchedQty ?? it.requestedQty) * it.unitPrice,
+    // 17-Oct-2026: effective packs — a partial-weight line (2.5 kg of a
+    // 1 kg pack) is valued at 2.5, not at the requested qty.
+    (s, it) => s + (effectiveDispatchedPacks(it) ?? it.requestedQty) * it.unitPrice,
     0,
   )
   const isShortAmount = hasDispatch && dispatchedAmount < request.totalAmount
@@ -95,7 +98,7 @@ export function RequestSummary({ request, variant = 'card', actionSlot }: {
             <>
               <span>·</span>
               <Box component="span" sx={{ color: shortQty > 0 ? '#C62828' : '#1F1F1F99' }}>
-                {dispatched} {dispatchedNoun}
+                {formatQty(dispatched)} {dispatchedNoun}
               </Box>
             </>
           )}
@@ -103,7 +106,7 @@ export function RequestSummary({ request, variant = 'card', actionSlot }: {
             <>
               <span>·</span>
               <Box component="span" sx={{ color: '#C62828', fontWeight: 700 }}>
-                {shortQty} {shortNoun}
+                {formatQty(shortQty)} {shortNoun}
               </Box>
             </>
           )}
@@ -184,12 +187,12 @@ export function RequestSummary({ request, variant = 'card', actionSlot }: {
       {hasDispatch && (
         <SummaryRow
           label="Dispatched quantity"
-          value={`${dispatched} ${dispatched === 1 ? 'unit' : 'units'}`}
+          value={`${formatQty(dispatched)} ${dispatched === 1 ? 'unit' : 'units'}`}
           danger={shortQty > 0}
         />
       )}
       {shortQty > 0 && (
-        <SummaryRow label="Short" value={`${shortQty} ${shortQty === 1 ? 'unit' : 'units'}`} danger />
+        <SummaryRow label="Short" value={`${formatQty(shortQty)} ${shortQty === 1 ? 'unit' : 'units'}`} danger />
       )}
       {oosCount > 0 && (
         <SummaryRow

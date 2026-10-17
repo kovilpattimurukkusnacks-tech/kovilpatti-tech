@@ -76,10 +76,11 @@ public interface IStockRequestRepository
     /// Amend an item's dispatched_qty after the request is Received (Orders)
     /// or Accepted (Returns). Writes a row to stock_request_qty_audits so
     /// Phase 3 accounts can reconcile. `newQty` = null clears the value;
-    /// otherwise must be >= 0. Returns false when the SP-side guards
-    /// (status, bounds, missing item) reject the call.
+    /// otherwise must be >= 0 (decimal packs — a fraction becomes a partial-
+    /// weight dispatch, 17-Oct-2026). Returns false when the SP-side guards
+    /// (status, bounds, fraction on a non-weight line, missing item) reject.
     Task<bool> EditDispatchedQtyAsync(
-        Guid itemId, int? newQty, string? reason, Guid userId, CancellationToken ct = default);
+        Guid itemId, decimal? newQty, string? reason, Guid userId, CancellationToken ct = default);
 
     // ── Inventory dispatch draft (WIP dispatch_qtys saved to draft_dispatched_qty) ──
     Task<bool> SaveDispatchDraftAsync(Guid id, Guid userId, string itemsJson, CancellationToken ct = default);

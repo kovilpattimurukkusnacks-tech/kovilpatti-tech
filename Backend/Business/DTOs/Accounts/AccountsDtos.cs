@@ -47,8 +47,8 @@ public record AccountsShopRowDto(
     long    OrderRequestCount,
     long    ReturnRequestCount,
     long    RequestedQty,
-    long    DispatchedQty,
-    long    ReturnedQty,
+    decimal DispatchedQty,   // 17-Oct-2026: fractional packs (was long)
+    decimal ReturnedQty,
     decimal RequestedAmount,
     decimal DispatchedAmount,
     decimal ReturnsAmount,
@@ -69,7 +69,7 @@ public record AccountsShopRowDto(
 public record AccountsCategoryRowDto(
     int     CategoryId,
     string  CategoryPath,
-    long    Quantity,
+    decimal Quantity,        // 17-Oct-2026: fractional packs (was long)
     decimal Amount,
     /// 17-Jun-2026 (client #12): net cost of dispatched goods at current
     /// products.purchase_price. Profit/Loss is the P&L pair against Amount —
@@ -82,8 +82,8 @@ public record AccountsCategoryRowDto(
     /// view-mode lens (Requested / Dispatched / Returns) can pick the right
     /// number per row without a refetch.
     long    RequestedQty,
-    long    DispatchedQty,
-    long    ReturnsQty,
+    decimal DispatchedQty,
+    decimal ReturnsQty,
     decimal RequestedAmount,
     decimal DispatchedAmount,
     decimal ReturnsAmount
@@ -96,12 +96,12 @@ public record AccountsProductRowDto(
     string   ProductName,
     decimal? WeightValue,
     string?  WeightUnit,
-    long     Quantity,
+    decimal  Quantity,       // 17-Oct-2026: fractional packs (was long)
     decimal  Amount,
     /// 19-Jun-2026 (client #13): per-dim aggregates (see AccountsCategoryRowDto).
     long     RequestedQty,
-    long     DispatchedQty,
-    long     ReturnsQty,
+    decimal  DispatchedQty,
+    decimal  ReturnsQty,
     decimal  RequestedAmount,
     decimal  DispatchedAmount,
     decimal  ReturnsAmount
@@ -127,9 +127,9 @@ public record AccountsAdjustmentRowDto(
     string          ProductName,
     decimal?        WeightValue,
     string?         WeightUnit,
-    int?            OldQty,
-    int?            NewQty,
-    int             DeltaQty,
+    decimal?        OldQty,      // 17-Oct-2026: numeric (was int)
+    decimal?        NewQty,
+    decimal         DeltaQty,
     decimal         UnitPrice,
     decimal         DeltaAmount,
     string?         Reason,

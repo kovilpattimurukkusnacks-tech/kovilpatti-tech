@@ -13,6 +13,10 @@ import { DispatchedCell } from '../../components/DispatchedCell'
 import { InvBadge } from '../../components/InvBadge'
 import { RequestSummary } from '../../components/RequestSummary'
 import { formatINR } from '../../utils/format'
+import {
+  effectiveDispatchedPacks, effectiveReceivedPacks, formatQty, formatWeightG,
+  hasReceivedReport, isWeightUnit,
+} from '../../utils/formatDispatched'
 import { formatIstDateTime } from '../../utils/formatDate'
 import {
   useStockRequest, useCancelStockRequest, useEditDispatchedQty,
@@ -181,7 +185,9 @@ export default function AdminRequestDetail() {
     setEditingItem(item)
     // Pre-fill with the current dispatched value (or empty when null) so the
     // admin starts from the existing state, not a blank cell.
-    setEditingQtyText(item.dispatchedQty == null ? '' : String(item.dispatchedQty))
+    // 17-Oct-2026: effective packs — a partial line pre-fills "2.5", not "".
+    const packs = effectiveDispatchedPacks(item)
+    setEditingQtyText(packs == null ? '' : String(Math.round(packs * 1000) / 1000))
     setEditingReason('')
     editQtyMutation.reset()
   }
@@ -193,12 +199,23 @@ export default function AdminRequestDetail() {
     editQtyMutation.reset()
   }
 
+  // Decimal packs allowed only on weight-unit (g/kg) Order lines — mirrors
+  // the godown dispatch input and fn_request_item_edit_dispatched_qty.
+  const editQtySupportsDecimal = editingItem != null
+    && isWeightUnit(editingItem.weightUnit)
+    && request.requestType !== 'Return'
+  const editingCurrentPacks = editingItem ? effectiveDispatchedPacks(editingItem) : null
+
   const handleSaveQty = async () => {
     if (!editingItem) return
     const trimmed = editingQtyText.trim()
-    // "" → null (clear the dispatched value). Otherwise must parse to int.
-    const parsed  = trimmed === '' ? null : Number(trimmed)
-    if (parsed !== null && (!Number.isInteger(parsed) || parsed < 0)) return
+    // "" → null (clear the dispatched value). Otherwise must parse to a
+    // non-negative number — fractions only on g/kg Order lines (BE writes
+    // them as partial weight). 17-Oct-2026.
+    const raw     = trimmed === '' ? null : Number(trimmed)
+    if (raw !== null && (!Number.isFinite(raw) || raw < 0)) return
+    if (raw !== null && !Number.isInteger(raw) && !editQtySupportsDecimal) return
+    const parsed  = raw === null ? null : Math.round(raw * 1000) / 1000
     await editQtyMutation.mutateAsync({
       requestId: request.id,
       itemId:    editingItem.id,
@@ -273,13 +290,16 @@ export default function AdminRequestDetail() {
                   </TableCell>
                 </TableRow>
                 {wg.items.map(item => {
-                  const effectiveQty = item.dispatchedQty ?? item.requestedQty
+                  // 17-Oct-2026: effective packs so a partial-weight line
+                  // (2.5 kg of a 1 kg pack) is priced at 2.5, not requested.
+                  const dispPacks = effectiveDispatchedPacks(item)
+                  const effectiveQty = dispPacks ?? item.requestedQty
                   const effectiveSubtotal = effectiveQty * item.unitPrice
-                  const short = item.dispatchedQty != null && item.dispatchedQty < item.requestedQty
+                  const short = dispPacks != null && dispPacks < item.requestedQty
                   // Mirrors ShopRequestDetail — over flag + row tint so the
                   // shop/admin/inventory pages tell the same story when an
                   // order ended up under or over the original request.
-                  const over  = item.dispatchedQty != null && item.dispatchedQty > item.requestedQty
+                  const over  = dispPacks != null && dispPacks > item.requestedQty
                   const rowBg = short ? 'rgba(198,40,40,0.06)'
                               : over  ? 'rgba(230,81,0,0.07)'
                               : 'transparent'
@@ -419,11 +439,13 @@ export default function AdminRequestDetail() {
       {(() => {
         const items = request.items ?? []
         let shortLines = 0, overLines = 0, shortUnits = 0, overUnits = 0
+        // 17-Oct-2026: effective packs so partial-weight receipts count too.
         for (const it of items) {
-          if (it.receivedQty == null) continue
-          const disp = it.dispatchedQty ?? 0
-          if (it.receivedQty < disp) { shortLines++; shortUnits += (disp - it.receivedQty) }
-          if (it.receivedQty > disp) { overLines++;  overUnits  += (it.receivedQty - disp) }
+          if (!hasReceivedReport(it)) continue
+          const disp = effectiveDispatchedPacks(it) ?? 0
+          const rec  = effectiveReceivedPacks(it) ?? 0
+          if (rec < disp) { shortLines++; shortUnits += (disp - rec) }
+          if (rec > disp) { overLines++;  overUnits  += (rec - disp) }
         }
         if (shortLines === 0 && overLines === 0) return null
         return (
@@ -433,11 +455,11 @@ export default function AdminRequestDetail() {
           >
             <strong>Shop reported a receipt discrepancy.</strong>{' '}
             {shortLines > 0 && (
-              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {shortUnits} unit{shortUnits === 1 ? '' : 's'} missing</>
+              <>{shortLines} line{shortLines === 1 ? '' : 's'} short · {formatQty(shortUnits)} unit{shortUnits === 1 ? '' : 's'} missing</>
             )}
             {shortLines > 0 && overLines > 0 && ' · '}
             {overLines > 0 && (
-              <>{overLines} line{overLines === 1 ? '' : 's'} over · {overUnits} extra unit{overUnits === 1 ? '' : 's'}</>
+              <>{overLines} line{overLines === 1 ? '' : 's'} over · {formatQty(overUnits)} extra unit{overUnits === 1 ? '' : 's'}</>
             )}
           </Alert>
         )
@@ -726,7 +748,7 @@ export default function AdminRequestDetail() {
       {/* Receipt-change log (02-Jul-2026). Same table shop + inv see —
           admin visibility into the shop's reported discrepancy. */}
       {(() => {
-        const changed = (request.items ?? []).filter(it => it.receivedQty != null)
+        const changed = (request.items ?? []).filter(hasReceivedReport)
         if (changed.length === 0) return null
         return (
           <Paper
@@ -751,18 +773,18 @@ export default function AdminRequestDetail() {
               </TableHead>
               <TableBody>
                 {changed.map(it => {
-                  const disp  = it.dispatchedQty ?? 0
-                  const rec   = it.receivedQty!
+                  const disp  = effectiveDispatchedPacks(it) ?? 0
+                  const rec   = effectiveReceivedPacks(it) ?? 0
                   const delta = rec - disp
                   const short = delta < 0
                   const over  = delta > 0
                   return (
                     <TableRow key={it.id}>
                       <TableCell sx={{ py: 0.9, fontSize: 13, fontWeight: 600 }}>{it.productName}</TableCell>
-                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{disp}</TableCell>
-                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{rec}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13 }}>{formatQty(disp)}</TableCell>
+                      <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>{formatQty(rec)}</TableCell>
                       <TableCell align="right" sx={{ py: 0.9, fontSize: 13, fontWeight: 700, color: short ? '#C62828' : over ? '#E65100' : '#1F1F1F' }}>
-                        {short ? delta : over ? `+${delta}` : '—'}
+                        {short ? formatQty(delta) : over ? `+${formatQty(delta)}` : '—'}
                       </TableCell>
                     </TableRow>
                   )
@@ -945,7 +967,8 @@ export default function AdminRequestDetail() {
                 <Box sx={{ fontSize: 12, color: '#1F1F1F99', mt: 0.5 }}>
                   Requested {editingItem.requestedQty}
                   {' · '}
-                  Currently dispatched {editingItem.dispatchedQty ?? '—'}
+                  Currently dispatched {editingCurrentPacks == null ? '—' : formatQty(editingCurrentPacks)}
+                  {editingItem.dispatchedWeightG != null && ` (${formatWeightG(editingItem.dispatchedWeightG)})`}
                 </Box>
               </Box>
 
@@ -953,13 +976,16 @@ export default function AdminRequestDetail() {
                 label="New qty"
                 value={editingQtyText}
                 onChange={e => {
-                  // Digits only — empty string is a valid intent ("clear it").
+                  // Digits only (plus one '.' on g/kg Order lines) — empty
+                  // string is a valid intent ("clear it").
                   const v = e.target.value
-                  if (v === '' || /^\d+$/.test(v)) setEditingQtyText(v)
+                  const pattern = editQtySupportsDecimal ? /^\d+(\.\d{0,3})?$/ : /^\d+$/
+                  if (v === '' || pattern.test(v)) setEditingQtyText(v)
                 }}
                 onFocus={e => (e.target as HTMLInputElement).select()}
                 placeholder="Leave blank to clear"
-                inputMode="numeric"
+                inputMode={editQtySupportsDecimal ? 'decimal' : 'numeric'}
+                helperText={editQtySupportsDecimal ? 'Decimals allowed — e.g. 2.5 = 2.5 packs (partial weight)' : undefined}
                 fullWidth
                 size="small"
                 autoFocus
@@ -995,8 +1021,9 @@ export default function AdminRequestDetail() {
               // No-op guard — disable Save when the qty hasn't actually changed.
               || (editingItem != null
                   && (editingQtyText.trim() === ''
-                        ? editingItem.dispatchedQty == null
-                        : Number(editingQtyText.trim()) === editingItem.dispatchedQty))
+                        ? editingCurrentPacks == null
+                        : editingCurrentPacks != null
+                          && Math.abs(Number(editingQtyText.trim()) - editingCurrentPacks) < 0.0005))
             }
             sx={{ textTransform: 'none', fontWeight: 700 }}
           >

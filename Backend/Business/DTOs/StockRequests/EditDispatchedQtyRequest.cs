@@ -16,5 +16,11 @@ namespace KovilpattiSnacks.Business.DTOs.StockRequests;
 /// (or whitespace-only), it's stored as NULL on the audit row. Phase 3
 /// accounts uses this string verbatim on its reconciliation entries.
 /// </para>
+///
+/// <para>
+/// 17-Oct-2026: <see cref="NewQty"/> is decimal packs (was int). A fraction
+/// (e.g. 2.5) is stored as a partial-weight dispatch — only valid on Order
+/// lines of g/kg products; the SP rejects it otherwise.
+/// </para>
 /// </summary>
-public record EditDispatchedQtyRequest(int? NewQty, string? Reason);
+public record EditDispatchedQtyRequest(decimal? NewQty, string? Reason);
